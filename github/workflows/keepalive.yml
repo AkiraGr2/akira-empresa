@@ -1,0 +1,15 @@
+name: AKIRA ULTRA Keepalive 95/100
+on:
+  schedule:
+    - cron: '*/14 * * * *'
+  workflow_dispatch:
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl https://akira-empresa.onrender.com/health
+          echo "✅ Keepalive Render Free 95/100"
+      - run: |
+          curl https://akira-empresa.onrender.com/
+          echo "✅ Root ping"
