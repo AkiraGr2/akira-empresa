@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+google-genai>=0.3.0
+google-auth
+google-auth-oauthlib
+requests
+boto3>=1.34.0
+numpy
