@@ -208,4 +208,48 @@ MIGRATIONS = [
         CREATE INDEX cognitive_events_stage_idx ON cognitive_events (stage, created_at DESC)
         """,
     ),
+    (
+        "007_tools_registry",
+        """
+        CREATE TABLE tools (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL,
+            category TEXT NOT NULL DEFAULT 'general',
+            permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
+            inputs_schema JSONB NOT NULL DEFAULT '{}'::jsonb,
+            outputs_schema JSONB NOT NULL DEFAULT '{}'::jsonb,
+            limits_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+            risks JSONB NOT NULL DEFAULT '[]'::jsonb,
+            status TEXT NOT NULL DEFAULT 'available' CHECK (status IN ('available','disabled','deprecated')),
+            schema_version TEXT NOT NULL DEFAULT 'tool.v1',
+            version INTEGER NOT NULL DEFAULT 1,
+            idempotency_key TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX tools_idempotency_key_uq ON tools (idempotency_key);
+        CREATE UNIQUE INDEX tools_name_uq ON tools (name);
+        CREATE INDEX tools_category_status_idx ON tools (category, status);
+        CREATE TABLE tool_invocations (
+            id TEXT PRIMARY KEY,
+            tool_name TEXT NOT NULL,
+            actor TEXT NOT NULL DEFAULT 'system',
+            inputs JSONB NOT NULL DEFAULT '{}'::jsonb,
+            outputs JSONB NOT NULL DEFAULT '{}'::jsonb,
+            status TEXT NOT NULL DEFAULT 'success' CHECK (status IN ('success','failure')),
+            error JSONB,
+            duration_ms INTEGER NOT NULL DEFAULT 0 CHECK (duration_ms >= 0),
+            schema_version TEXT NOT NULL DEFAULT 'tool_invocation.v1',
+            version INTEGER NOT NULL DEFAULT 1,
+            idempotency_key TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX tool_invocations_idempotency_key_uq ON tool_invocations (idempotency_key);
+        CREATE INDEX tool_invocations_tool_idx ON tool_invocations (tool_name, created_at DESC);
+        CREATE INDEX tool_invocations_status_idx ON tool_invocations (status, created_at DESC);
+        CREATE INDEX tool_invocations_actor_idx ON tool_invocations (actor, created_at DESC)
+        """,
+    ),
 ]
