@@ -252,4 +252,50 @@ MIGRATIONS = [
         CREATE INDEX tool_invocations_actor_idx ON tool_invocations (actor, created_at DESC)
         """,
     ),
+    (
+        "008_agents",
+        """
+        CREATE TABLE agents (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            role TEXT NOT NULL,
+            description TEXT NOT NULL,
+            allowed_tools JSONB NOT NULL DEFAULT '[]'::jsonb,
+            status TEXT NOT NULL DEFAULT 'idle' CHECK (status IN ('idle','busy','disabled','error')),
+            current_task_id TEXT,
+            tasks_completed INTEGER NOT NULL DEFAULT 0 CHECK (tasks_completed >= 0),
+            tasks_failed INTEGER NOT NULL DEFAULT 0 CHECK (tasks_failed >= 0),
+            last_active_at TIMESTAMPTZ,
+            schema_version TEXT NOT NULL DEFAULT 'agent.v1',
+            version INTEGER NOT NULL DEFAULT 1,
+            idempotency_key TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX agents_idempotency_key_uq ON agents (idempotency_key);
+        CREATE UNIQUE INDEX agents_name_uq ON agents (name);
+        CREATE INDEX agents_role_status_idx ON agents (role, status);
+        CREATE TABLE agent_tasks (
+            id TEXT PRIMARY KEY,
+            agent_name TEXT NOT NULL,
+            tool_name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','running','completed','failed')),
+            inputs JSONB NOT NULL DEFAULT '{}'::jsonb,
+            outputs JSONB NOT NULL DEFAULT '{}'::jsonb,
+            error JSONB,
+            duration_ms INTEGER NOT NULL DEFAULT 0 CHECK (duration_ms >= 0),
+            started_at TIMESTAMPTZ,
+            completed_at TIMESTAMPTZ,
+            schema_version TEXT NOT NULL DEFAULT 'agent_task.v1',
+            version INTEGER NOT NULL DEFAULT 1,
+            idempotency_key TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX agent_tasks_idempotency_key_uq ON agent_tasks (idempotency_key);
+        CREATE INDEX agent_tasks_agent_idx ON agent_tasks (agent_name, created_at DESC);
+        CREATE INDEX agent_tasks_status_idx ON agent_tasks (status, created_at DESC);
+        CREATE INDEX agent_tasks_tool_idx ON agent_tasks (tool_name, created_at DESC)
+        """,
+    ),
 ]
