@@ -223,7 +223,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 import json as json_lib
 app=FastAPI(title="Akira V7.3 Consciente")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# V8-Fase9-fix: CORS explicito con Authorization permitido (el preflight bloqueaba el header)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["Content-Type", "Authorization"],
+    expose_headers=["*"],
+    max_age=3600,
+)
 
 rate_store=defaultdict(list)
 def check_rate_limit(ip,is_owner=False):
