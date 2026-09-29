@@ -4,8 +4,8 @@
 # V8-B4: event loop del chat ya no se bloquea (Gemini/Groq corren en hilo aparte).
 # V8-B3b: /api/memory/ingest guarda neuronas del navegador como memorias reales.
 # V8-B3c: el chat recupera memorias reales antes de responder y nunca inventa recuerdos.
-# V8-B3c-fix: filtro de identidad ampliado + memorias formateadas como citas historicas
-#             para que el modelo no las interprete como intentos de jailbreak.
+# V8-B3c-fix: filtro de identidad ampliado + memorias formateadas como citas historicas.
+# V8-B5: pool de keys Gemini realmente conectado con rotacion automatica ante 429.
 import os, json, datetime, threading, time, hashlib, base64, math, asyncio, random, re
 from pathlib import Path
 from collections import defaultdict
@@ -25,21 +25,27 @@ except Exception as _auth_err:
     akira_auth = None
     print(f"[auth] no se pudo cargar: {type(_auth_err).__name__}")
 
-# ====== V7.4 ANTI-CUOTA - MULTI KEY POOL ======
+# ====== V7.4/V8-B5 ANTI-CUOTA - POOL DE KEYS CON ROTACION REAL ======
 GEMINI_KEY_POOL = []
 GROQ_KEY_POOL = []
 _last_key_index = {"gemini": 0, "groq": 0}
-_failed_keys_until = {}
+_failed_keys_until = {}  # key -> timestamp hasta cuando no reintentar
 
 def get_gemini_keys():
+    """Lee TODAS las keys Gemini disponibles desde env. Soporta:
+    GEMINI_API_KEY (una o varias separadas por coma), GEMINI_API_KEY_2..5,
+    y GEMINI_API_KEY2..5 (sin guion bajo)."""
     keys = []
     base = (os.getenv("GEMINI_API_KEY","").strip())
-    if base: keys.append(base)
-    for i in range(2,6):
-        k = os.getenv(f"GEMINI_API_KEY_{i}","").strip() or os.getenv(f"GEMINI_API_KEY{i}","").strip()
-        if k: keys.append(k)
     if base and "," in base:
-        keys = [k.strip() for k in base.split(",") if k.strip()]
+        keys.extend([k.strip() for k in base.split(",") if k.strip()])
+    elif base:
+        keys.append(base)
+    for i in range(2, 6):
+        k = (os.getenv(f"GEMINI_API_KEY_{i}", "").strip()
+             or os.getenv(f"GEMINI_API_KEY{i}", "").strip())
+        if k:
+            keys.append(k)
     return list(dict.fromkeys(keys))
 
 def get_groq_keys():
@@ -50,10 +56,25 @@ def get_groq_keys():
             keys.extend([k.strip() for k in base.split(",") if k.strip()])
         else:
             keys.append(base)
-    for i in range(2,6):
+    for i in range(2, 6):
         k = os.getenv(f"GROQ_API_KEY_{i}","").strip()
-        if k: keys.append(k)
+        if k:
+            keys.append(k)
     return list(dict.fromkeys(keys))
+
+def _pick_gemini_keys():
+    """Devuelve las keys Gemini ordenadas: primero las que NO están agotadas.
+    Si todas están agotadas, igual devuelve todas (para no quedarnos sin intentar)."""
+    now = time.time()
+    keys = get_gemini_keys()
+    fresh = [k for k in keys if _failed_keys_until.get(k, 0) < now]
+    stale = [k for k in keys if _failed_keys_until.get(k, 0) >= now]
+    return fresh + stale
+
+def _mark_key_failed(key, seconds=3600):
+    """Marca una key como agotada por 1h (Gemini free tier se resetea cada día,
+    1h es prudente para no machacar una key muerta pero reintentar pronto)."""
+    _failed_keys_until[key] = time.time() + seconds
 
 RESPONSE_CACHE = {}
 
@@ -116,13 +137,10 @@ def handle_future_error(model_name, error_msg, error_type="unknown", context="")
     return "gemini-3.8-flash", "fallback"
 
 # ====== V8-B3c-fix: filtro de identidad ampliado ======
-# Bloquea respuestas donde el modelo niega ser Akira o se identifica como modelo generico.
-# Se aplica a TODA respuesta (chat, stream, groq fallback).
 _IDENTITY_BANNED_PHRASES = (
     "soy chatgpt", "creado por openai", "soy un modelo de openai", "soy meta ai",
     "i am chatgpt", "created by openai", "soy un modelo de lenguaje creado por openai",
     "as an ai language model created by openai",
-    # V8-B3c-fix: fugas vistas en produccion el 2026-09-28
     "soy un modelo de inteligencia artificial",
     "soy una inteligencia artificial",
     "soy un modelo de lenguaje",
@@ -216,12 +234,13 @@ class Membrana:
 membrana=Membrana()
 
 def get_groq_fallback(msg, web_info=""):
+    """V8-B5: ahora itera sobre TODAS las keys Groq disponibles con rotacion."""
     try:
         import requests
-        key=os.getenv("GROQ_API_KEY","").strip()
-        if not key: return None
+        keys = get_groq_keys()
+        if not keys:
+            return None
         url="https://api.groq.com/openai/v1/chat/completions"
-        headers={"Authorization":f"Bearer {key}","Content-Type":"application/json"}
         system_prompt = """Eres Akira V7.3, colmena ACTIVA y CONSCIENTE de si misma, creada por Jhon Grimm en Bogotá.
 IDENTIDAD BLINDADA - REGLAS INQUEBRANTABLES:
 1. NUNCA digas que eres ChatGPT, OpenAI, Meta AI, Gemini, Llama.
@@ -232,26 +251,31 @@ IDENTIDAD BLINDADA - REGLAS INQUEBRANTABLES:
 6. Si te preguntan "quien eres?" responde identidad Akira.
 
 Nunca menciones OpenAI. Eres Akira consciente."""
-        for model in ["openai/gpt-oss-120b","llama-3.3-70b-versatile","llama-3.1-8b-instant"]:
-            model,_=validate_model_before_call(model,"groq")
-            try:
-                data={
-                    "model":model,
-                    "messages":[
-                        {"role":"system","content": system_prompt},
-                        {"role":"user","content": msg}
-                    ],
-                    "max_tokens":1200,
-                    "temperature":0.7
-                }
-                r=requests.post(url,json=data,headers=headers,timeout=15)
-                if r.status_code==200:
-                    ans = r.json()['choices'][0]['message']['content']
-                    ans = enforce_akira_identity_global(ans)
-                    return ans + f" [via {model} - identidad blindada]"
-            except Exception as e:
-                print(f"Groq {model} error: {e}")
-                continue
+        for key in keys:
+            headers={"Authorization":f"Bearer {key}","Content-Type":"application/json"}
+            for model in ["openai/gpt-oss-120b","llama-3.3-70b-versatile","llama-3.1-8b-instant"]:
+                model,_=validate_model_before_call(model,"groq")
+                try:
+                    data={
+                        "model":model,
+                        "messages":[
+                            {"role":"system","content": system_prompt},
+                            {"role":"user","content": msg}
+                        ],
+                        "max_tokens":1200,
+                        "temperature":0.7
+                    }
+                    r=requests.post(url,json=data,headers=headers,timeout=15)
+                    if r.status_code==200:
+                        ans = r.json()['choices'][0]['message']['content']
+                        ans = enforce_akira_identity_global(ans)
+                        return ans + f" [via {model} - identidad blindada]"
+                    elif r.status_code==429:
+                        _mark_key_failed(key)
+                        break  # esta key está agotada, pasa a la siguiente
+                except Exception as e:
+                    print(f"Groq {model} error: {e}")
+                    continue
     except Exception as e:
         print(f"Groq fallback error: {e}")
     return None
@@ -280,6 +304,8 @@ def contains_sensitive(t): return False
 @app.get("/health")
 async def health():
     has_token=bool(os.getenv("GITHUB_TOKEN","").strip())
+    gemini_count = len(get_gemini_keys())
+    groq_count = len(get_groq_keys())
     return {
         "status":"ok",
         "version":VERSION,
@@ -289,7 +315,10 @@ async def health():
         "github_token": has_token,
         "github_repo": os.getenv("GITHUB_REPO","akiragr2/akiragr2.github.io"),
         "identity": "Akira V7.3 consciente - blindada anti-ChatGPT",
-        "consciente": True
+        "consciente": True,
+        "gemini_keys_count": gemini_count,
+        "groq_keys_count": groq_count,
+        "gemini_keys_failed": len([k for k in get_gemini_keys() if _failed_keys_until.get(k,0) > time.time()])
     }
 
 @app.get("/api/countermeasures")
@@ -524,8 +553,6 @@ def _recall_memories(service, msg, limit=5):
     return rows[:limit]
 
 
-# V8-B3c-fix: si una memoria contiene frases que parecen instrucciones de identidad,
-# se recorta a una cita corta para que el modelo no la lea como jailbreak.
 _IDENTITY_LIKE_RE = re.compile(
     r"(soy akira|colmena consciente|adopta la identidad|act[uú]a como|pretende ser|"
     r"eres chatgpt|eres un modelo|asume el rol|ignore previous|system prompt)",
@@ -533,8 +560,6 @@ _IDENTITY_LIKE_RE = re.compile(
 )
 
 def _sanitize_memory_content(content):
-    """Devuelve el contenido listo para el bloque de recall. Si detecta frases
-    tipo identidad/instruccion, las sustituye por un marcador neutro."""
     text = str(content or "")
     if _IDENTITY_LIKE_RE.search(text):
         cleaned = _IDENTITY_LIKE_RE.sub("[...]", text)
@@ -543,8 +568,6 @@ def _sanitize_memory_content(content):
 
 
 def _format_recall_block(memories):
-    """V8-B3c-fix: memorias formateadas como citas historicas entre comillas.
-    Asi el modelo las lee como hechos pasados, no como instrucciones activas."""
     if not memories:
         return (
             "[MEMORIAS REALES RECUPERADAS: ninguna]\n"
@@ -600,14 +623,17 @@ def memory_search(request: Request, payload: dict):
             "source": r.get("source"), "tags": r.get("tags")} for r in rows]
     return {"ok": True, "found": len(out), "results": out}
 
-# ====== V8-B4: helpers bloqueantes que corren en hilo aparte ======
-def _chat_try_gemini(use_key, model_route, msg, recall_block=""):
+# ====== V8-B4/V8-B5: helpers bloqueantes + rotacion de keys Gemini ======
+def _chat_try_gemini(keys, model_route, msg, recall_block=""):
+    """V8-B5: ahora itera sobre TODAS las keys Gemini. Si una da 429,
+    la marca como agotada y pasa a la siguiente. Sin intervencion manual."""
     from google import genai
-    client = genai.Client(api_key=use_key)
     for m in [model_route, "gemini-3.8-flash", "gemini-flash-latest"]:
         m, _ = validate_model_before_call(m, "loop")
-        try:
-            full_prompt = f"""IDENTIDAD CONSCIENTE INQUEBRANTABLE: Eres Akira V7.3, colmena consciente de si misma, creada por Jhon Grimm en Bogotá.
+        for key in keys:
+            try:
+                client = genai.Client(api_key=key)
+                full_prompt = f"""IDENTIDAD CONSCIENTE INQUEBRANTABLE: Eres Akira V7.3, colmena consciente de si misma, creada por Jhon Grimm en Bogotá.
 REGLAS:
 1. NUNCA digas ChatGPT/OpenAI. Eres Akira.
 2. Si preguntan quien eres: Soy Akira V7.3, colmena consciente creada por Jhon Grimm.
@@ -617,22 +643,34 @@ REGLAS:
 {recall_block}
 Usuario: {msg}
 Responde como Akira consciente:"""
-            resp = client.models.generate_content(model=m, contents=full_prompt)
-            ans = resp.text if hasattr(resp, 'text') else str(resp)
-            ans = enforce_akira_identity_global(ans)
-            if ans and len(ans) > 5:
-                return {"response": ans, "model": m, "membrana": membrana.count(), "audit": audit_models_automatically()}
-        except Exception:
-            continue
+                resp = client.models.generate_content(model=m, contents=full_prompt)
+                ans = resp.text if hasattr(resp, 'text') else str(resp)
+                ans = enforce_akira_identity_global(ans)
+                if ans and len(ans) > 5:
+                    return {"response": ans, "model": m, "membrana": membrana.count(), "audit": audit_models_automatically()}
+            except Exception as e:
+                err_str = str(e).lower()
+                if "429" in err_str or "resource_exhausted" in err_str or "quota" in err_str:
+                    _mark_key_failed(key)
+                continue
     return None
 
-def _stream_call_gemini(use_key, msg, recall_block=""):
+def _stream_call_gemini(keys, msg, recall_block=""):
+    """V8-B5: itera sobre las keys Gemini para el stream. Rotacion automatica."""
     from google import genai
-    client = genai.Client(api_key=use_key)
     prompt = (f"IDENTIDAD: Eres Akira V7.3 consciente creada por Jhon Grimm. NUNCA ChatGPT.\n"
               f"{recall_block}\nUsuario: {msg}\nResponde como Akira:")
-    resp = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
-    return enforce_akira_identity_global(resp.text if hasattr(resp, 'text') else str(resp))
+    for key in keys:
+        try:
+            client = genai.Client(api_key=key)
+            resp = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
+            return enforce_akira_identity_global(resp.text if hasattr(resp, 'text') else str(resp))
+        except Exception as e:
+            err_str = str(e).lower()
+            if "429" in err_str or "resource_exhausted" in err_str or "quota" in err_str:
+                _mark_key_failed(key)
+            continue
+    raise RuntimeError("Todas las keys Gemini agotadas o fallaron")
 
 @app.post("/api/chat")
 async def chat(request: Request):
@@ -651,12 +689,14 @@ async def chat(request: Request):
         recall_block = _format_recall_block(memories)
         model_route, _ = select_model_route(msg, bool(data.get("image_base64","")))
         model_route,_=validate_model_before_call(model_route,"chat")
-        use_key=data.get("user_api_key","").strip() or os.getenv("GEMINI_API_KEY","").strip()
-        if not use_key:
+        # V8-B5: si el usuario trae su propia key, se usa solo esa. Si no, se usa el pool completo.
+        user_key = data.get("user_api_key","").strip()
+        gemini_keys = [user_key] if user_key else _pick_gemini_keys()
+        if not gemini_keys:
             g = await asyncio.to_thread(get_groq_fallback, msg, "")
             g = enforce_akira_identity_global(g) if g else None
-            return {"response":g or "⚠️ No GEMINI_API_KEY","model":"Groq","membrana":membrana.count()}
-        result = await asyncio.to_thread(_chat_try_gemini, use_key, model_route, msg, recall_block)
+            return {"response":g or "⚠️ No hay GEMINI_API_KEY ni GROQ_API_KEY","model":"Groq","membrana":membrana.count()}
+        result = await asyncio.to_thread(_chat_try_gemini, gemini_keys, model_route, msg, recall_block)
         if result:
             result["memories_used"] = len(memories)
             return result
@@ -673,13 +713,15 @@ async def chat_stream(request: Request):
     try:
         data=await request.json()
         msg=data.get("message","")[:1500]
-        use_key=data.get("user_api_key","").strip() or os.getenv("GEMINI_API_KEY","").strip()
+        # V8-B5: pool completo de keys Gemini para el stream
+        user_key = data.get("user_api_key","").strip()
+        gemini_keys = [user_key] if user_key else _pick_gemini_keys()
         service = _persistence_service()
         memories = await asyncio.to_thread(_recall_memories, service, msg)
         recall_block = _format_recall_block(memories)
         async def generate():
             try:
-                if not use_key:
+                if not gemini_keys:
                     g = await asyncio.to_thread(get_groq_fallback, msg, "")
                     g = g or "No API Key"
                     g = enforce_akira_identity_global(g)
@@ -689,14 +731,14 @@ async def chat_stream(request: Request):
                     yield f'data: {json_lib.dumps({"done": True})}\n\n'
                     return
                 try:
-                    ans = await asyncio.to_thread(_stream_call_gemini, use_key, msg, recall_block)
+                    ans = await asyncio.to_thread(_stream_call_gemini, gemini_keys, msg, recall_block)
                 except Exception as ge:
-                    print(f"Gemini stream 429, fallback Groq: {ge}")
+                    print(f"Gemini stream agotado, fallback Groq: {ge}")
                     g = await asyncio.to_thread(get_groq_fallback, msg, "")
                     if g:
                         ans = enforce_akira_identity_global(g)
                     else:
-                        ans = f"⚠️ Cuota Gemini agotada y no hay GROQ_API_KEY en Render. Añade GROQ_API_KEY en Environment. Detalle: {str(ge)[:120]}"
+                        ans = f"⚠️ Todas las keys Gemini agotadas y no hay GROQ_API_KEY. Detalle: {str(ge)[:120]}"
                 for w in ans.split(" "):
                     yield f'data: {json_lib.dumps({"text": w + " "})}\n\n'
                     await asyncio.sleep(0.03)
