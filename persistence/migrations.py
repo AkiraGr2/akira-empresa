@@ -298,4 +298,14 @@ MIGRATIONS = [
         CREATE INDEX agent_tasks_tool_idx ON agent_tasks (tool_name, created_at DESC)
         """,
     ),
+    (
+        "009_agents_contract_v8",
+        """
+        ALTER TABLE agents ADD COLUMN current_action TEXT;
+        ALTER TABLE agent_tasks ADD COLUMN model TEXT;
+        ALTER TABLE agent_tasks ADD COLUMN mission_id TEXT;
+        ALTER TABLE agent_tasks ADD COLUMN memory_used JSONB NOT NULL DEFAULT '[]'::jsonb;
+        CREATE INDEX agent_tasks_mission_idx ON agent_tasks (mission_id, created_at DESC)
+        """,
+    ),
 ]
