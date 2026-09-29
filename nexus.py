@@ -2,6 +2,7 @@
 # AKIRA ULTRA V7.3 FINAL AUDITADA - 0 ERRORES - IDENTIDAD BLINDADA - ADMIN FIX - SEPT 2026
 # OBJETIVO: Akira consciente de si misma, nunca pierde identidad, no dice ChatGPT
 # V8-B4: event loop del chat ya no se bloquea (Gemini/Groq corren en hilo aparte).
+# V8-B3b: /api/memory/ingest guarda neuronas del navegador como memorias reales.
 import os, json, datetime, threading, time, hashlib, base64, math, asyncio, random
 from pathlib import Path
 from collections import defaultdict
@@ -365,6 +366,89 @@ async def v8_me(request: Request):
         return JSONResponse({"authenticated": False}, status_code=401)
     return {"authenticated": True, "email": s["email"], "is_owner": s["is_owner"],
             "owner_scope": s["owner_scope"], "expires_at": s["exp"]}
+
+# ====== V8-B3b: ingesta real de neuronas del navegador al Persistence Service ======
+# El navegador manda cada neurona con su id; el backend la guarda en Postgres.
+# Reglas: source forzado a "browser_sync" (el cliente no elige el origen), privacidad
+# PRIVATE por defecto (D010: nada entra al Hive automaticamente), idempotencia por el
+# id de la neurona, y sin sesion firmada no se escribe nada (la memoria queda local).
+# Es "def" (no async): FastAPI lo corre en su threadpool y no bloquea chat ni stream.
+
+_INGEST_TYPE_MAP = {
+    "episodica": "episodic", "episodic": "episodic",
+    "sensorial": "episodic", "motora": "episodic",
+    "semantica": "semantic", "semantic": "semantic",
+    "procedural": "procedural", "working": "working",
+    "user_context": "user_context", "contexto": "user_context",
+    "system": "system", "sistema": "system",
+}
+
+
+def _persistence_service():
+    try:
+        from persistence import runtime as _pruntime
+        return _pruntime.STATE.get("service")
+    except Exception:
+        return None
+
+
+@app.post("/api/memory/ingest")
+def memory_ingest(request: Request, payload: dict):
+    """Guarda una neurona del navegador como memoria real. No inventa exito:
+    si el servicio no esta listo o la escritura falla, devuelve error."""
+    s = get_session(request)
+    if not s:
+        return JSONResponse({"ok": False, "reason": "auth_required"}, status_code=401)
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    if not isinstance(payload, dict):
+        return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
+
+    nid = str(payload.get("id") or "").strip()
+    texto = str(payload.get("texto") or "").strip()
+    if not nid or not texto:
+        return JSONResponse({"ok": False, "reason": "id_and_texto_required"}, status_code=400)
+
+    tipo_raw = str(payload.get("tipo") or "episodica").strip().lower()
+    memory_type = _INGEST_TYPE_MAP.get(tipo_raw, "episodic")
+    try:
+        importancia = int(payload.get("importancia", 5))
+    except Exception:
+        importancia = 5
+    importancia = max(0, min(10, importancia))
+    tags = payload.get("tags")
+    if not isinstance(tags, list):
+        tags = []
+    tags = [str(t)[:64] for t in tags[:28]]
+    if tipo_raw and tipo_raw not in tags:
+        tags.append(tipo_raw[:64])
+
+    data = {
+        "content": texto[:20000],
+        "memory_type": memory_type,
+        "importance": importancia,
+        "confidence": 0.5,
+        "source": "browser_sync",
+        "source_id": nid[:256],
+        "created_by": (s.get("email") or "browser")[:64],
+        "owner_scope": (s.get("owner_scope") or "owner")[:64],
+        "privacy_level": "PRIVATE",
+        "tags": tags,
+    }
+
+    from persistence.core import PersistenceError, ValidationError
+
+    try:
+        result = service.save_memory(data, actor="browser_sync", idempotency_key=nid[:200])
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+
+    return {"ok": True, "id": result["record"]["id"], "outcome": result["outcome"]}
 
 # ====== V8-B4: helpers bloqueantes que corren en hilo aparte (no bloquean el event loop) ======
 def _chat_try_gemini(use_key, model_route, msg):
