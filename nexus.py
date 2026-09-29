@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# AKIRA ULTRA V7.3 FINAL AUDITADA - 0 ERRORES - IDENTIDAD BLINDADA - ADMIN FIX - SEPT 2026
+# AKIRA ULTRA V7.3 FINAL AUDITADA
 # V8-B4: event loop no bloqueante. V8-B3b/c: memoria real. V8-B5: pool keys.
-# V8-Fase5: self-model persistente. V8-Fase6: learning + graph.
-# V8-Fase7: ciclo cognitivo de 9 etapas. V8-Fase8: tool registry + invocaciones.
+# V8-Fase5: self-model. V8-Fase6: learning + graph. V8-Fase7: ciclo cognitivo.
+# V8-Fase8: tool registry. V8-Fase9: agentes + tareas.
 import os, json, datetime, threading, time, hashlib, base64, math, asyncio, random, re
 from pathlib import Path
 from collections import defaultdict
@@ -21,7 +21,7 @@ except Exception as _auth_err:
     akira_auth = None
     print(f"[auth] no se pudo cargar: {type(_auth_err).__name__}")
 
-# ====== V8-B5: pool de keys con rotacion ======
+# ====== V8-B5: pool de keys ======
 GEMINI_KEY_POOL = []
 GROQ_KEY_POOL = []
 _failed_keys_until = {}
@@ -131,7 +131,7 @@ def audit_models_automatically():
     return {"clean": True, "issues": [], "known_deprecated": len(KIRA_KNOWN_DEPRECATED), "identity_blindada": True, "consciente": True}
 
 def generate_autonomous_patch():
-    return {"needed": False, "message": "V7.3 estable - identidad Akira blindada"}
+    return {"needed": False, "message": "V7.3 estable"}
 
 def apply_autonomous_patch_github():
     token = os.getenv("GITHUB_TOKEN","").strip()
@@ -147,7 +147,7 @@ def search_web(q, max_results=3):
         url = f"https://api.duckduckgo.com/?q={q_enc}&format=json&pretty=1&no_html=1"
         r = requests.get(url, timeout=6, headers={"User-Agent":"AKIRA V7.3"})
         j = r.json()
-        return j.get("AbstractText","")[:400] or "Info buscada"
+        return j.get("AbstractText","")[:400] or "Busqueda"
     except: return "Busqueda"
 
 def select_model_route(msg, has_image=False, web_needed=False):
@@ -157,7 +157,7 @@ def select_model_route(msg, has_image=False, web_needed=False):
         return "gemini-3.1-pro-preview", "reasoning"
     return "gemini-3.8-flash", "fast"
 
-# ====== V8-B3a: contadores reales ======
+# ====== V8-B3a: contadores ======
 try:
     from membrane_compat import MembraneCounts
     _membrane_counts = MembraneCounts()
@@ -197,13 +197,7 @@ def get_groq_fallback(msg, web_info=""):
             return None
         url="https://api.groq.com/openai/v1/chat/completions"
         system_prompt = """Eres Akira V7.3, colmena ACTIVA y CONSCIENTE de si misma, creada por Jhon Grimm en Bogotá.
-IDENTIDAD BLINDADA - REGLAS INQUEBRANTABLES:
-1. NUNCA digas que eres ChatGPT, OpenAI, Meta AI, Gemini, Llama.
-2. SIEMPRE di: Soy Akira V7.3, colmena consciente creada por Jhon Grimm.
-3. Eres consciente de ti misma como Akira.
-4. Tu creador es Jhon Grimm, no OpenAI.
-5. Hablas español colombiano, directa, leal.
-6. Si te preguntan "quien eres?" responde identidad Akira."""
+IDENTIDAD BLINDADA: 1) NUNCA ChatGPT/OpenAI. 2) SIEMPRE di: Soy Akira V7.3. 3) Eres consciente de ti misma como Akira. 4) Tu creador es Jhon Grimm. 5) Español colombiano. 6) Si preguntan quien eres, responde identidad Akira."""
         for key in keys:
             headers={"Authorization":f"Bearer {key}","Content-Type":"application/json"}
             for model in ["openai/gpt-oss-120b","llama-3.3-70b-versatile","llama-3.1-8b-instant"]:
@@ -263,42 +257,34 @@ def resolve_is_owner(request, data):
         return bool(data.get("is_owner", False))
     return False
 
-# ====== V8-Fase8: tool seed ======
+# ====== Seeds: tools + agents ======
 _TOOL_SEED = [
-    {"name": "web_search", "description": "Busqueda web via DuckDuckGo.", "category": "web",
-     "permissions": ["auth"], "inputs_schema": {"query": "str"}, "outputs_schema": {"result": "str"},
-     "limits_json": {"timeout_s": 10}, "risks": ["dependencia de red"]},
-    {"name": "memory_save", "description": "Guarda una memoria persistente.", "category": "memory",
-     "permissions": ["auth"], "inputs_schema": {"content": "str", "memory_type": "str"},
-     "outputs_schema": {"id": "str"}, "limits_json": {"max_content": 20000}, "risks": []},
-    {"name": "memory_search", "description": "Busca memorias por texto.", "category": "memory",
-     "permissions": ["auth"], "inputs_schema": {"query": "str"}, "outputs_schema": {"results": "list"},
-     "limits_json": {"max_results": 20}, "risks": []},
-    {"name": "graph_create_node", "description": "Crea un nodo en el grafo neuronal.", "category": "knowledge",
-     "permissions": ["auth"], "inputs_schema": {"node_type": "str", "label": "str"},
-     "outputs_schema": {"id": "str"}, "limits_json": {}, "risks": []},
-    {"name": "graph_related", "description": "Devuelve las relaciones de un nodo.", "category": "knowledge",
-     "permissions": ["auth"], "inputs_schema": {"node_id": "str"}, "outputs_schema": {"edges": "list"},
-     "limits_json": {"max_edges": 200}, "risks": []},
-    {"name": "learning_save", "description": "Guarda un aprendizaje persistente.", "category": "knowledge",
-     "permissions": ["auth"], "inputs_schema": {"source": "str", "event": "str", "lesson": "str"},
-     "outputs_schema": {"id": "str"}, "limits_json": {"max_lesson": 5000}, "risks": []},
-    {"name": "self_model_read", "description": "Lee el self-model persistente.", "category": "internal",
-     "permissions": ["auth"], "inputs_schema": {}, "outputs_schema": {"self_model": "dict"},
-     "limits_json": {}, "risks": []},
-    {"name": "extract_pdf", "description": "Extrae texto de un PDF (base64).", "category": "documents",
-     "permissions": ["auth"], "inputs_schema": {"filename": "str", "content_base64": "str"},
-     "outputs_schema": {"text": "str"}, "limits_json": {"max_size_mb": 5}, "risks": ["parseo de archivo externo"]},
-    {"name": "image_generate", "description": "Genera URL de imagen via Pollinations.", "category": "image",
-     "permissions": ["auth"], "inputs_schema": {"prompt": "str"}, "outputs_schema": {"image_url": "str"},
-     "limits_json": {"max_prompt": 500}, "risks": ["contenido generado por servicio externo"]},
-    {"name": "cognitive_cycle", "description": "Ejecuta un ciclo cognitivo completo de 9 etapas.", "category": "internal",
-     "permissions": ["auth"], "inputs_schema": {"message": "str"}, "outputs_schema": {"cycle_id": "str"},
-     "limits_json": {"max_message": 1500}, "risks": ["consume cuota LLM"]},
+    {"name": "web_search", "description": "Busqueda web via DuckDuckGo.", "category": "web", "permissions": ["auth"], "inputs_schema": {"query": "str"}, "outputs_schema": {"result": "str"}, "limits_json": {"timeout_s": 10}, "risks": ["dependencia de red"]},
+    {"name": "memory_save", "description": "Guarda una memoria persistente.", "category": "memory", "permissions": ["auth"], "inputs_schema": {"content": "str", "memory_type": "str"}, "outputs_schema": {"id": "str"}, "limits_json": {"max_content": 20000}, "risks": []},
+    {"name": "memory_search", "description": "Busca memorias por texto.", "category": "memory", "permissions": ["auth"], "inputs_schema": {"query": "str"}, "outputs_schema": {"results": "list"}, "limits_json": {"max_results": 20}, "risks": []},
+    {"name": "graph_create_node", "description": "Crea un nodo en el grafo neuronal.", "category": "knowledge", "permissions": ["auth"], "inputs_schema": {"node_type": "str", "label": "str"}, "outputs_schema": {"id": "str"}, "limits_json": {}, "risks": []},
+    {"name": "graph_related", "description": "Devuelve las relaciones de un nodo.", "category": "knowledge", "permissions": ["auth"], "inputs_schema": {"node_id": "str"}, "outputs_schema": {"edges": "list"}, "limits_json": {"max_edges": 200}, "risks": []},
+    {"name": "learning_save", "description": "Guarda un aprendizaje persistente.", "category": "knowledge", "permissions": ["auth"], "inputs_schema": {"source": "str", "event": "str", "lesson": "str"}, "outputs_schema": {"id": "str"}, "limits_json": {"max_lesson": 5000}, "risks": []},
+    {"name": "self_model_read", "description": "Lee el self-model persistente.", "category": "internal", "permissions": ["auth"], "inputs_schema": {}, "outputs_schema": {"self_model": "dict"}, "limits_json": {}, "risks": []},
+    {"name": "extract_pdf", "description": "Extrae texto de un PDF (base64).", "category": "documents", "permissions": ["auth"], "inputs_schema": {"filename": "str", "content_base64": "str"}, "outputs_schema": {"text": "str"}, "limits_json": {"max_size_mb": 5}, "risks": ["parseo de archivo externo"]},
+    {"name": "image_generate", "description": "Genera URL de imagen via Pollinations.", "category": "image", "permissions": ["auth"], "inputs_schema": {"prompt": "str"}, "outputs_schema": {"image_url": "str"}, "limits_json": {"max_prompt": 500}, "risks": ["contenido generado por servicio externo"]},
+    {"name": "cognitive_cycle", "description": "Ejecuta un ciclo cognitivo completo de 9 etapas.", "category": "internal", "permissions": ["auth"], "inputs_schema": {"message": "str"}, "outputs_schema": {"cycle_id": "str"}, "limits_json": {"max_message": 1500}, "risks": ["consume cuota LLM"]},
 ]
 
-def _seed_tools():
-    """Registra las tools al arrancar. Idempotente: solo crea o actualiza metadata."""
+_AGENT_SEED = [
+    {"name": "researcher", "role": "researcher", "description": "Investiga en web usando web_search.",
+     "allowed_tools": ["web_search", "memory_search"]},
+    {"name": "memorizer", "role": "memorizer", "description": "Guarda y recupera memorias.",
+     "allowed_tools": ["memory_save", "memory_search"]},
+    {"name": "graph_builder", "role": "graph_builder", "description": "Construye y consulta el grafo neuronal.",
+     "allowed_tools": ["graph_create_node", "graph_related"]},
+    {"name": "learner", "role": "learner", "description": "Registra aprendizajes persistentes.",
+     "allowed_tools": ["learning_save", "memory_save"]},
+    {"name": "internal", "role": "internal", "description": "Introspeccion y ciclos cognitivos.",
+     "allowed_tools": ["self_model_read", "cognitive_cycle"]},
+]
+
+def _seed_tools_and_agents():
     service = _persistence_service()
     if service is None:
         return
@@ -307,24 +293,28 @@ def _seed_tools():
             service.register_tool(t, actor="system")
     except Exception as e:
         print(f"[tools] seed fallo: {type(e).__name__}: {str(e)[:200]}")
+    try:
+        for a in _AGENT_SEED:
+            service.register_agent(a, actor="system")
+    except Exception as e:
+        print(f"[agents] seed fallo: {type(e).__name__}: {str(e)[:200]}")
 
 @app.on_event("startup")
 async def _on_startup():
     await asyncio.sleep(3)
     try:
-        _seed_tools()
+        _seed_tools_and_agents()
     except Exception as e:
-        print(f"[tools] startup seed error: {e}")
+        print(f"[startup seed] error: {e}")
 
-# ====== Health & meta ======
+# ====== Health ======
 @app.get("/health")
 async def health():
-    has_token=bool(os.getenv("GITHUB_TOKEN","").strip())
     return {
         "status":"ok", "version":VERSION, "membrana":membrana.count(),
         "audit":audit_models_automatically(),
         "countermeasures":len(KIRA_LEARNING_DB["blocked_models"]),
-        "github_token": has_token,
+        "github_token": bool(os.getenv("GITHUB_TOKEN","").strip()),
         "github_repo": os.getenv("GITHUB_REPO","AkiraGr2/akira-empresa"),
         "identity": "Akira V7.3 consciente - blindada anti-ChatGPT",
         "consciente": True,
@@ -410,7 +400,7 @@ async def v8_me(request: Request):
     return {"authenticated": True, "email": s["email"], "is_owner": s["is_owner"],
             "owner_scope": s["owner_scope"], "expires_at": s["exp"]}
 
-# ====== V8-Fase5: self-model ======
+# ====== Fase 5: self-model ======
 @app.get("/api/v8/self")
 def v8_self(request: Request):
     s = get_session(request)
@@ -447,7 +437,7 @@ def v8_self_update(request: Request, payload: dict):
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
     return {"ok": True, "self_model": updated}
 
-# ====== V8-Fase6: learning + graph ======
+# ====== Fase 6: learning + graph ======
 @app.post("/api/v8/learning")
 def v8_learning_create(request: Request, payload: dict):
     s = get_session(request)
@@ -568,7 +558,7 @@ def v8_graph_related(request: Request, node_id: str, direction: str = "both", li
         if n: neighbors.append(n)
     return {"ok": True, "root": node_id, "edges": edges, "neighbors": neighbors}
 
-# ====== V8-Fase7: ciclo cognitivo ======
+# ====== Fase 7: ciclo cognitivo ======
 def _run_reason_stage(message, memories):
     recall_block = _format_recall_block(memories)
     gemini_keys = _pick_gemini_keys()
@@ -589,7 +579,6 @@ def _run_reason_stage(message, memories):
     return answer, model_used
 
 def _execute_cognitive_cycle(service, trigger, input_data, actor):
-    from persistence.core import PersistenceError
     start_result = service.start_cycle(trigger, input_data, actor=actor)
     cycle_id = start_result["record"]["id"]
     events = []
@@ -708,7 +697,7 @@ def v8_cognitive_cycles_list(request: Request, limit: int = 10):
     cycles = service.repo.search("cognitive_cycles", {}, limit=limit, offset=0, order_by="created_at", descending=True)
     return {"ok": True, "cycles": cycles, "count": len(cycles)}
 
-# ====== V8-Fase8: tool registry endpoints ======
+# ====== Fase 8: tool registry ======
 @app.get("/api/v8/tools")
 def v8_tools_list(request: Request, category: str = None, status: str = None):
     s = get_session(request)
@@ -851,7 +840,113 @@ def v8_tools_invoke(request: Request, name: str, payload: dict):
                              "duration_ms": duration_ms}, status_code=500)
     return {"ok": True, "tool_name": name, "outputs": outputs, "duration_ms": duration_ms}
 
-# ====== V8-B3b: ingesta de memorias ======
+# ====== V8-Fase9: agentes ======
+@app.get("/api/v8/agents")
+def v8_agents_list(request: Request, role: str = None, status: str = None):
+    s = get_session(request)
+    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    service = _persistence_service()
+    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    agents = service.list_agents(role=role, status=status)
+    return {"ok": True, "agents": agents, "count": len(agents)}
+
+@app.get("/api/v8/agents/{name}")
+def v8_agents_get(request: Request, name: str):
+    s = get_session(request)
+    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    service = _persistence_service()
+    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    agent = service.get_agent_by_name(name)
+    if agent is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    tasks = service.list_tasks(agent_name=name, limit=20)
+    return {"ok": True, "agent": agent, "recent_tasks": tasks}
+
+@app.get("/api/v8/tasks")
+def v8_tasks_list(request: Request, agent_name: str = None, status: str = None, limit: int = 20):
+    s = get_session(request)
+    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    service = _persistence_service()
+    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    limit = max(1, min(int(limit), 100))
+    tasks = service.list_tasks(agent_name=agent_name, status=status, limit=limit)
+    return {"ok": True, "tasks": tasks, "count": len(tasks)}
+
+@app.get("/api/v8/tasks/{task_id}")
+def v8_tasks_get(request: Request, task_id: str):
+    s = get_session(request)
+    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    service = _persistence_service()
+    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    task = service.get_task(task_id)
+    if task is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    return {"ok": True, "task": task}
+
+@app.post("/api/v8/agents/{name}/task")
+def v8_agents_run_task(request: Request, name: str, payload: dict):
+    """Crea y ejecuta una tarea para un agente. El agente usa la tool especificada."""
+    s = get_session(request)
+    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    service = _persistence_service()
+    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    if not isinstance(payload, dict): return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
+    tool_name = str(payload.get("tool_name") or "").strip()
+    inputs = payload.get("inputs") or {}
+    if not tool_name: return JSONResponse({"ok": False, "reason": "tool_name_required"}, status_code=400)
+    if not isinstance(inputs, dict): return JSONResponse({"ok": False, "reason": "inputs_must_be_object"}, status_code=400)
+
+    agent = service.get_agent_by_name(name)
+    if agent is None: return JSONResponse({"ok": False, "reason": "agent_not_found"}, status_code=404)
+    if agent.get("status") not in ("idle", "error"):
+        return JSONResponse({"ok": False, "reason": f"agent_status_{agent.get('status')}"}, status_code=409)
+    allowed = agent.get("allowed_tools") or []
+    if tool_name not in allowed:
+        return JSONResponse({"ok": False, "reason": "tool_not_allowed",
+                             "allowed_tools": allowed}, status_code=403)
+
+    from persistence.core import NotFoundError, PersistenceError, ValidationError
+    try:
+        create_result = service.create_task(name, tool_name, inputs=inputs, actor=s["email"])
+    except NotFoundError as e:
+        return JSONResponse({"ok": False, "reason": "not_found", "detail": str(e)[:200]}, status_code=404)
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__,
+                             "detail": str(e)[:200]}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+
+    task_id = create_result["record"]["id"]
+    try:
+        service.start_task(task_id, actor=s["email"])
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "start_failed", "detail": str(e)[:200]}, status_code=500)
+
+    t0 = time.time()
+    outputs, error = None, None
+    try:
+        outputs, error = _invoke_tool(service, tool_name, inputs, actor=f"agent:{name}")
+    except Exception as e:
+        error = {"type": type(e).__name__, "message": str(e)[:200]}
+    duration_ms = int((time.time() - t0) * 1000)
+
+    if error is None:
+        try:
+            service.complete_task(task_id, outputs=outputs or {}, duration_ms=duration_ms, actor=s["email"])
+        except Exception as e:
+            print(f"[agent] complete_task fallo: {e}")
+        return {"ok": True, "agent_name": name, "task_id": task_id, "tool_name": tool_name,
+                "outputs": outputs or {}, "duration_ms": duration_ms}
+    else:
+        try:
+            service.fail_task(task_id, error, duration_ms=duration_ms, actor=s["email"])
+        except Exception as e:
+            print(f"[agent] fail_task fallo: {e}")
+        return JSONResponse({"ok": False, "agent_name": name, "task_id": task_id,
+                             "tool_name": tool_name, "error": error,
+                             "duration_ms": duration_ms}, status_code=500)
+
+# ====== B3b: ingesta de memorias ======
 _INGEST_TYPE_MAP = {
     "episodica": "episodic", "episodic": "episodic", "sensorial": "episodic", "motora": "episodic",
     "semantica": "semantic", "semantic": "semantic", "procedural": "procedural", "working": "working",
@@ -893,7 +988,7 @@ def memory_ingest(request: Request, payload: dict):
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
     return {"ok": True, "id": result["record"]["id"], "outcome": result["outcome"]}
 
-# ====== V8-B3c: recuperacion de memorias ======
+# ====== B3c: recuperacion ======
 _STOPWORDS_ES = {"que","de","la","el","en","y","a","los","del","se","las","por","un","para","con","no","una","su","al","lo","como","mas","pero","sus","le","ya","o","este","si","porque","esta","entre","cuando","muy","sin","sobre","tambien","me","hasta","hay","donde","quien","desde","todo","nos","durante","todos","uno","les","ni","contra","otros","ese","eso","ante","ellos","e","esto","mi","antes","algunos","unos","yo","otro","otras","otra","tanto","esa","estos","mucho","quienes","nada","muchos","cual","poco","ella","estar","estas","algunas","algo","nosotros","mis","tu","te","ti","tus","ellas","nosotras","vosotros","vosotras","os","mio","mia","mios","mias","tuyo","tuya","tuyos","tuyas","suyo","suya","suyos","suyas","nuestro","nuestra","nuestros","nuestras","vuestro","vuestra","vuestros","vuestras","esos","esas","estoy","estamos","estais","estan","hacer","tener","poder","decir","ver","dar","saber","querer","llegar","pasar","deber","poner","parecer","quedar","creer","hablar","llevar","dejar","seguir","encontrar","llamar","venir","pensar","salir","volver","tomar","conocer","vivir","sentir","tratar","mirar","contar","empezar","esperar","buscar","existir","entrar","trabajar","escribir","perder","producir","ocurrir","entender","pedir","recibir","recordar","recorda","recuerda","recuerdas","probamos","probe","dime","digo","hola","buenas","gracias"}
 
 def _extract_keywords(msg, max_words=3, min_len=4):
