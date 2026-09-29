@@ -45,6 +45,25 @@ MEMORY_SCHEMA_VERSION = "memory.v1"
 SELF_MODEL_PRIMARY_ID = "akira_primary"
 SELF_MODEL_SCHEMA_VERSION = "self_model.v1"
 
+# V8-Fase6: grafo neuronal + aprendizaje persistente.
+LEARNING_SCHEMA_VERSION = "learning.v1"
+GRAPH_NODE_SCHEMA_VERSION = "graph_node.v1"
+GRAPH_EDGE_SCHEMA_VERSION = "graph_edge.v1"
+
+LEARNING_OUTCOMES = ("success", "failure", "partial", "unknown")
+
+NODE_TYPES = (
+    "concept", "person", "project", "tool", "experience",
+    "document", "skill", "error", "solution", "mission",
+)
+
+# Tipos de relacion permitidos. Lista blanca: el cliente no inventa relaciones.
+RELATION_TYPES = (
+    "uses", "used_by", "related_to", "causes", "caused_by",
+    "improves", "improved_by", "contains", "part_of",
+    "precedes", "follows", "solves", "solved_by", "learned_from",
+)
+
 
 def new_id(prefix: str) -> str:
     """Formato Fase 3: <tipo>_<uuid>."""
@@ -73,8 +92,6 @@ ENTITIES = {
         "orderable": ("created_at", "updated_at", "importance", "last_accessed_at"),
         "idempotent": True,
     },
-    # V8-Fase5: self-model persistente. Una sola fila con id="akira_primary".
-    # Todos los campos cognitivos son JSONB (estructurados, no texto).
     "self_model": {
         "table": "self_model",
         "columns": (
@@ -95,6 +112,64 @@ ENTITIES = {
         "filterable": ("id", "idempotency_key"),
         "in_filterable": (),
         "orderable": ("created_at", "updated_at"),
+        "idempotent": True,
+    },
+    # V8-Fase6: registro de aprendizaje persistente (Contrato V8 s6).
+    "learning_events": {
+        "table": "learning_events",
+        "columns": (
+            "id", "source", "event", "lesson", "knowledge_nodes", "relationships",
+            "confidence", "outcome", "reuse_count", "last_reused_at",
+            "schema_version", "idempotency_key",
+        ),
+        "json_columns": ("knowledge_nodes", "relationships"),
+        "mutable": (
+            "source", "event", "lesson", "knowledge_nodes", "relationships",
+            "confidence", "outcome", "reuse_count", "last_reused_at",
+        ),
+        "filterable": ("id", "source", "outcome", "idempotency_key"),
+        "in_filterable": ("source", "outcome"),
+        "orderable": ("created_at", "updated_at", "reuse_count", "last_reused_at"),
+        "idempotent": True,
+    },
+    # V8-Fase6: nodos del grafo neuronal.
+    "graph_nodes": {
+        "table": "graph_nodes",
+        "columns": (
+            "id", "node_type", "label", "description", "node_metadata",
+            "weight", "confidence", "reuse_count", "owner_scope", "privacy_level",
+            "status", "schema_version", "idempotency_key", "last_used_at",
+        ),
+        "json_columns": ("node_metadata",),
+        "mutable": (
+            "label", "description", "node_metadata", "weight", "confidence",
+            "reuse_count", "privacy_level", "status", "last_used_at",
+        ),
+        "filterable": (
+            "id", "node_type", "owner_scope", "privacy_level", "status", "idempotency_key",
+        ),
+        "in_filterable": ("node_type", "owner_scope", "privacy_level", "status"),
+        "orderable": ("created_at", "updated_at", "weight", "reuse_count", "last_used_at"),
+        "idempotent": True,
+    },
+    # V8-Fase6: relaciones entre nodos del grafo.
+    "graph_edges": {
+        "table": "graph_edges",
+        "columns": (
+            "id", "from_node", "to_node", "relation_type", "weight", "confidence",
+            "frequency", "origin", "success_count", "failure_count", "status",
+            "schema_version", "idempotency_key", "last_used_at",
+        ),
+        "json_columns": (),
+        "mutable": (
+            "relation_type", "weight", "confidence", "frequency", "origin",
+            "success_count", "failure_count", "status", "last_used_at",
+        ),
+        "filterable": (
+            "id", "from_node", "to_node", "relation_type", "origin", "status", "idempotency_key",
+        ),
+        "in_filterable": ("relation_type", "origin", "status"),
+        "orderable": ("created_at", "updated_at", "weight", "frequency", "last_used_at"),
         "idempotent": True,
     },
 }
@@ -128,6 +203,18 @@ def _int_0_10(name, value):
 def _float_0_1(name, value):
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
         raise ValidationError(f"{name} debe ser un numero entre 0 y 1")
+    return float(value)
+
+
+def _non_negative_int(name, value):
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValidationError(f"{name} debe ser un entero >= 0")
+    return value
+
+
+def _non_negative_float(name, value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        raise ValidationError(f"{name} debe ser un numero >= 0")
     return float(value)
 
 
@@ -216,8 +303,6 @@ def validate_self_model(data, partial: bool = False) -> dict:
       - Los 4 campos "objeto" (identity, purpose, current_state, knowledge_state) deben ser dict.
       - Los 7 campos "lista" (capabilities, tools, models, ...) deben ser list.
       - No admite dict vacio: si no hay cambios reales, es un error.
-    partial se acepta por simetria con validate_memory, pero aqui no hay modo
-    "creacion completa": el self-model siempre se actualiza por partes.
     """
     if not isinstance(data, dict):
         raise ValidationError("el registro debe ser un objeto")
@@ -239,6 +324,176 @@ def validate_self_model(data, partial: bool = False) -> dict:
             if not isinstance(v, list):
                 raise ValidationError(f"{field} debe ser una lista")
             out[field] = v
+    return out
+
+
+# V8-Fase6: validador de learning_events (Contrato V8 s6).
+_LEARNING_INPUT = {
+    "source", "event", "lesson", "knowledge_nodes", "relationships",
+    "confidence", "outcome", "reuse_count", "last_reused_at",
+}
+_LEARNING_UPDATABLE = {
+    "source", "event", "lesson", "knowledge_nodes", "relationships",
+    "confidence", "outcome", "reuse_count", "last_reused_at",
+}
+
+
+def validate_learning_event(data, partial: bool = False) -> dict:
+    """Valida un LearningEvent.
+
+    Campos obligatorios (creacion): source, event, lesson.
+    knowledge_nodes y relationships son listas de strings (ids de nodos u otras entidades).
+    outcome debe ser uno de LEARNING_OUTCOMES.
+    reuse_count solo crece (>= 0).
+    """
+    if not isinstance(data, dict):
+        raise ValidationError("el registro debe ser un objeto")
+    allowed = _LEARNING_UPDATABLE if partial else _LEARNING_INPUT
+    extra = sorted(set(data) - allowed)
+    if extra:
+        raise ValidationError(f"campos no permitidos: {extra}")
+    if partial and not data:
+        raise ValidationError("no hay cambios")
+    if not partial:
+        for req in ("source", "event", "lesson"):
+            if req not in data:
+                raise ValidationError(f"falta el campo obligatorio {req}")
+
+    out = {}
+    if "source" in data or not partial:
+        out["source"] = _str("source", data.get("source", "unknown"), 64)
+    if "event" in data:
+        out["event"] = _str("event", data["event"], 500)
+    if "lesson" in data:
+        out["lesson"] = _str("lesson", data["lesson"], 5000)
+    if "knowledge_nodes" in data or not partial:
+        v = data.get("knowledge_nodes", [])
+        if not isinstance(v, list) or len(v) > 100:
+            raise ValidationError("knowledge_nodes debe ser una lista de maximo 100 textos")
+        out["knowledge_nodes"] = [_str("knowledge_node", x, 256) for x in v]
+    if "relationships" in data or not partial:
+        v = data.get("relationships", [])
+        if not isinstance(v, list) or len(v) > 100:
+            raise ValidationError("relationships debe ser una lista de maximo 100 textos")
+        out["relationships"] = [_str("relationship", x, 256) for x in v]
+    if "confidence" in data or not partial:
+        out["confidence"] = _float_0_1("confidence", data.get("confidence", 0.5))
+    if "outcome" in data or not partial:
+        out["outcome"] = _choice("outcome", data.get("outcome", "unknown"), LEARNING_OUTCOMES)
+    if "reuse_count" in data:
+        out["reuse_count"] = _non_negative_int("reuse_count", data["reuse_count"])
+    if "last_reused_at" in data:
+        out["last_reused_at"] = _str("last_reused_at", data["last_reused_at"], 64)
+    return out
+
+
+# V8-Fase6: validador de graph_nodes.
+_NODE_INPUT = {
+    "node_type", "label", "description", "node_metadata", "weight", "confidence",
+    "reuse_count", "owner_scope", "privacy_level", "status", "last_used_at",
+}
+_NODE_UPDATABLE = {
+    "label", "description", "node_metadata", "weight", "confidence",
+    "reuse_count", "privacy_level", "status", "last_used_at",
+}
+
+
+def validate_graph_node(data, partial: bool = False) -> dict:
+    """Valida un GraphNode. Campos obligatorios: node_type, label."""
+    if not isinstance(data, dict):
+        raise ValidationError("el registro debe ser un objeto")
+    allowed = _NODE_UPDATABLE if partial else _NODE_INPUT
+    extra = sorted(set(data) - allowed)
+    if extra:
+        raise ValidationError(f"campos no permitidos: {extra}")
+    if partial and not data:
+        raise ValidationError("no hay cambios")
+    if not partial:
+        for req in ("node_type", "label"):
+            if req not in data:
+                raise ValidationError(f"falta el campo obligatorio {req}")
+
+    out = {}
+    if "node_type" in data:
+        out["node_type"] = _choice("node_type", data["node_type"], NODE_TYPES)
+    if "label" in data:
+        out["label"] = _str("label", data["label"], 200)
+    if "description" in data:
+        out["description"] = _str("description", data["description"], 2000, allow_empty=True)
+    if "node_metadata" in data:
+        v = data["node_metadata"]
+        if not isinstance(v, dict):
+            raise ValidationError("node_metadata debe ser un objeto (dict)")
+        out["node_metadata"] = v
+    if "weight" in data or not partial:
+        out["weight"] = _non_negative_float("weight", data.get("weight", 1.0))
+    if "confidence" in data or not partial:
+        out["confidence"] = _float_0_1("confidence", data.get("confidence", 0.5))
+    if "reuse_count" in data:
+        out["reuse_count"] = _non_negative_int("reuse_count", data["reuse_count"])
+    if "owner_scope" in data or not partial:
+        out["owner_scope"] = _str("owner_scope", data.get("owner_scope", "owner"), 64)
+    if "privacy_level" in data or not partial:
+        out["privacy_level"] = _choice("privacy_level", data.get("privacy_level", "PRIVATE"), PRIVACY_LEVELS)
+    if "status" in data:
+        out["status"] = _choice("status", data["status"], STATUSES)
+    if "last_used_at" in data:
+        out["last_used_at"] = _str("last_used_at", data["last_used_at"], 64)
+    return out
+
+
+# V8-Fase6: validador de graph_edges.
+_EDGE_INPUT = {
+    "from_node", "to_node", "relation_type", "weight", "confidence",
+    "frequency", "origin", "success_count", "failure_count", "status", "last_used_at",
+}
+_EDGE_UPDATABLE = {
+    "relation_type", "weight", "confidence", "frequency", "origin",
+    "success_count", "failure_count", "status", "last_used_at",
+}
+
+
+def validate_graph_edge(data, partial: bool = False) -> dict:
+    """Valida un GraphEdge. Campos obligatorios: from_node, to_node, relation_type."""
+    if not isinstance(data, dict):
+        raise ValidationError("el registro debe ser un objeto")
+    allowed = _EDGE_UPDATABLE if partial else _EDGE_INPUT
+    extra = sorted(set(data) - allowed)
+    if extra:
+        raise ValidationError(f"campos no permitidos: {extra}")
+    if partial and not data:
+        raise ValidationError("no hay cambios")
+    if not partial:
+        for req in ("from_node", "to_node", "relation_type"):
+            if req not in data:
+                raise ValidationError(f"falta el campo obligatorio {req}")
+
+    out = {}
+    if "from_node" in data:
+        out["from_node"] = _str("from_node", data["from_node"], 256)
+    if "to_node" in data:
+        out["to_node"] = _str("to_node", data["to_node"], 256)
+    if "relation_type" in data:
+        out["relation_type"] = _choice("relation_type", data["relation_type"], RELATION_TYPES)
+    if "weight" in data or not partial:
+        out["weight"] = _non_negative_float("weight", data.get("weight", 1.0))
+    if "confidence" in data or not partial:
+        out["confidence"] = _float_0_1("confidence", data.get("confidence", 0.5))
+    if "frequency" in data or not partial:
+        freq = data.get("frequency", 1)
+        if isinstance(freq, bool) or not isinstance(freq, int) or freq < 1:
+            raise ValidationError("frequency debe ser un entero >= 1")
+        out["frequency"] = freq
+    if "origin" in data or not partial:
+        out["origin"] = _str("origin", data.get("origin", "unknown"), 64)
+    if "success_count" in data:
+        out["success_count"] = _non_negative_int("success_count", data["success_count"])
+    if "failure_count" in data:
+        out["failure_count"] = _non_negative_int("failure_count", data["failure_count"])
+    if "status" in data:
+        out["status"] = _choice("status", data["status"], STATUSES)
+    if "last_used_at" in data:
+        out["last_used_at"] = _str("last_used_at", data["last_used_at"], 64)
     return out
 
 
