@@ -854,13 +854,14 @@ def v8_agents_get(request: Request, name: str):
     return {"ok": True, "agent": agent, "recent_tasks": tasks}
 
 @app.get("/api/v8/tasks")
-def v8_tasks_list(request: Request, agent_name: str = None, status: str = None, limit: int = 20):
+def v8_tasks_list(request: Request, agent_name: str = None, status: str = None,
+                  mission_id: str = None, limit: int = 20):
     s = get_session(request)
     if not s: return JSONResponse({"authenticated": False}, status_code=401)
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     limit = max(1, min(int(limit), 100))
-    tasks = service.list_tasks(agent_name=agent_name, status=status, limit=limit)
+    tasks = service.list_tasks(agent_name=agent_name, status=status, mission_id=mission_id, limit=limit)
     return {"ok": True, "tasks": tasks, "count": len(tasks)}
 
 @app.get("/api/v8/tasks/{task_id}")
@@ -875,6 +876,12 @@ def v8_tasks_get(request: Request, task_id: str):
 
 @app.post("/api/v8/agents/{name}/task")
 def v8_agents_run_task(request: Request, name: str, payload: dict):
+    """Ejecuta una tarea real de un agente usando un tool permitido.
+
+    Payload opcional (Contrato V8 s11):
+      - model: str  -> modelo LLM usado (queda en agent_tasks.model)
+      - mission_id: str -> mision asociada (queda en agent_tasks.mission_id; Fase 10)
+    """
     s = get_session(request)
     if not s: return JSONResponse({"authenticated": False}, status_code=401)
     service = _persistence_service()
@@ -884,6 +891,10 @@ def v8_agents_run_task(request: Request, name: str, payload: dict):
     inputs = payload.get("inputs") or {}
     if not tool_name: return JSONResponse({"ok": False, "reason": "tool_name_required"}, status_code=400)
     if not isinstance(inputs, dict): return JSONResponse({"ok": False, "reason": "inputs_must_be_object"}, status_code=400)
+    model = payload.get("model")
+    model = str(model)[:64] if isinstance(model, str) and model.strip() else None
+    mission_id = payload.get("mission_id")
+    mission_id = str(mission_id)[:64] if isinstance(mission_id, str) and mission_id.strip() else None
     agent = service.get_agent_by_name(name)
     if agent is None: return JSONResponse({"ok": False, "reason": "agent_not_found"}, status_code=404)
     if agent.get("status") not in ("idle", "error"):
@@ -894,7 +905,9 @@ def v8_agents_run_task(request: Request, name: str, payload: dict):
                              "allowed_tools": allowed}, status_code=403)
     from persistence.core import NotFoundError, PersistenceError, ValidationError
     try:
-        create_result = service.create_task(name, tool_name, inputs=inputs, actor=s["email"])
+        create_result = service.create_task(name, tool_name, inputs=inputs,
+                                            model=model, mission_id=mission_id,
+                                            actor=s["email"])
     except NotFoundError as e:
         return JSONResponse({"ok": False, "reason": "not_found", "detail": str(e)[:200]}, status_code=404)
     except ValidationError as e:
@@ -916,20 +929,33 @@ def v8_agents_run_task(request: Request, name: str, payload: dict):
     except Exception as e:
         error = {"type": type(e).__name__, "message": str(e)[:200]}
     duration_ms = int((time.time() - t0) * 1000)
+    # Captura de memory_used: si el tool fue memory_search, guardamos los ids devueltos.
+    memory_used = None
+    if error is None and tool_name == "memory_search" and isinstance(outputs, dict):
+        try:
+            results = outputs.get("results") or []
+            memory_used = [r.get("id") for r in results if isinstance(r, dict) and r.get("id")]
+        except Exception:
+            memory_used = None
     if error is None:
         try:
-            service.complete_task(task_id, outputs=outputs or {}, duration_ms=duration_ms, actor=s["email"])
+            service.complete_task(task_id, outputs=outputs or {}, duration_ms=duration_ms,
+                                  memory_used=memory_used, actor=s["email"])
         except Exception as e:
             print(f"[agent] complete_task fallo: {e}")
         return {"ok": True, "agent_name": name, "task_id": task_id, "tool_name": tool_name,
-                "outputs": outputs or {}, "duration_ms": duration_ms}
+                "model": model, "mission_id": mission_id,
+                "outputs": outputs or {}, "memory_used": memory_used or [],
+                "duration_ms": duration_ms}
     else:
         try:
-            service.fail_task(task_id, error, duration_ms=duration_ms, actor=s["email"])
+            service.fail_task(task_id, error, duration_ms=duration_ms,
+                              memory_used=memory_used, actor=s["email"])
         except Exception as e:
             print(f"[agent] fail_task fallo: {e}")
         return JSONResponse({"ok": False, "agent_name": name, "task_id": task_id,
-                             "tool_name": tool_name, "error": error,
+                             "tool_name": tool_name, "model": model, "mission_id": mission_id,
+                             "error": error, "memory_used": memory_used or [],
                              "duration_ms": duration_ms}, status_code=500)
 
 _INGEST_TYPE_MAP = {
