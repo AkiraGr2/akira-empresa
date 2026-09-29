@@ -7,6 +7,7 @@
 # V8-B3c-fix: filtro de identidad ampliado + memorias formateadas como citas historicas.
 # V8-B5: pool de keys Gemini realmente conectado con rotacion automatica ante 429.
 # V8-B5-extra: /api/extract-file lee PDF con PyMuPDF para el boton de subir archivo.
+# V8-Fase5: /api/v8/self expone el self-model persistente (recuperable tras reinicio).
 import os, json, datetime, threading, time, hashlib, base64, math, asyncio, random, re
 from pathlib import Path
 from collections import defaultdict
@@ -419,6 +420,59 @@ async def v8_me(request: Request):
     return {"authenticated": True, "email": s["email"], "is_owner": s["is_owner"],
             "owner_scope": s["owner_scope"], "expires_at": s["exp"]}
 
+# ====== V8-Fase5: self-model persistente ======
+# Expone el self-model real de Akira, recuperable tras reinicio (Contrato V8 s2).
+# Requiere sesion firmada. NO devuelve "consciente": true como prueba.
+# Si la fila no existe en Postgres, get_self_model() la crea con valores reales.
+
+@app.get("/api/v8/self")
+def v8_self(request: Request):
+    s = get_session(request)
+    if not s:
+        return JSONResponse({"authenticated": False}, status_code=401)
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    try:
+        sm = service.get_self_model()
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "self_model_unavailable",
+                             "error_type": type(e).__name__}, status_code=503)
+    return {"ok": True, "self_model": sm, "read_by": s["email"]}
+
+
+@app.patch("/api/v8/self")
+def v8_self_update(request: Request, payload: dict):
+    """Actualiza campos del self-model. Requiere propietario. Bloqueo optimista por version."""
+    s = get_session(request)
+    if not s:
+        return JSONResponse({"authenticated": False}, status_code=401)
+    if not s.get("is_owner"):
+        return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    if not isinstance(payload, dict):
+        return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
+    changes = payload.get("changes")
+    expected_version = payload.get("expected_version")
+    if not isinstance(changes, dict) or not changes:
+        return JSONResponse({"ok": False, "reason": "changes_required"}, status_code=400)
+    if not isinstance(expected_version, int) or expected_version < 1:
+        return JSONResponse({"ok": False, "reason": "expected_version_required"}, status_code=400)
+    from persistence.core import ConflictError, PersistenceError, ValidationError
+    try:
+        updated = service.update_self_model(changes, expected_version, actor=s["email"])
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
+    except ConflictError:
+        return JSONResponse({"ok": False, "reason": "conflict"}, status_code=409)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+    return {"ok": True, "self_model": updated}
+
 # ====== V8-B3b: ingesta real de neuronas del navegador al Persistence Service ======
 _INGEST_TYPE_MAP = {
     "episodica": "episodic", "episodic": "episodic",
@@ -750,9 +804,6 @@ async def chat_stream(request: Request):
         return JSONResponse({"error": str(e)[:200]}, status_code=500)
 
 # ====== V8-B5-extra: extraccion de texto de archivos (solo PDF llega aqui) ======
-# El navegador manda el PDF en base64. Se procesa con PyMuPDF (ya en requirements).
-# TXT/MD/CSV los lee el navegador directo, no pasan por aqui.
-# Limite 5MB. Solo devuelve texto plano, no guarda nada.
 try:
     import fitz as _fitz  # PyMuPDF
 except Exception:
