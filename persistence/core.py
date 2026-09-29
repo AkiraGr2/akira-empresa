@@ -260,12 +260,12 @@ ENTITIES = {
         "table": "agents",
         "columns": (
             "id", "name", "role", "description", "allowed_tools", "status",
-            "current_task_id", "tasks_completed", "tasks_failed", "last_active_at",
-            "schema_version", "idempotency_key",
+            "current_task_id", "current_action", "tasks_completed", "tasks_failed",
+            "last_active_at", "schema_version", "idempotency_key",
         ),
         "json_columns": ("allowed_tools",),
         "mutable": (
-            "description", "allowed_tools", "status", "current_task_id",
+            "description", "allowed_tools", "status", "current_task_id", "current_action",
             "tasks_completed", "tasks_failed", "last_active_at",
         ),
         "filterable": ("id", "name", "role", "status", "idempotency_key"),
@@ -276,15 +276,16 @@ ENTITIES = {
     "agent_tasks": {
         "table": "agent_tasks",
         "columns": (
-            "id", "agent_name", "tool_name", "status", "inputs", "outputs",
-            "error", "duration_ms", "started_at", "completed_at",
-            "schema_version", "idempotency_key",
+            "id", "agent_name", "tool_name", "status", "model", "mission_id",
+            "inputs", "outputs", "memory_used", "error", "duration_ms",
+            "started_at", "completed_at", "schema_version", "idempotency_key",
         ),
-        "json_columns": ("inputs", "outputs", "error"),
+        "json_columns": ("inputs", "outputs", "memory_used", "error"),
         "mutable": (
-            "status", "outputs", "error", "duration_ms", "started_at", "completed_at",
+            "status", "model", "mission_id", "outputs", "memory_used", "error",
+            "duration_ms", "started_at", "completed_at",
         ),
-        "filterable": ("id", "agent_name", "tool_name", "status", "idempotency_key"),
+        "filterable": ("id", "agent_name", "tool_name", "status", "mission_id", "idempotency_key"),
         "in_filterable": ("agent_name", "tool_name", "status"),
         "orderable": ("created_at", "updated_at", "duration_ms", "started_at", "completed_at"),
         "idempotent": True,
@@ -356,6 +357,20 @@ def _string_list(name, value, max_items=50, max_len=256):
     if not isinstance(value, list) or len(value) > max_items:
         raise ValidationError(f"{name} debe ser una lista de maximo {max_items} textos")
     return [_str(name[:-1] if name.endswith('s') else name, x, max_len) for x in value]
+
+
+def _optional_str(name, value, max_len):
+    """Texto opcional: acepta None o cadena vacia -> None. Si no, valida longitud."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValidationError(f"{name} debe ser texto o None")
+    value = value.strip()
+    if not value:
+        return None
+    if len(value) > max_len:
+        raise ValidationError(f"{name} supera {max_len} caracteres")
+    return value
 
 
 _MEMORY_INPUT = {
@@ -746,13 +761,13 @@ def validate_tool_invocation(data, partial: bool = False) -> dict:
     return out
 
 
-# V8-Fase9: validador de agents.
+# V8-Fase9: validador de agents (incluye current_action del Contrato V8 s11).
 _AGENT_INPUT = {
     "name", "role", "description", "allowed_tools", "status",
-    "current_task_id", "tasks_completed", "tasks_failed", "last_active_at",
+    "current_task_id", "current_action", "tasks_completed", "tasks_failed", "last_active_at",
 }
 _AGENT_UPDATABLE = {
-    "description", "allowed_tools", "status", "current_task_id",
+    "description", "allowed_tools", "status", "current_task_id", "current_action",
     "tasks_completed", "tasks_failed", "last_active_at",
 }
 
@@ -786,26 +801,27 @@ def validate_agent(data, partial: bool = False) -> dict:
     if "status" in data or not partial:
         out["status"] = _choice("status", data.get("status", "idle"), AGENT_STATUSES)
     if "current_task_id" in data:
-        if data["current_task_id"] is None:
-            out["current_task_id"] = None
-        else:
-            out["current_task_id"] = _str("current_task_id", data["current_task_id"], 64)
+        out["current_task_id"] = _optional_str("current_task_id", data["current_task_id"], 64)
+    if "current_action" in data:
+        out["current_action"] = _optional_str("current_action", data["current_action"], 200)
     if "tasks_completed" in data:
         out["tasks_completed"] = _non_negative_int("tasks_completed", data["tasks_completed"])
     if "tasks_failed" in data:
         out["tasks_failed"] = _non_negative_int("tasks_failed", data["tasks_failed"])
     if "last_active_at" in data:
-        out["last_active_at"] = _str("last_active_at", data["last_active_at"], 64)
+        out["last_active_at"] = _optional_str("last_active_at", data["last_active_at"], 64)
     return out
 
 
-# V8-Fase9: validador de agent_tasks.
+# V8-Fase9: validador de agent_tasks (incluye model, mission_id, memory_used del Contrato V8 s11).
 _TASK_INPUT = {
-    "agent_name", "tool_name", "status", "inputs", "outputs", "error",
-    "duration_ms", "started_at", "completed_at",
+    "agent_name", "tool_name", "status", "model", "mission_id",
+    "inputs", "outputs", "memory_used", "error", "duration_ms",
+    "started_at", "completed_at",
 }
 _TASK_UPDATABLE = {
-    "status", "outputs", "error", "duration_ms", "started_at", "completed_at",
+    "status", "model", "mission_id", "outputs", "memory_used", "error",
+    "duration_ms", "started_at", "completed_at",
 }
 
 
@@ -830,6 +846,10 @@ def validate_agent_task(data, partial: bool = False) -> dict:
         out["tool_name"] = _str("tool_name", data["tool_name"], 64)
     if "status" in data or not partial:
         out["status"] = _choice("status", data.get("status", "pending"), AGENT_TASK_STATUSES)
+    if "model" in data:
+        out["model"] = _optional_str("model", data["model"], 64)
+    if "mission_id" in data:
+        out["mission_id"] = _optional_str("mission_id", data["mission_id"], 64)
     if "inputs" in data or not partial:
         v = data.get("inputs", {})
         if not isinstance(v, dict):
@@ -840,6 +860,8 @@ def validate_agent_task(data, partial: bool = False) -> dict:
         if not isinstance(v, dict):
             raise ValidationError("outputs debe ser un objeto (dict)")
         out["outputs"] = v
+    if "memory_used" in data or not partial:
+        out["memory_used"] = _string_list("memory_used", data.get("memory_used", []), 100, 256)
     if "error" in data:
         if data["error"] is None:
             out["error"] = None
@@ -851,9 +873,9 @@ def validate_agent_task(data, partial: bool = False) -> dict:
     if "duration_ms" in data:
         out["duration_ms"] = _non_negative_int("duration_ms", data["duration_ms"])
     if "started_at" in data:
-        out["started_at"] = _str("started_at", data["started_at"], 64) if data["started_at"] else None
+        out["started_at"] = _optional_str("started_at", data["started_at"], 64)
     if "completed_at" in data:
-        out["completed_at"] = _str("completed_at", data["completed_at"], 64) if data["completed_at"] else None
+        out["completed_at"] = _optional_str("completed_at", data["completed_at"], 64)
     return out
 
 
