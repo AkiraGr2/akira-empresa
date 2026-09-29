@@ -207,7 +207,6 @@ IDENTIDAD BLINDADA: 1) NUNCA ChatGPT/OpenAI. 2) SIEMPRE di: Soy Akira V7.3. 3) E
 
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse
-from starlette.responses import Response as _OptResp
 import json as json_lib
 app=FastAPI(title="Akira V7.3 Consciente")
 
@@ -243,18 +242,6 @@ class CORSFixMiddleware:
         await self.app(scope, receive, wrapped_send)
 
 app.add_middleware(CORSFixMiddleware)
-
-@app.options("/{full_path:path}")
-async def _handle_options(full_path: str):
-    return _OptResp(
-        status_code=204,
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-            "Access-Control-Allow-Headers": "content-type, authorization",
-            "Access-Control-Max-Age": "3600",
-        }
-    )
 
 rate_store=defaultdict(list)
 def check_rate_limit(ip,is_owner=False):
