@@ -751,7 +751,14 @@ class PersistenceService:
         return updated
 
     # ------------------------------------------------------------ V8-Fase9: tasks
-    def create_task(self, agent_name, tool_name, inputs=None, actor="system", idempotency_key=None):
+    def create_task(self, agent_name, tool_name, inputs=None, model=None, mission_id=None,
+                    memory_used=None, actor="system", idempotency_key=None):
+        """Crea una tarea en estado pending. Valida agente y tool permitidos.
+
+        model: modelo LLM usado (opcional, Contrato V8 s11).
+        mission_id: mision a la que pertenece (opcional, preparado para Fase 10).
+        memory_used: lista de ids de memorias usadas (opcional).
+        """
         agent = self.get_agent_by_name(agent_name)
         if agent is None:
             raise NotFoundError(f"agente no existe: {agent_name}")
@@ -764,6 +771,12 @@ class PersistenceService:
 
         data = {"agent_name": agent_name, "tool_name": tool_name, "status": "pending",
                 "inputs": inputs or {}}
+        if model is not None:
+            data["model"] = model
+        if mission_id is not None:
+            data["mission_id"] = mission_id
+        if memory_used is not None:
+            data["memory_used"] = memory_used
         fields = validate_agent_task(data)
         record = dict(fields, id=new_id("task"), schema_version=AGENT_TASK_SCHEMA_VERSION)
         if idempotency_key is not None:
@@ -778,7 +791,8 @@ class PersistenceService:
                     "actor": actor,
                     "action": "agent.task.create" if created else "agent.task.create.already_synced",
                     "resource": "agent_tasks", "resource_id": stored["id"], "status": "success",
-                    "detail": {"agent": agent_name, "tool": tool_name},
+                    "detail": {"agent": agent_name, "tool": tool_name,
+                               "mission_id": mission_id, "model": model},
                 })
         except PersistenceError as e:
             self._audit_failure_generic(actor, "agent.task.create", "agent_tasks", None, e)
@@ -799,18 +813,21 @@ class PersistenceService:
         if task.get("status") != "pending":
             raise ValidationError(f"tarea ya esta {task['status']}")
         changes = {"status": "running", "started_at": _now_iso()}
+        current_action = f"ejecutando {task['tool_name']}"[:200]
         try:
             with self.repo.transaction() as tx:
                 updated = tx.update("agent_tasks", task_id, changes, task["version"])
                 agent = self.get_agent_by_name(task["agent_name"])
                 if agent:
                     tx.update("agents", agent["id"],
-                              {"status": "busy", "current_task_id": task_id, "last_active_at": _now_iso()},
+                              {"status": "busy", "current_task_id": task_id,
+                               "current_action": current_action, "last_active_at": _now_iso()},
                               agent["version"])
                 tx.append_audit({
                     "actor": actor, "action": "agent.task.start", "resource": "agent_tasks",
                     "resource_id": task_id, "status": "success",
-                    "detail": {"agent": task["agent_name"], "tool": task["tool_name"]},
+                    "detail": {"agent": task["agent_name"], "tool": task["tool_name"],
+                               "current_action": current_action},
                 })
         except PersistenceError:
             raise
@@ -818,7 +835,7 @@ class PersistenceService:
             raise StorageError(type(e).__name__) from e
         return updated
 
-    def complete_task(self, task_id, outputs=None, duration_ms=0, actor="system"):
+    def complete_task(self, task_id, outputs=None, duration_ms=0, memory_used=None, actor="system"):
         task = self.repo.get("agent_tasks", task_id)
         if task is None:
             raise NotFoundError(task_id)
@@ -830,6 +847,8 @@ class PersistenceService:
             "duration_ms": int(duration_ms),
             "completed_at": _now_iso(),
         }
+        if memory_used is not None:
+            changes["memory_used"] = memory_used
         try:
             with self.repo.transaction() as tx:
                 updated = tx.update("agent_tasks", task_id, changes, task["version"])
@@ -837,7 +856,7 @@ class PersistenceService:
                 if agent:
                     new_completed = int(agent.get("tasks_completed") or 0) + 1
                     tx.update("agents", agent["id"],
-                              {"status": "idle", "current_task_id": None,
+                              {"status": "idle", "current_task_id": None, "current_action": None,
                                "tasks_completed": new_completed, "last_active_at": _now_iso()},
                               agent["version"])
                 tx.append_audit({
@@ -851,7 +870,7 @@ class PersistenceService:
             raise StorageError(type(e).__name__) from e
         return updated
 
-    def fail_task(self, task_id, error, duration_ms=0, actor="system"):
+    def fail_task(self, task_id, error, duration_ms=0, memory_used=None, actor="system"):
         task = self.repo.get("agent_tasks", task_id)
         if task is None:
             raise NotFoundError(task_id)
@@ -864,6 +883,8 @@ class PersistenceService:
             "duration_ms": int(duration_ms),
             "completed_at": _now_iso(),
         }
+        if memory_used is not None:
+            changes["memory_used"] = memory_used
         try:
             with self.repo.transaction() as tx:
                 updated = tx.update("agent_tasks", task_id, changes, task["version"])
@@ -871,13 +892,14 @@ class PersistenceService:
                 if agent:
                     new_failed = int(agent.get("tasks_failed") or 0) + 1
                     tx.update("agents", agent["id"],
-                              {"status": "error", "current_task_id": None,
+                              {"status": "error", "current_task_id": None, "current_action": None,
                                "tasks_failed": new_failed, "last_active_at": _now_iso()},
                               agent["version"])
                 tx.append_audit({
                     "actor": actor, "action": "agent.task.fail", "resource": "agent_tasks",
                     "resource_id": task_id, "status": "failure",
-                    "detail": {"agent": task["agent_name"], "error": err_dict.get("type") or err_dict.get("message")},
+                    "detail": {"agent": task["agent_name"],
+                               "error": err_dict.get("type") or err_dict.get("message")},
                 })
         except PersistenceError:
             raise
@@ -888,12 +910,14 @@ class PersistenceService:
     def get_task(self, task_id):
         return self.repo.get("agent_tasks", task_id)
 
-    def list_tasks(self, agent_name=None, status=None, limit=50):
+    def list_tasks(self, agent_name=None, status=None, mission_id=None, limit=50):
         filters = {}
         if agent_name:
             filters["agent_name"] = agent_name
         if status:
             filters["status"] = status
+        if mission_id:
+            filters["mission_id"] = mission_id
         limit = max(1, min(int(limit), 200))
         return self.repo.search("agent_tasks", filters, limit=limit, offset=0,
                                 order_by="created_at", descending=True)
