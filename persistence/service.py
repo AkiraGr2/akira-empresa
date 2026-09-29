@@ -6,20 +6,23 @@ El servicio guarda y recupera; NO decide relevancia, significado ni que aprender
 
 V8-Fase5: agrega soporte para self-model persistente (singleton con id="akira_primary").
 V8-Fase6: agrega soporte para learning_events, graph_nodes y graph_edges.
+V8-Fase7: agrega soporte para cognitive_cycles y cognitive_events (append-only).
 """
 from __future__ import annotations
 
-from .core import (GRAPH_EDGE_SCHEMA_VERSION, GRAPH_NODE_SCHEMA_VERSION, HIVE_VISIBLE,
-                   LEARNING_SCHEMA_VERSION, MEMORY_SCHEMA_VERSION, SELF_MODEL_PRIMARY_ID,
-                   SELF_MODEL_SCHEMA_VERSION, ConflictError, NotFoundError, PersistenceError,
-                   StorageError, ValidationError, VerificationError, new_id, validate_graph_edge,
-                   validate_graph_node, validate_learning_event, validate_memory,
-                   validate_self_model)
+import datetime as _dt
+
+from .core import (COGNITIVE_CYCLE_SCHEMA_VERSION, COGNITIVE_EVENT_SCHEMA_VERSION,
+                   COGNITIVE_STAGES, GRAPH_EDGE_SCHEMA_VERSION, GRAPH_NODE_SCHEMA_VERSION,
+                   HIVE_VISIBLE, LEARNING_SCHEMA_VERSION, MEMORY_SCHEMA_VERSION,
+                   SELF_MODEL_PRIMARY_ID, SELF_MODEL_SCHEMA_VERSION, ConflictError, NotFoundError,
+                   PersistenceError, StorageError, ValidationError, VerificationError, new_id,
+                   validate_cognitive_cycle, validate_cognitive_event, validate_graph_edge,
+                   validate_graph_node, validate_learning_event, validate_memory, validate_self_model)
 
 _COMPARE_FIELDS = ("content", "memory_type", "importance", "confidence", "tags", "privacy_level",
                    "source", "owner_scope")
 
-# V8-Fase5: valores iniciales del self-model. Se crean la primera vez que se lee.
 _SELF_MODEL_DEFAULTS = {
     "identity": {
         "name": "Akira",
@@ -51,12 +54,15 @@ _SELF_MODEL_DEFAULTS = {
         {"name": "multi_key_pool", "status": "verified"},
         {"name": "non_blocking_chat", "status": "verified"},
         {"name": "self_model_persistent", "status": "verified"},
+        {"name": "learning_persistent", "status": "verified"},
+        {"name": "graph_persistent", "status": "verified"},
+        {"name": "cognitive_cycle_persistent", "status": "verified"},
         {"name": "agents", "status": "not_implemented"},
         {"name": "missions", "status": "not_implemented"},
         {"name": "self_repair_full", "status": "not_implemented"},
         {"name": "evolution_engine", "status": "not_implemented"},
         {"name": "hive", "status": "not_implemented"},
-        {"name": "knowledge_graph", "status": "not_implemented"},
+        {"name": "knowledge_graph_full", "status": "not_implemented"},
     ],
     "tools": [
         {"name": "postgres", "role": "persistencia", "status": "verified"},
@@ -86,6 +92,10 @@ _SELF_MODEL_DEFAULTS = {
 }
 
 
+def _now_iso():
+    return _dt.datetime.now(_dt.timezone.utc).isoformat()
+
+
 class PersistenceService:
     def __init__(self, repo):
         self.repo = repo
@@ -94,13 +104,6 @@ class PersistenceService:
     def record_audit(self, actor, action, resource, resource_id=None, status="success", detail=None):
         self.repo.append_audit({"actor": actor, "action": action, "resource": resource,
                                 "resource_id": resource_id, "status": status, "detail": detail or {}})
-
-    def _audit_failure(self, actor, action, resource_id, error):
-        try:
-            self.record_audit(actor, action, "memories", resource_id, "failure",
-                              {"error_type": type(error).__name__})
-        except Exception:
-            pass
 
     def _audit_failure_generic(self, actor, action, resource, resource_id, error):
         try:
@@ -114,7 +117,6 @@ class PersistenceService:
 
     # ------------------------------------------------------------ memoria
     def save_memory(self, data, actor="system", idempotency_key=None):
-        """Guarda una memoria. Devuelve {"outcome": "created"|"already_synced", "record": {...}, ...}."""
         fields = validate_memory(data)
         if "created_by" not in fields:
             fields["created_by"] = actor
@@ -134,10 +136,10 @@ class PersistenceService:
                     "detail": {"privacy_level": stored["privacy_level"], "memory_type": stored["memory_type"]},
                 })
         except PersistenceError as e:
-            self._audit_failure(actor, "memory.create", None, e)
+            self._audit_failure_generic(actor, "memory.create", "memories", None, e)
             raise
         except Exception as e:
-            self._audit_failure(actor, "memory.create", None, e)
+            self._audit_failure_generic(actor, "memory.create", "memories", None, e)
             raise StorageError(type(e).__name__) from e
 
         verified = self.repo.get("memories", stored["id"])
@@ -180,10 +182,10 @@ class PersistenceService:
                                  "resource_id": memory_id, "status": "success",
                                  "detail": {"fields": sorted(changes), "new_version": updated["version"]}})
         except PersistenceError as e:
-            self._audit_failure(actor, action, memory_id, e)
+            self._audit_failure_generic(actor, action, "memories", memory_id, e)
             raise
         except Exception as e:
-            self._audit_failure(actor, action, memory_id, e)
+            self._audit_failure_generic(actor, action, "memories", memory_id, e)
             raise StorageError(type(e).__name__) from e
         verified = self.repo.get("memories", memory_id)
         if (verified is None or verified["version"] != expected_version + 1
@@ -211,9 +213,8 @@ class PersistenceService:
     def health(self):
         return self.repo.ping()
 
-    # ------------------------------------------------------------ V8-Fase5: self-model
+    # ------------------------------------------------------------ self-model
     def get_self_model(self):
-        """Devuelve el self-model persistente. Si no existe, lo crea con valores iniciales."""
         current = self.repo.get("self_model", SELF_MODEL_PRIMARY_ID)
         if current is not None:
             return current
@@ -269,9 +270,8 @@ class PersistenceService:
         current = self.repo.get("self_model", SELF_MODEL_PRIMARY_ID)
         return None if current is None else current.get("version")
 
-    # ------------------------------------------------------------ V8-Fase6: learning
+    # ------------------------------------------------------------ learning
     def save_learning(self, data, actor="system", idempotency_key=None):
-        """Guarda un LearningEvent. Devuelve {"outcome": "created"|"already_synced", "record": {...}}."""
         fields = validate_learning_event(data)
         record = dict(fields, id=new_id("learn"), schema_version=LEARNING_SCHEMA_VERSION)
         if idempotency_key is not None:
@@ -304,13 +304,10 @@ class PersistenceService:
         return self.repo.get("learning_events", learning_id)
 
     def record_reuse(self, learning_id, actor="system"):
-        """Incrementa reuse_count de un LearningEvent y actualiza last_reused_at.
-        Devuelve el registro actualizado. ConflictError si dos procesos compiten."""
         current = self.repo.get("learning_events", learning_id)
         if current is None:
             raise NotFoundError(learning_id)
-        import datetime as _dt
-        now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
+        now_iso = _now_iso()
         changes = {
             "reuse_count": int(current.get("reuse_count") or 0) + 1,
             "last_reused_at": now_iso,
@@ -334,9 +331,8 @@ class PersistenceService:
         return self.repo.search("learning_events", filters or {}, limit=limit,
                                 offset=max(0, int(offset)), order_by=order_by, descending=descending)
 
-    # ------------------------------------------------------------ V8-Fase6: graph
+    # ------------------------------------------------------------ graph
     def create_node(self, data, actor="system", idempotency_key=None):
-        """Crea un GraphNode. Devuelve {"outcome": "created"|"already_synced", "record": {...}}."""
         fields = validate_graph_node(data)
         record = dict(fields, id=new_id("node"), status="active", schema_version=GRAPH_NODE_SCHEMA_VERSION)
         if idempotency_key is not None:
@@ -369,11 +365,9 @@ class PersistenceService:
         return self.repo.get("graph_nodes", node_id)
 
     def create_edge(self, data, actor="system", idempotency_key=None):
-        """Crea un GraphEdge entre dos nodos. Verifica que ambos nodos existan."""
         fields = validate_graph_edge(data)
         from_node = fields.get("from_node")
         to_node = fields.get("to_node")
-        # Verificar existencia de ambos extremos (Contrato V8 s24, TEST_RELATION_INTEGRITY)
         if not self.repo.exists("graph_nodes", from_node):
             raise NotFoundError(f"from_node no existe: {from_node}")
         if not self.repo.exists("graph_nodes", to_node):
@@ -409,8 +403,6 @@ class PersistenceService:
         return self.repo.get("graph_edges", edge_id)
 
     def related_nodes(self, node_id, direction="both", limit=50):
-        """Devuelve las relaciones del nodo. direction: 'from' | 'to' | 'both'.
-        No hay traversal recursivo todavia (eso es grafo v2)."""
         limit = max(1, min(int(limit), 200))
         edges = []
         if direction in ("from", "both"):
@@ -424,3 +416,141 @@ class PersistenceService:
 
     def count_edges(self, filters=None):
         return self.repo.count("graph_edges", filters or {})
+
+    # ------------------------------------------------------------ V8-Fase7: ciclo cognitivo
+    def start_cycle(self, trigger, input_data=None, actor="system", idempotency_key=None):
+        """Crea la cabecera de un ciclo cognitivo. Devuelve {"outcome", "record"}."""
+        data = {
+            "trigger": trigger,
+            "input": input_data or {},
+            "current_stage": "observe",
+            "status": "in_progress",
+        }
+        fields = validate_cognitive_cycle(data)
+        record = dict(fields, id=new_id("cycle"), schema_version=COGNITIVE_CYCLE_SCHEMA_VERSION)
+        if idempotency_key is not None:
+            if not isinstance(idempotency_key, str) or not 0 < len(idempotency_key.strip()) <= 200:
+                raise ValidationError("idempotency_key debe ser texto de 1 a 200 caracteres")
+            record["idempotency_key"] = idempotency_key.strip()
+
+        try:
+            with self.repo.transaction() as tx:
+                stored, created = tx.create("cognitive_cycles", record)
+                tx.append_audit({
+                    "actor": actor,
+                    "action": "cognitive.cycle.create" if created else "cognitive.cycle.create.already_synced",
+                    "resource": "cognitive_cycles", "resource_id": stored["id"], "status": "success",
+                    "detail": {"trigger": trigger},
+                })
+        except PersistenceError as e:
+            self._audit_failure_generic(actor, "cognitive.cycle.create", "cognitive_cycles", None, e)
+            raise
+        except Exception as e:
+            self._audit_failure_generic(actor, "cognitive.cycle.create", "cognitive_cycles", None, e)
+            raise StorageError(type(e).__name__) from e
+
+        verified = self.repo.get("cognitive_cycles", stored["id"])
+        if verified is None:
+            raise VerificationError("ciclo no confirmado: no se puede releer tras crearlo")
+        return {"outcome": "created" if created else "already_synced", "record": verified}
+
+    def record_stage(self, cycle_id, stage, data=None, status="success", error=None, actor="system", idempotency_key=None):
+        """Registra una etapa del ciclo. Escribe UN evento (append-only) y actualiza
+        current_stage de la cabecera. Devuelve {"event": ..., "cycle": ...}."""
+        if stage not in COGNITIVE_STAGES:
+            raise ValidationError(f"stage invalido: {stage!r}")
+        cycle = self.repo.get("cognitive_cycles", cycle_id)
+        if cycle is None:
+            raise NotFoundError(f"ciclo no existe: {cycle_id}")
+        if cycle.get("status") in ("completed", "failed", "aborted"):
+            raise ValidationError(f"el ciclo ya esta {cycle['status']}: no admite nuevas etapas")
+
+        event_data = {
+            "cycle_id": cycle_id,
+            "stage": stage,
+            "status": status,
+            "data": data or {},
+        }
+        if error is not None:
+            event_data["error"] = error
+        clean_event = validate_cognitive_event(event_data)
+        event_record = dict(clean_event, id=new_id("cevent"), schema_version=COGNITIVE_EVENT_SCHEMA_VERSION)
+        if idempotency_key is not None:
+            if not isinstance(idempotency_key, str) or not 0 < len(idempotency_key.strip()) <= 200:
+                raise ValidationError("idempotency_key debe ser texto de 1 a 200 caracteres")
+            event_record["idempotency_key"] = idempotency_key.strip()
+
+        try:
+            with self.repo.transaction() as tx:
+                stored_event, created = tx.create("cognitive_events", event_record)
+                updated_cycle = tx.update("cognitive_cycles", cycle_id,
+                                          {"current_stage": stage},
+                                          cycle["version"])
+                tx.append_audit({
+                    "actor": actor,
+                    "action": "cognitive.stage.record" if created else "cognitive.stage.already_synced",
+                    "resource": "cognitive_events", "resource_id": stored_event["id"], "status": "success",
+                    "detail": {"cycle_id": cycle_id, "stage": stage, "event_status": status},
+                })
+        except PersistenceError as e:
+            self._audit_failure_generic(actor, "cognitive.stage.record", "cognitive_events", cycle_id, e)
+            raise
+        except Exception as e:
+            self._audit_failure_generic(actor, "cognitive.stage.record", "cognitive_events", cycle_id, e)
+            raise StorageError(type(e).__name__) from e
+
+        verified_event = self.repo.get("cognitive_events", stored_event["id"])
+        if verified_event is None:
+            raise VerificationError("evento no confirmado: no se puede releer")
+        return {"event": verified_event, "cycle": updated_cycle}
+
+    def complete_cycle(self, cycle_id, final_status="completed", actor="system"):
+        """Marca el ciclo como completado. NO escribe evento; el evento 'update_self_model'
+        debe registrarse antes con record_stage()."""
+        if final_status not in ("completed", "failed", "aborted"):
+            raise ValidationError("final_status debe ser completed, failed o aborted")
+        cycle = self.repo.get("cognitive_cycles", cycle_id)
+        if cycle is None:
+            raise NotFoundError(cycle_id)
+        if cycle.get("status") != "in_progress":
+            raise ValidationError(f"el ciclo ya esta {cycle['status']}")
+        changes = {
+            "status": final_status,
+            "completed_at": _now_iso(),
+        }
+        try:
+            with self.repo.transaction() as tx:
+                updated = tx.update("cognitive_cycles", cycle_id, changes, cycle["version"])
+                tx.append_audit({
+                    "actor": actor, "action": "cognitive.cycle.complete", "resource": "cognitive_cycles",
+                    "resource_id": cycle_id, "status": "success",
+                    "detail": {"final_status": final_status, "current_stage": updated.get("current_stage")},
+                })
+        except PersistenceError:
+            raise
+        except Exception as e:
+            raise StorageError(type(e).__name__) from e
+        return updated
+
+    def get_cycle(self, cycle_id):
+        return self.repo.get("cognitive_cycles", cycle_id)
+
+    def list_cycle_events(self, cycle_id, limit=100):
+        """Devuelve los eventos de un ciclo, ordenados cronologicamente (append-only)."""
+        limit = max(1, min(int(limit), 500))
+        return self.repo.search("cognitive_events", {"cycle_id": cycle_id}, limit=limit,
+                                offset=0, order_by="created_at", descending=False)
+
+    def get_cycle_with_events(self, cycle_id):
+        """Devuelve {"cycle": ..., "events": [...]} o None si no existe el ciclo."""
+        cycle = self.repo.get("cognitive_cycles", cycle_id)
+        if cycle is None:
+            return None
+        events = self.list_cycle_events(cycle_id)
+        return {"cycle": cycle, "events": events}
+
+    def count_cycles(self, filters=None):
+        return self.repo.count("cognitive_cycles", filters or {})
+
+    def count_cycle_events(self, filters=None):
+        return self.repo.count("cognitive_events", filters or {})
