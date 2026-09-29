@@ -41,6 +41,10 @@ HIVE_VISIBLE = ("SHAREABLE", "COLLECTIVE")  # PRIVATE y SENSITIVE nunca entran a
 STATUSES = ("active", "archived", "deleted")
 MEMORY_SCHEMA_VERSION = "memory.v1"
 
+# V8-Fase5: self-model es una entidad singleton (id fijo "akira_primary").
+SELF_MODEL_PRIMARY_ID = "akira_primary"
+SELF_MODEL_SCHEMA_VERSION = "self_model.v1"
+
 
 def new_id(prefix: str) -> str:
     """Formato Fase 3: <tipo>_<uuid>."""
@@ -68,7 +72,31 @@ ENTITIES = {
         "in_filterable": ("memory_type", "privacy_level", "status", "owner_scope", "source"),
         "orderable": ("created_at", "updated_at", "importance", "last_accessed_at"),
         "idempotent": True,
-    }
+    },
+    # V8-Fase5: self-model persistente. Una sola fila con id="akira_primary".
+    # Todos los campos cognitivos son JSONB (estructurados, no texto).
+    "self_model": {
+        "table": "self_model",
+        "columns": (
+            "id", "identity", "purpose", "capabilities", "tools", "models",
+            "current_state", "knowledge_state", "uncertainties", "errors",
+            "repairs", "evolution", "schema_version", "idempotency_key",
+        ),
+        "json_columns": (
+            "identity", "purpose", "capabilities", "tools", "models",
+            "current_state", "knowledge_state", "uncertainties", "errors",
+            "repairs", "evolution",
+        ),
+        "mutable": (
+            "identity", "purpose", "capabilities", "tools", "models",
+            "current_state", "knowledge_state", "uncertainties", "errors",
+            "repairs", "evolution",
+        ),
+        "filterable": ("id", "idempotency_key"),
+        "in_filterable": (),
+        "orderable": ("created_at", "updated_at"),
+        "idempotent": True,
+    },
 }
 
 
@@ -173,6 +201,47 @@ def validate_memory(data, partial: bool = False) -> dict:
     return out
 
 
+# V8-Fase5: validador del self-model. Los campos son JSONB estructurados,
+# no texto libre. Acepta dicts para los "objetos" y listas para los "listados".
+_SELF_MODEL_OBJECT_FIELDS = ("identity", "purpose", "current_state", "knowledge_state")
+_SELF_MODEL_LIST_FIELDS = ("capabilities", "tools", "models", "uncertainties", "errors", "repairs", "evolution")
+_SELF_MODEL_UPDATABLE = frozenset(_SELF_MODEL_OBJECT_FIELDS + _SELF_MODEL_LIST_FIELDS)
+
+
+def validate_self_model(data, partial: bool = False) -> dict:
+    """Valida cambios sobre el self-model.
+
+    Reglas:
+      - Solo acepta los 11 campos JSONB declarados.
+      - Los 4 campos "objeto" (identity, purpose, current_state, knowledge_state) deben ser dict.
+      - Los 7 campos "lista" (capabilities, tools, models, ...) deben ser list.
+      - No admite dict vacio: si no hay cambios reales, es un error.
+    partial se acepta por simetria con validate_memory, pero aqui no hay modo
+    "creacion completa": el self-model siempre se actualiza por partes.
+    """
+    if not isinstance(data, dict):
+        raise ValidationError("el registro debe ser un objeto")
+    if not data:
+        raise ValidationError("no hay cambios")
+    extra = sorted(set(data) - _SELF_MODEL_UPDATABLE)
+    if extra:
+        raise ValidationError(f"campos no permitidos: {extra}")
+    out = {}
+    for field in _SELF_MODEL_OBJECT_FIELDS:
+        if field in data:
+            v = data[field]
+            if not isinstance(v, dict):
+                raise ValidationError(f"{field} debe ser un objeto (dict)")
+            out[field] = v
+    for field in _SELF_MODEL_LIST_FIELDS:
+        if field in data:
+            v = data[field]
+            if not isinstance(v, list):
+                raise ValidationError(f"{field} debe ser una lista")
+            out[field] = v
+    return out
+
+
 def normalize_filters(entity: str, filters):
     """Devuelve [(tipo, campo, valor)]. Solo campos en lista blanca; nunca se interpola texto del usuario en SQL."""
     spec = entity_spec(entity)
@@ -181,8 +250,12 @@ def normalize_filters(entity: str, filters):
         if value is None:
             raise ValidationError(f"filtro {key} sin valor")
         if key == "text_contains":
+            if entity != "memories":
+                raise ValidationError("text_contains solo esta disponible para memories")
             out.append(("text", "content", _str("text_contains", value, 200)))
         elif key == "tag":
+            if entity != "memories":
+                raise ValidationError("tag solo esta disponible para memories")
             out.append(("tag", "tags", _str("tag", value, 64)))
         elif key.endswith("__in"):
             field = key[:-4]
