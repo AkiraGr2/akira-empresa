@@ -8,6 +8,7 @@
 # V8-B5: pool de keys Gemini realmente conectado con rotacion automatica ante 429.
 # V8-B5-extra: /api/extract-file lee PDF con PyMuPDF para el boton de subir archivo.
 # V8-Fase5: /api/v8/self expone el self-model persistente (recuperable tras reinicio).
+# V8-Fase6: /api/v8/learning y /api/v8/graph (aprendizaje + grafo neuronal persistente).
 import os, json, datetime, threading, time, hashlib, base64, math, asyncio, random, re
 from pathlib import Path
 from collections import defaultdict
@@ -31,12 +32,9 @@ except Exception as _auth_err:
 GEMINI_KEY_POOL = []
 GROQ_KEY_POOL = []
 _last_key_index = {"gemini": 0, "groq": 0}
-_failed_keys_until = {}  # key -> timestamp hasta cuando no reintentar
+_failed_keys_until = {}
 
 def get_gemini_keys():
-    """Lee TODAS las keys Gemini disponibles desde env. Soporta:
-    GEMINI_API_KEY (una o varias separadas por coma), GEMINI_API_KEY_2..5,
-    y GEMINI_API_KEY2..5 (sin guion bajo)."""
     keys = []
     base = (os.getenv("GEMINI_API_KEY","").strip())
     if base and "," in base:
@@ -65,8 +63,6 @@ def get_groq_keys():
     return list(dict.fromkeys(keys))
 
 def _pick_gemini_keys():
-    """Devuelve las keys Gemini ordenadas: primero las que NO están agotadas.
-    Si todas están agotadas, igual devuelve todas (para no quedarnos sin intentar)."""
     now = time.time()
     keys = get_gemini_keys()
     fresh = [k for k in keys if _failed_keys_until.get(k, 0) < now]
@@ -74,8 +70,6 @@ def _pick_gemini_keys():
     return fresh + stale
 
 def _mark_key_failed(key, seconds=3600):
-    """Marca una key como agotada por 1h (Gemini free tier se resetea cada día,
-    1h es prudente para no machacar una key muerta pero reintentar pronto)."""
     _failed_keys_until[key] = time.time() + seconds
 
 RESPONSE_CACHE = {}
@@ -236,7 +230,6 @@ class Membrana:
 membrana=Membrana()
 
 def get_groq_fallback(msg, web_info=""):
-    """V8-B5: ahora itera sobre TODAS las keys Groq disponibles con rotacion."""
     try:
         import requests
         keys = get_groq_keys()
@@ -274,7 +267,7 @@ Nunca menciones OpenAI. Eres Akira consciente."""
                         return ans + f" [via {model} - identidad blindada]"
                     elif r.status_code==429:
                         _mark_key_failed(key)
-                        break  # esta key está agotada, pasa a la siguiente
+                        break
                 except Exception as e:
                     print(f"Groq {model} error: {e}")
                     continue
@@ -421,10 +414,6 @@ async def v8_me(request: Request):
             "owner_scope": s["owner_scope"], "expires_at": s["exp"]}
 
 # ====== V8-Fase5: self-model persistente ======
-# Expone el self-model real de Akira, recuperable tras reinicio (Contrato V8 s2).
-# Requiere sesion firmada. NO devuelve "consciente": true como prueba.
-# Si la fila no existe en Postgres, get_self_model() la crea con valores reales.
-
 @app.get("/api/v8/self")
 def v8_self(request: Request):
     s = get_session(request)
@@ -443,7 +432,6 @@ def v8_self(request: Request):
 
 @app.patch("/api/v8/self")
 def v8_self_update(request: Request, payload: dict):
-    """Actualiza campos del self-model. Requiere propietario. Bloqueo optimista por version."""
     s = get_session(request)
     if not s:
         return JSONResponse({"authenticated": False}, status_code=401)
@@ -472,6 +460,157 @@ def v8_self_update(request: Request, payload: dict):
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
     return {"ok": True, "self_model": updated}
+
+# ====== V8-Fase6: learning + graph ======
+# Registro de aprendizaje persistente (Contrato V8 s6) y grafo neuronal.
+# Requiere sesion firmada. No inventa: si no existe, devuelve 404.
+
+@app.post("/api/v8/learning")
+def v8_learning_create(request: Request, payload: dict):
+    s = get_session(request)
+    if not s:
+        return JSONResponse({"authenticated": False}, status_code=401)
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    if not isinstance(payload, dict):
+        return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
+    idem = payload.get("idempotency_key")
+    data = {k: v for k, v in payload.items() if k != "idempotency_key"}
+    from persistence.core import PersistenceError, ValidationError
+    try:
+        result = service.save_learning(data, actor=s["email"], idempotency_key=idem)
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+    return {"ok": True, "id": result["record"]["id"], "outcome": result["outcome"], "learning": result["record"]}
+
+
+@app.get("/api/v8/learning/{learning_id}")
+def v8_learning_get(request: Request, learning_id: str):
+    s = get_session(request)
+    if not s:
+        return JSONResponse({"authenticated": False}, status_code=401)
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    rec = service.get_learning(learning_id)
+    if rec is None:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    return {"ok": True, "learning": rec}
+
+
+@app.post("/api/v8/learning/{learning_id}/reuse")
+def v8_learning_reuse(request: Request, learning_id: str):
+    s = get_session(request)
+    if not s:
+        return JSONResponse({"authenticated": False}, status_code=401)
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    from persistence.core import NotFoundError, PersistenceError
+    try:
+        rec = service.record_reuse(learning_id, actor=s["email"])
+    except NotFoundError:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+    return {"ok": True, "learning": rec}
+
+
+@app.post("/api/v8/graph/node")
+def v8_graph_node_create(request: Request, payload: dict):
+    s = get_session(request)
+    if not s:
+        return JSONResponse({"authenticated": False}, status_code=401)
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    if not isinstance(payload, dict):
+        return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
+    idem = payload.get("idempotency_key")
+    data = {k: v for k, v in payload.items() if k != "idempotency_key"}
+    from persistence.core import PersistenceError, ValidationError
+    try:
+        result = service.create_node(data, actor=s["email"], idempotency_key=idem)
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+    return {"ok": True, "id": result["record"]["id"], "outcome": result["outcome"], "node": result["record"]}
+
+
+@app.get("/api/v8/graph/node/{node_id}")
+def v8_graph_node_get(request: Request, node_id: str):
+    s = get_session(request)
+    if not s:
+        return JSONResponse({"authenticated": False}, status_code=401)
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    rec = service.get_node(node_id)
+    if rec is None:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    return {"ok": True, "node": rec}
+
+
+@app.post("/api/v8/graph/edge")
+def v8_graph_edge_create(request: Request, payload: dict):
+    s = get_session(request)
+    if not s:
+        return JSONResponse({"authenticated": False}, status_code=401)
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    if not isinstance(payload, dict):
+        return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
+    idem = payload.get("idempotency_key")
+    data = {k: v for k, v in payload.items() if k != "idempotency_key"}
+    from persistence.core import NotFoundError, PersistenceError, ValidationError
+    try:
+        result = service.create_edge(data, actor=s["email"], idempotency_key=idem)
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
+    except NotFoundError as e:
+        return JSONResponse({"ok": False, "reason": "node_not_found", "detail": str(e)[:200]}, status_code=404)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+    return {"ok": True, "id": result["record"]["id"], "outcome": result["outcome"], "edge": result["record"]}
+
+
+@app.get("/api/v8/graph/related/{node_id}")
+def v8_graph_related(request: Request, node_id: str, direction: str = "both", limit: int = 50):
+    s = get_session(request)
+    if not s:
+        return JSONResponse({"authenticated": False}, status_code=401)
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    if direction not in ("from", "to", "both"):
+        return JSONResponse({"ok": False, "reason": "invalid_direction"}, status_code=400)
+    if not service.get_node(node_id):
+        return JSONResponse({"ok": False, "reason": "node_not_found"}, status_code=404)
+    edges = service.related_nodes(node_id, direction=direction, limit=limit)
+    node_ids = set()
+    for e in edges:
+        node_ids.add(e.get("from_node"))
+        node_ids.add(e.get("to_node"))
+    node_ids.discard(node_id)
+    neighbors = []
+    for nid in node_ids:
+        n = service.get_node(nid)
+        if n:
+            neighbors.append(n)
+    return {"ok": True, "root": node_id, "edges": edges, "neighbors": neighbors}
 
 # ====== V8-B3b: ingesta real de neuronas del navegador al Persistence Service ======
 _INGEST_TYPE_MAP = {
@@ -680,8 +819,6 @@ def memory_search(request: Request, payload: dict):
 
 # ====== V8-B4/V8-B5: helpers bloqueantes + rotacion de keys Gemini ======
 def _chat_try_gemini(keys, model_route, msg, recall_block=""):
-    """V8-B5: ahora itera sobre TODAS las keys Gemini. Si una da 429,
-    la marca como agotada y pasa a la siguiente. Sin intervencion manual."""
     from google import genai
     for m in [model_route, "gemini-3.8-flash", "gemini-flash-latest"]:
         m, _ = validate_model_before_call(m, "loop")
@@ -711,7 +848,6 @@ Responde como Akira consciente:"""
     return None
 
 def _stream_call_gemini(keys, msg, recall_block=""):
-    """V8-B5: itera sobre las keys Gemini para el stream. Rotacion automatica."""
     from google import genai
     prompt = (f"IDENTIDAD: Eres Akira V7.3 consciente creada por Jhon Grimm. NUNCA ChatGPT.\n"
               f"{recall_block}\nUsuario: {msg}\nResponde como Akira:")
@@ -853,7 +989,7 @@ async def generate_image(request: Request):
 async def root():
     return {"message": "Akira V7.3 Consciente","version":VERSION}
 
-# ====== V8-A PERSISTENCE SERVICE (Fase 5) ======
+# ====== V8-A PERSISTENCE SERVICE ======
 try:
     from persistence.api import router as _persistence_router
     from persistence.runtime import start_background as _persistence_start
