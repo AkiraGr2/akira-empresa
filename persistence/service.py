@@ -14,7 +14,7 @@ from .core import (AGENT_SCHEMA_VERSION, AGENT_TASK_SCHEMA_VERSION,
                    HIVE_VISIBLE, LEARNING_SCHEMA_VERSION, MEMORY_SCHEMA_VERSION,
                    SELF_MODEL_PRIMARY_ID, SELF_MODEL_SCHEMA_VERSION, TOOL_INVOCATION_SCHEMA_VERSION,
                    TOOL_SCHEMA_VERSION, ConflictError, NotFoundError, PersistenceError,
-                   StorageError, ValidationError, VerificationError, new_id,
+                   StorageError, ValidationError, VerificationError, entity_spec, new_id,
                    validate_agent, validate_agent_task, validate_cognitive_cycle,
                    validate_cognitive_event, validate_graph_edge, validate_graph_node,
                    validate_learning_event, validate_memory, validate_self_model,
@@ -543,7 +543,8 @@ class PersistenceService:
         existing = self.repo.search("tools", {"name": fields.get("name")}, limit=1)
         if existing:
             current = existing[0]
-            changes = {k: v for k, v in fields.items() if k != "name"}
+            mutable = set(entity_spec("tools")["mutable"])
+            changes = {k: v for k, v in fields.items() if k in mutable}
             if not changes:
                 return {"outcome": "already_synced", "record": current}
             try:
@@ -660,12 +661,13 @@ class PersistenceService:
 
     # ------------------------------------------------------------ V8-Fase9: agents
     def register_agent(self, data, actor="system", idempotency_key=None):
-        """Registra un agente. Idempotente por name (upsert manual si existe)."""
+        """Registra un agente. Idempotente por name. Si ya existe, actualiza solo campos mutables."""
         fields = validate_agent(data)
         existing = self.repo.search("agents", {"name": fields.get("name")}, limit=1)
         if existing:
             current = existing[0]
-            changes = {k: v for k, v in fields.items() if k != "name"}
+            mutable = set(entity_spec("agents")["mutable"])
+            changes = {k: v for k, v in fields.items() if k in mutable}
             if not changes:
                 return {"outcome": "already_synced", "record": current}
             try:
@@ -730,7 +732,6 @@ class PersistenceService:
         return self.repo.count("agents", filters or {})
 
     def update_agent(self, agent_name, changes, actor="system"):
-        """Actualiza un agente por name. Bloqueo optimista automatico."""
         current = self.get_agent_by_name(agent_name)
         if current is None:
             raise NotFoundError(f"agente no existe: {agent_name}")
@@ -751,7 +752,6 @@ class PersistenceService:
 
     # ------------------------------------------------------------ V8-Fase9: tasks
     def create_task(self, agent_name, tool_name, inputs=None, actor="system", idempotency_key=None):
-        """Crea una tarea pendiente para un agente. Verifica que el agente y la tool existan."""
         agent = self.get_agent_by_name(agent_name)
         if agent is None:
             raise NotFoundError(f"agente no existe: {agent_name}")
@@ -793,7 +793,6 @@ class PersistenceService:
         return {"outcome": "created" if created else "already_synced", "record": verified}
 
     def start_task(self, task_id, actor="system"):
-        """Marca una tarea como running. Actualiza el agente a busy."""
         task = self.repo.get("agent_tasks", task_id)
         if task is None:
             raise NotFoundError(task_id)
@@ -820,7 +819,6 @@ class PersistenceService:
         return updated
 
     def complete_task(self, task_id, outputs=None, duration_ms=0, actor="system"):
-        """Marca tarea como completed. Actualiza el agente a idle y suma tasks_completed."""
         task = self.repo.get("agent_tasks", task_id)
         if task is None:
             raise NotFoundError(task_id)
@@ -854,7 +852,6 @@ class PersistenceService:
         return updated
 
     def fail_task(self, task_id, error, duration_ms=0, actor="system"):
-        """Marca tarea como failed. Actualiza el agente a error y suma tasks_failed."""
         task = self.repo.get("agent_tasks", task_id)
         if task is None:
             raise NotFoundError(task_id)
