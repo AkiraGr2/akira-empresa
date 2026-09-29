@@ -186,4 +186,26 @@ MIGRATIONS = [
         CREATE UNIQUE INDEX cognitive_events_idempotency_key_uq ON cognitive_events (idempotency_key)
         """,
     ),
+    (
+        "006_cognitive_events_textid",
+        """
+        DROP TABLE cognitive_events;
+        CREATE TABLE cognitive_events (
+            id TEXT PRIMARY KEY,
+            cycle_id TEXT NOT NULL,
+            stage TEXT NOT NULL CHECK (stage IN ('observe','interpret','reason','decide','act','observe_result','evaluate','learn','update_self_model')),
+            status TEXT NOT NULL DEFAULT 'success' CHECK (status IN ('success','failure')),
+            data JSONB NOT NULL DEFAULT '{}'::jsonb,
+            error JSONB,
+            schema_version TEXT NOT NULL DEFAULT 'cognitive_event.v1',
+            version INTEGER NOT NULL DEFAULT 1,
+            idempotency_key TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX cognitive_events_idempotency_key_uq ON cognitive_events (idempotency_key);
+        CREATE INDEX cognitive_events_cycle_idx ON cognitive_events (cycle_id, created_at ASC);
+        CREATE INDEX cognitive_events_stage_idx ON cognitive_events (stage, created_at DESC)
+        """,
+    ),
 ]
