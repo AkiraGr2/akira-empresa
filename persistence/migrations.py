@@ -45,4 +45,29 @@ MIGRATIONS = [
         CREATE INDEX audit_actor_action_idx ON audit_log (actor, action, ts DESC)
         """,
     ),
+    (
+        "002_self_model",
+        """
+        CREATE TABLE self_model (
+            id TEXT PRIMARY KEY,
+            identity JSONB NOT NULL DEFAULT '{}'::jsonb,
+            purpose JSONB NOT NULL DEFAULT '{}'::jsonb,
+            capabilities JSONB NOT NULL DEFAULT '[]'::jsonb,
+            tools JSONB NOT NULL DEFAULT '[]'::jsonb,
+            models JSONB NOT NULL DEFAULT '[]'::jsonb,
+            current_state JSONB NOT NULL DEFAULT '{}'::jsonb,
+            knowledge_state JSONB NOT NULL DEFAULT '{}'::jsonb,
+            uncertainties JSONB NOT NULL DEFAULT '[]'::jsonb,
+            errors JSONB NOT NULL DEFAULT '[]'::jsonb,
+            repairs JSONB NOT NULL DEFAULT '[]'::jsonb,
+            evolution JSONB NOT NULL DEFAULT '[]'::jsonb,
+            schema_version TEXT NOT NULL DEFAULT 'self_model.v1',
+            version INTEGER NOT NULL DEFAULT 1,
+            idempotency_key TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX self_model_idempotency_key_uq ON self_model (idempotency_key)
+        """,
+    ),
 ]
