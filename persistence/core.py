@@ -41,11 +41,9 @@ HIVE_VISIBLE = ("SHAREABLE", "COLLECTIVE")
 STATUSES = ("active", "archived", "deleted")
 MEMORY_SCHEMA_VERSION = "memory.v1"
 
-# V8-Fase5: self-model es una entidad singleton (id fijo "akira_primary").
 SELF_MODEL_PRIMARY_ID = "akira_primary"
 SELF_MODEL_SCHEMA_VERSION = "self_model.v1"
 
-# V8-Fase6: grafo neuronal + aprendizaje persistente.
 LEARNING_SCHEMA_VERSION = "learning.v1"
 GRAPH_NODE_SCHEMA_VERSION = "graph_node.v1"
 GRAPH_EDGE_SCHEMA_VERSION = "graph_edge.v1"
@@ -63,7 +61,6 @@ RELATION_TYPES = (
     "precedes", "follows", "solves", "solved_by", "learned_from",
 )
 
-# V8-Fase7: ciclo cognitivo (Contrato V8 s8).
 COGNITIVE_CYCLE_SCHEMA_VERSION = "cognitive_cycle.v1"
 COGNITIVE_EVENT_SCHEMA_VERSION = "cognitive_event.v1"
 
@@ -74,7 +71,6 @@ COGNITIVE_STAGES = (
 
 COGNITIVE_CYCLE_STATUSES = ("in_progress", "completed", "failed", "aborted")
 
-# V8-Fase8: tool registry (Contrato V8 s13).
 TOOL_SCHEMA_VERSION = "tool.v1"
 TOOL_INVOCATION_SCHEMA_VERSION = "tool_invocation.v1"
 
@@ -82,6 +78,18 @@ TOOL_STATUSES = ("available", "disabled", "deprecated")
 TOOL_CATEGORIES = (
     "web", "memory", "knowledge", "code", "files", "documents",
     "image", "apis", "computer", "internal", "general",
+)
+
+# V8-Fase9: agentes.
+AGENT_SCHEMA_VERSION = "agent.v1"
+AGENT_TASK_SCHEMA_VERSION = "agent_task.v1"
+
+AGENT_STATUSES = ("idle", "busy", "disabled", "error")
+AGENT_TASK_STATUSES = ("pending", "running", "completed", "failed")
+
+AGENT_ROLES = (
+    "researcher", "memorizer", "graph_builder", "learner",
+    "internal", "generic",
 )
 
 
@@ -215,7 +223,6 @@ ENTITIES = {
         "orderable": ("created_at", "updated_at"),
         "idempotent": True,
     },
-    # V8-Fase8: registro de herramientas (Contrato V8 s13).
     "tools": {
         "table": "tools",
         "columns": (
@@ -235,7 +242,6 @@ ENTITIES = {
         "orderable": ("created_at", "updated_at", "name"),
         "idempotent": True,
     },
-    # V8-Fase8: log append-only de invocaciones de herramientas.
     "tool_invocations": {
         "table": "tool_invocations",
         "columns": (
@@ -244,11 +250,43 @@ ENTITIES = {
         ),
         "json_columns": ("inputs", "outputs", "error"),
         "mutable": (),
-        "filterable": (
-            "id", "tool_name", "actor", "status", "idempotency_key",
-        ),
+        "filterable": ("id", "tool_name", "actor", "status", "idempotency_key"),
         "in_filterable": ("tool_name", "actor", "status"),
         "orderable": ("created_at", "updated_at", "duration_ms"),
+        "idempotent": True,
+    },
+    # V8-Fase9: agentes.
+    "agents": {
+        "table": "agents",
+        "columns": (
+            "id", "name", "role", "description", "allowed_tools", "status",
+            "current_task_id", "tasks_completed", "tasks_failed", "last_active_at",
+            "schema_version", "idempotency_key",
+        ),
+        "json_columns": ("allowed_tools",),
+        "mutable": (
+            "description", "allowed_tools", "status", "current_task_id",
+            "tasks_completed", "tasks_failed", "last_active_at",
+        ),
+        "filterable": ("id", "name", "role", "status", "idempotency_key"),
+        "in_filterable": ("role", "status"),
+        "orderable": ("created_at", "updated_at", "tasks_completed", "last_active_at"),
+        "idempotent": True,
+    },
+    "agent_tasks": {
+        "table": "agent_tasks",
+        "columns": (
+            "id", "agent_name", "tool_name", "status", "inputs", "outputs",
+            "error", "duration_ms", "started_at", "completed_at",
+            "schema_version", "idempotency_key",
+        ),
+        "json_columns": ("inputs", "outputs", "error"),
+        "mutable": (
+            "status", "outputs", "error", "duration_ms", "started_at", "completed_at",
+        ),
+        "filterable": ("id", "agent_name", "tool_name", "status", "idempotency_key"),
+        "in_filterable": ("agent_name", "tool_name", "status"),
+        "orderable": ("created_at", "updated_at", "duration_ms", "started_at", "completed_at"),
         "idempotent": True,
     },
 }
@@ -549,12 +587,8 @@ def validate_graph_edge(data, partial: bool = False) -> dict:
     return out
 
 
-_CYCLE_INPUT = {
-    "trigger", "input", "current_stage", "status", "completed_at",
-}
-_CYCLE_UPDATABLE = {
-    "current_stage", "status", "completed_at",
-}
+_CYCLE_INPUT = {"trigger", "input", "current_stage", "status", "completed_at"}
+_CYCLE_UPDATABLE = {"current_stage", "status", "completed_at"}
 
 
 def validate_cognitive_cycle(data, partial: bool = False) -> dict:
@@ -586,9 +620,7 @@ def validate_cognitive_cycle(data, partial: bool = False) -> dict:
     return out
 
 
-_EVENT_INPUT = {
-    "cycle_id", "stage", "status", "data", "error",
-}
+_EVENT_INPUT = {"cycle_id", "stage", "status", "data", "error"}
 
 
 def validate_cognitive_event(data, partial: bool = False) -> dict:
@@ -619,7 +651,6 @@ def validate_cognitive_event(data, partial: bool = False) -> dict:
     return out
 
 
-# V8-Fase8: validador de tools.
 _TOOL_INPUT = {
     "name", "description", "category", "permissions", "inputs_schema",
     "outputs_schema", "limits_json", "risks", "status",
@@ -631,8 +662,6 @@ _TOOL_UPDATABLE = {
 
 
 def validate_tool(data, partial: bool = False) -> dict:
-    """Valida una Tool. Campos obligatorios al crear: name, description.
-    permissions, limits_json y risks son contenedores declarativos, no instrucciones."""
     if not isinstance(data, dict):
         raise ValidationError("el registro debe ser un objeto")
     allowed = _TOOL_UPDATABLE if partial else _TOOL_INPUT
@@ -680,14 +709,12 @@ def validate_tool(data, partial: bool = False) -> dict:
     return out
 
 
-# V8-Fase8: validador de tool_invocations (append-only).
 _INVOCATION_INPUT = {
     "tool_name", "actor", "inputs", "outputs", "status", "error", "duration_ms",
 }
 
 
 def validate_tool_invocation(data, partial: bool = False) -> dict:
-    """Valida una ToolInvocation. Append-only: no admite cambios."""
     if partial:
         raise ValidationError("tool_invocations es append-only: no admite actualizaciones")
     if not isinstance(data, dict):
@@ -716,6 +743,117 @@ def validate_tool_invocation(data, partial: bool = False) -> dict:
             raise ValidationError("error debe ser un objeto (dict) o None")
         out["error"] = e
     out["duration_ms"] = _non_negative_int("duration_ms", data.get("duration_ms", 0))
+    return out
+
+
+# V8-Fase9: validador de agents.
+_AGENT_INPUT = {
+    "name", "role", "description", "allowed_tools", "status",
+    "current_task_id", "tasks_completed", "tasks_failed", "last_active_at",
+}
+_AGENT_UPDATABLE = {
+    "description", "allowed_tools", "status", "current_task_id",
+    "tasks_completed", "tasks_failed", "last_active_at",
+}
+
+
+def validate_agent(data, partial: bool = False) -> dict:
+    if not isinstance(data, dict):
+        raise ValidationError("el registro debe ser un objeto")
+    allowed = _AGENT_UPDATABLE if partial else _AGENT_INPUT
+    extra = sorted(set(data) - allowed)
+    if extra:
+        raise ValidationError(f"campos no permitidos: {extra}")
+    if partial and not data:
+        raise ValidationError("no hay cambios")
+    if not partial:
+        for req in ("name", "role", "description"):
+            if req not in data:
+                raise ValidationError(f"falta el campo obligatorio {req}")
+
+    out = {}
+    if "name" in data:
+        nm = _str("name", data["name"], 64)
+        if not all(c.isalnum() or c in "_-" for c in nm):
+            raise ValidationError("name solo admite letras, numeros, guion y guion bajo")
+        out["name"] = nm
+    if "role" in data:
+        out["role"] = _choice("role", data["role"], AGENT_ROLES)
+    if "description" in data:
+        out["description"] = _str("description", data["description"], 1000)
+    if "allowed_tools" in data or not partial:
+        out["allowed_tools"] = _string_list("allowed_tools", data.get("allowed_tools", []), 30, 64)
+    if "status" in data or not partial:
+        out["status"] = _choice("status", data.get("status", "idle"), AGENT_STATUSES)
+    if "current_task_id" in data:
+        if data["current_task_id"] is None:
+            out["current_task_id"] = None
+        else:
+            out["current_task_id"] = _str("current_task_id", data["current_task_id"], 64)
+    if "tasks_completed" in data:
+        out["tasks_completed"] = _non_negative_int("tasks_completed", data["tasks_completed"])
+    if "tasks_failed" in data:
+        out["tasks_failed"] = _non_negative_int("tasks_failed", data["tasks_failed"])
+    if "last_active_at" in data:
+        out["last_active_at"] = _str("last_active_at", data["last_active_at"], 64)
+    return out
+
+
+# V8-Fase9: validador de agent_tasks.
+_TASK_INPUT = {
+    "agent_name", "tool_name", "status", "inputs", "outputs", "error",
+    "duration_ms", "started_at", "completed_at",
+}
+_TASK_UPDATABLE = {
+    "status", "outputs", "error", "duration_ms", "started_at", "completed_at",
+}
+
+
+def validate_agent_task(data, partial: bool = False) -> dict:
+    if not isinstance(data, dict):
+        raise ValidationError("el registro debe ser un objeto")
+    allowed = _TASK_UPDATABLE if partial else _TASK_INPUT
+    extra = sorted(set(data) - allowed)
+    if extra:
+        raise ValidationError(f"campos no permitidos: {extra}")
+    if partial and not data:
+        raise ValidationError("no hay cambios")
+    if not partial:
+        for req in ("agent_name", "tool_name"):
+            if req not in data:
+                raise ValidationError(f"falta el campo obligatorio {req}")
+
+    out = {}
+    if "agent_name" in data:
+        out["agent_name"] = _str("agent_name", data["agent_name"], 64)
+    if "tool_name" in data:
+        out["tool_name"] = _str("tool_name", data["tool_name"], 64)
+    if "status" in data or not partial:
+        out["status"] = _choice("status", data.get("status", "pending"), AGENT_TASK_STATUSES)
+    if "inputs" in data or not partial:
+        v = data.get("inputs", {})
+        if not isinstance(v, dict):
+            raise ValidationError("inputs debe ser un objeto (dict)")
+        out["inputs"] = v
+    if "outputs" in data or not partial:
+        v = data.get("outputs", {})
+        if not isinstance(v, dict):
+            raise ValidationError("outputs debe ser un objeto (dict)")
+        out["outputs"] = v
+    if "error" in data:
+        if data["error"] is None:
+            out["error"] = None
+        else:
+            e = data["error"]
+            if not isinstance(e, dict):
+                raise ValidationError("error debe ser un objeto (dict) o None")
+            out["error"] = e
+    if "duration_ms" in data:
+        out["duration_ms"] = _non_negative_int("duration_ms", data["duration_ms"])
+    if "started_at" in data:
+        out["started_at"] = _str("started_at", data["started_at"], 64) if data["started_at"] else None
+    if "completed_at" in data:
+        out["completed_at"] = _str("completed_at", data["completed_at"], 64) if data["completed_at"] else None
     return out
 
 
@@ -753,16 +891,13 @@ class PersistenceRepository(ABC):
     """Contrato de almacenamiento (Fase 4 s3). Sin logica cognitiva: solo guardar y recuperar."""
 
     @abstractmethod
-    def create(self, entity: str, record: dict):
-        """Inserta. Devuelve (registro_guardado, creado_bool)."""
+    def create(self, entity: str, record: dict): ...
 
     @abstractmethod
-    def get(self, entity: str, record_id: str):
-        """Devuelve el registro o None."""
+    def get(self, entity: str, record_id: str): ...
 
     @abstractmethod
-    def update(self, entity: str, record_id: str, changes: dict, expected_version: int) -> dict:
-        """Actualiza con bloqueo optimista."""
+    def update(self, entity: str, record_id: str, changes: dict, expected_version: int) -> dict: ...
 
     @abstractmethod
     def delete(self, entity: str, record_id: str) -> bool: ...
