@@ -9,6 +9,7 @@
 # V8-B5-extra: /api/extract-file lee PDF con PyMuPDF para el boton de subir archivo.
 # V8-Fase5: /api/v8/self expone el self-model persistente (recuperable tras reinicio).
 # V8-Fase6: /api/v8/learning y /api/v8/graph (aprendizaje + grafo neuronal persistente).
+# V8-Fase7: /api/v8/cognitive/cycle (ciclo cognitivo real de 9 etapas, persistente).
 import os, json, datetime, threading, time, hashlib, base64, math, asyncio, random, re
 from pathlib import Path
 from collections import defaultdict
@@ -344,7 +345,7 @@ async def brain_shared():
 
 @app.get("/api/tools")
 async def tools_endpoint():
-    return {"tools": [{"name": "identity_filter"}, {"name": "membrana"}, {"name": "web_search"}, {"name": "github_auto_pr"}]}
+    return {"tools": [{"name": "identity_filter"}, {"name": "membrana"}, {"name": "web_search"}, {"name": "github_auto_pr"}, {"name": "cognitive_cycle"}]}
 
 @app.post("/api/sync_to_r2")
 async def sync_to_r2(request: Request):
@@ -462,9 +463,6 @@ def v8_self_update(request: Request, payload: dict):
     return {"ok": True, "self_model": updated}
 
 # ====== V8-Fase6: learning + graph ======
-# Registro de aprendizaje persistente (Contrato V8 s6) y grafo neuronal.
-# Requiere sesion firmada. No inventa: si no existe, devuelve 404.
-
 @app.post("/api/v8/learning")
 def v8_learning_create(request: Request, payload: dict):
     s = get_session(request)
@@ -611,6 +609,232 @@ def v8_graph_related(request: Request, node_id: str, direction: str = "both", li
         if n:
             neighbors.append(n)
     return {"ok": True, "root": node_id, "edges": edges, "neighbors": neighbors}
+
+# ====== V8-Fase7: ciclo cognitivo (9 etapas reales) ======
+# Un ciclo ejecuta OBSERVE -> INTERPRET -> REASON -> DECIDE -> ACT -> OBSERVE_RESULT
+# -> EVALUATE -> LEARN -> UPDATE_SELF_MODEL. Solo REASON usa LLM. Las demas etapas
+# son logica real del backend, y cada una escribe una fila en cognitive_events.
+# No es una llamada al LLM disfrazada (Contrato V8 s8).
+
+def _run_reason_stage(service, message, memories):
+    """Etapa REASON. Usa el LLM con contexto de memoria. Devuelve (answer, model_used)."""
+    recall_block = _format_recall_block(memories)
+    gemini_keys = _pick_gemini_keys()
+    answer = None
+    model_used = "none"
+    if gemini_keys:
+        try:
+            result = _chat_try_gemini(gemini_keys, "gemini-3.8-flash", message, recall_block)
+            if result:
+                answer = result.get("response")
+                model_used = result.get("model") or "gemini"
+        except Exception as e:
+            print(f"[cycle] Gemini falló: {e}")
+    if not answer:
+        try:
+            g = get_groq_fallback(message, "")
+            if g:
+                answer = g
+                model_used = "groq"
+        except Exception as e:
+            print(f"[cycle] Groq falló: {e}")
+    return answer, model_used
+
+
+def _execute_cognitive_cycle(service, trigger, input_data, actor):
+    """Ejecuta el ciclo completo. Devuelve {"cycle", "events", "answer"}."""
+    from persistence.core import PersistenceError
+
+    start_result = service.start_cycle(trigger, input_data, actor=actor)
+    cycle_id = start_result["record"]["id"]
+    events = []
+
+    def record(stage, data, status="success", error=None):
+        r = service.record_stage(cycle_id, stage, data=data, status=status, error=error, actor=actor)
+        events.append(r["event"])
+
+    # 1. OBSERVE
+    message = str((input_data or {}).get("message") or "")
+    record("observe", {
+        "trigger": trigger,
+        "message_length": len(message),
+        "has_message": bool(message),
+        "received_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    })
+
+    # 2. INTERPRET
+    keywords = _extract_keywords(message) if message else []
+    interpretation = "user_message" if message else "empty_input"
+    if any(w in message.lower() for w in ["recuerda", "memoria", "recuerdo"]):
+        interpretation = "memory_query"
+    elif any(w in message.lower() for w in ["aprende", "leccion", "lección"]):
+        interpretation = "learning_query"
+    record("interpret", {
+        "interpretation": interpretation,
+        "keywords": keywords,
+        "message_length": len(message),
+    })
+
+    # 3. REASON (usa LLM)
+    memories = _recall_memories(service, message, limit=5) if message else []
+    answer = None
+    model_used = "none"
+    if message:
+        try:
+            answer, model_used = _run_reason_stage(service, message, memories)
+        except Exception as e:
+            record("reason", {"error": "reason_failed", "message": str(e)[:200]}, status="failure",
+                   error={"type": type(e).__name__})
+            service.complete_cycle(cycle_id, "failed", actor=actor)
+            return {"cycle": service.get_cycle(cycle_id), "events": events, "answer": None}
+    record("reason", {
+        "model_used": model_used,
+        "memories_considered": len(memories),
+        "answer_generated": bool(answer),
+        "answer_length": len(answer or ""),
+    })
+
+    # 4. DECIDE
+    decision = "deliver_answer" if answer else "no_answer"
+    record("decide", {
+        "decision": decision,
+        "rationale": "LLM produjo respuesta" if answer else "LLM no disponible",
+    })
+
+    # 5. ACT
+    final_response = answer or "⚠️ No se pudo generar respuesta en este ciclo."
+    final_response = enforce_akira_identity_global(final_response)
+    record("act", {
+        "action": "return_response",
+        "response_length": len(final_response),
+    })
+
+    # 6. OBSERVE_RESULT
+    record("observe_result", {
+        "response_preview": final_response[:200],
+        "response_full_length": len(final_response),
+    })
+
+    # 7. EVALUATE (métricas reales)
+    low = final_response.lower()
+    identity_preserved = not any(b in low for b in _IDENTITY_BANNED_PHRASES)
+    evaluation = {
+        "has_answer": bool(answer),
+        "identity_preserved": identity_preserved,
+        "memories_used": len(memories),
+        "keywords_extracted": len(keywords),
+        "model_used": model_used,
+    }
+    record("evaluate", evaluation)
+
+    # 8. LEARN (crea learning_event real)
+    lesson = (
+        f"Ciclo '{trigger}' ejecutado. Modelo: {model_used}. "
+        f"Memorias consideradas: {len(memories)}. Keywords: {len(keywords)}. "
+        f"Identidad {'preservada' if identity_preserved else 'rota'}."
+    )
+    try:
+        learning_result = service.save_learning({
+            "source": "cognitive_cycle",
+            "event": f"ciclo cognitivo {cycle_id}",
+            "lesson": lesson,
+            "knowledge_nodes": [],
+            "relationships": [],
+            "confidence": 0.8 if answer else 0.3,
+            "outcome": "success" if answer else "failure",
+        }, actor=actor, idempotency_key=f"cycle_learn_{cycle_id}")
+        learning_id = learning_result["record"]["id"]
+        record("learn", {"learning_id": learning_id, "lesson": lesson})
+    except Exception as e:
+        record("learn", {"error": "learning_save_failed", "message": str(e)[:200]}, status="failure",
+               error={"type": type(e).__name__})
+        learning_id = None
+
+    # 9. UPDATE_SELF_MODEL
+    try:
+        current_sm = service.get_self_model()
+        cs = dict(current_sm.get("current_state") or {})
+        cs["last_cycle_id"] = cycle_id
+        cs["last_cycle_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        cs["last_cycle_trigger"] = trigger
+        cs["last_cycle_model"] = model_used
+        cs["cycles_completed"] = int(cs.get("cycles_completed") or 0) + 1
+        service.update_self_model({"current_state": cs}, current_sm["version"], actor=actor)
+        record("update_self_model", {
+            "self_model_updated": True,
+            "cycles_completed": cs["cycles_completed"],
+        })
+    except Exception as e:
+        record("update_self_model", {"error": "sm_update_failed", "message": str(e)[:200]},
+               status="failure", error={"type": type(e).__name__})
+
+    # 10. Cerrar el ciclo
+    final_status = "completed" if answer else "failed"
+    final_cycle = service.complete_cycle(cycle_id, final_status, actor=actor)
+
+    return {"cycle": final_cycle, "events": events, "answer": final_response, "learning_id": learning_id}
+
+
+@app.post("/api/v8/cognitive/cycle")
+def v8_cognitive_cycle(request: Request, payload: dict):
+    """Ejecuta un ciclo cognitivo completo. Body: {"trigger": str, "input": {}}."""
+    s = get_session(request)
+    if not s:
+        return JSONResponse({"authenticated": False}, status_code=401)
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    if not isinstance(payload, dict):
+        return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
+    trigger = str(payload.get("trigger") or "manual")[:64]
+    input_data = payload.get("input")
+    if input_data is None:
+        input_data = {}
+    if not isinstance(input_data, dict):
+        return JSONResponse({"ok": False, "reason": "input_must_be_object"}, status_code=400)
+    try:
+        result = _execute_cognitive_cycle(service, trigger, input_data, actor=s["email"])
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "cycle_failed",
+                             "error_type": type(e).__name__, "detail": str(e)[:200]}, status_code=500)
+    return {
+        "ok": True,
+        "cycle_id": result["cycle"]["id"],
+        "cycle": result["cycle"],
+        "events": result["events"],
+        "events_count": len(result["events"]),
+        "answer": result["answer"],
+        "learning_id": result.get("learning_id"),
+    }
+
+
+@app.get("/api/v8/cognitive/cycle/{cycle_id}")
+def v8_cognitive_cycle_get(request: Request, cycle_id: str):
+    s = get_session(request)
+    if not s:
+        return JSONResponse({"authenticated": False}, status_code=401)
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    data = service.get_cycle_with_events(cycle_id)
+    if data is None:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    return {"ok": True, "cycle": data["cycle"], "events": data["events"],
+            "events_count": len(data["events"])}
+
+
+@app.get("/api/v8/cognitive/cycles")
+def v8_cognitive_cycles_list(request: Request, limit: int = 10):
+    s = get_session(request)
+    if not s:
+        return JSONResponse({"authenticated": False}, status_code=401)
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    limit = max(1, min(int(limit), 50))
+    cycles = service.repo.search("cognitive_cycles", {}, limit=limit, offset=0,
+                                  order_by="created_at", descending=True)
+    return {"ok": True, "cycles": cycles, "count": len(cycles)}
 
 # ====== V8-B3b: ingesta real de neuronas del navegador al Persistence Service ======
 _INGEST_TYPE_MAP = {
