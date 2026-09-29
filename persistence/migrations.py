@@ -179,4 +179,11 @@ MIGRATIONS = [
         CREATE INDEX cognitive_events_stage_idx ON cognitive_events (stage, ts DESC)
         """,
     ),
+    (
+        "005_cognitive_events_idempotency",
+        """
+        ALTER TABLE cognitive_events ADD COLUMN idempotency_key TEXT;
+        CREATE UNIQUE INDEX cognitive_events_idempotency_key_uq ON cognitive_events (idempotency_key)
+        """,
+    ),
 ]
