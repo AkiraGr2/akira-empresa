@@ -37,7 +37,7 @@ class StorageError(PersistenceError):
 # ---------------------------------------------------------------- constantes
 MEMORY_TYPES = ("episodic", "semantic", "procedural", "working", "user_context", "system")
 PRIVACY_LEVELS = ("PRIVATE", "SENSITIVE", "SHAREABLE", "COLLECTIVE")
-HIVE_VISIBLE = ("SHAREABLE", "COLLECTIVE")  # PRIVATE y SENSITIVE nunca entran al Hive
+HIVE_VISIBLE = ("SHAREABLE", "COLLECTIVE")
 STATUSES = ("active", "archived", "deleted")
 MEMORY_SCHEMA_VERSION = "memory.v1"
 
@@ -57,12 +57,22 @@ NODE_TYPES = (
     "document", "skill", "error", "solution", "mission",
 )
 
-# Tipos de relacion permitidos. Lista blanca: el cliente no inventa relaciones.
 RELATION_TYPES = (
     "uses", "used_by", "related_to", "causes", "caused_by",
     "improves", "improved_by", "contains", "part_of",
     "precedes", "follows", "solves", "solved_by", "learned_from",
 )
+
+# V8-Fase7: ciclo cognitivo (Contrato V8 s8).
+COGNITIVE_CYCLE_SCHEMA_VERSION = "cognitive_cycle.v1"
+COGNITIVE_EVENT_SCHEMA_VERSION = "cognitive_event.v1"
+
+COGNITIVE_STAGES = (
+    "observe", "interpret", "reason", "decide", "act",
+    "observe_result", "evaluate", "learn", "update_self_model",
+)
+
+COGNITIVE_CYCLE_STATUSES = ("in_progress", "completed", "failed", "aborted")
 
 
 def new_id(prefix: str) -> str:
@@ -114,7 +124,6 @@ ENTITIES = {
         "orderable": ("created_at", "updated_at"),
         "idempotent": True,
     },
-    # V8-Fase6: registro de aprendizaje persistente (Contrato V8 s6).
     "learning_events": {
         "table": "learning_events",
         "columns": (
@@ -132,7 +141,6 @@ ENTITIES = {
         "orderable": ("created_at", "updated_at", "reuse_count", "last_reused_at"),
         "idempotent": True,
     },
-    # V8-Fase6: nodos del grafo neuronal.
     "graph_nodes": {
         "table": "graph_nodes",
         "columns": (
@@ -152,7 +160,6 @@ ENTITIES = {
         "orderable": ("created_at", "updated_at", "weight", "reuse_count", "last_used_at"),
         "idempotent": True,
     },
-    # V8-Fase6: relaciones entre nodos del grafo.
     "graph_edges": {
         "table": "graph_edges",
         "columns": (
@@ -170,6 +177,34 @@ ENTITIES = {
         ),
         "in_filterable": ("relation_type", "origin", "status"),
         "orderable": ("created_at", "updated_at", "weight", "frequency", "last_used_at"),
+        "idempotent": True,
+    },
+    # V8-Fase7: cabecera del ciclo cognitivo. Se actualiza en cada etapa.
+    "cognitive_cycles": {
+        "table": "cognitive_cycles",
+        "columns": (
+            "id", "trigger", "input", "current_stage", "status",
+            "completed_at", "schema_version", "idempotency_key",
+        ),
+        "json_columns": ("input",),
+        "mutable": ("current_stage", "status", "completed_at"),
+        "filterable": ("id", "trigger", "status", "current_stage", "idempotency_key"),
+        "in_filterable": ("trigger", "status", "current_stage"),
+        "orderable": ("created_at", "updated_at", "started_at", "completed_at"),
+        "idempotent": True,
+    },
+    # V8-Fase7: eventos del ciclo. Append-only, uno por etapa ejecutada.
+    "cognitive_events": {
+        "table": "cognitive_events",
+        "columns": (
+            "id", "cycle_id", "stage", "status", "data", "error",
+            "schema_version", "idempotency_key",
+        ),
+        "json_columns": ("data", "error"),
+        "mutable": (),
+        "filterable": ("id", "cycle_id", "stage", "status", "idempotency_key"),
+        "in_filterable": ("cycle_id", "stage", "status"),
+        "orderable": ("created_at", "updated_at"),
         "idempotent": True,
     },
 }
@@ -245,11 +280,6 @@ _MEMORY_UPDATABLE = {
 
 
 def validate_memory(data, partial: bool = False) -> dict:
-    """Valida un MemoryRecord (Fase 3 s4). partial=True para cambios de update.
-
-    Rechaza campos desconocidos y campos que solo el sistema controla (id, version, timestamps).
-    La privacidad por defecto es PRIVATE.
-    """
     if not isinstance(data, dict):
         raise ValidationError("el registro debe ser un objeto")
     allowed = _MEMORY_UPDATABLE if partial else _MEMORY_INPUT
@@ -288,22 +318,12 @@ def validate_memory(data, partial: bool = False) -> dict:
     return out
 
 
-# V8-Fase5: validador del self-model. Los campos son JSONB estructurados,
-# no texto libre. Acepta dicts para los "objetos" y listas para los "listados".
 _SELF_MODEL_OBJECT_FIELDS = ("identity", "purpose", "current_state", "knowledge_state")
 _SELF_MODEL_LIST_FIELDS = ("capabilities", "tools", "models", "uncertainties", "errors", "repairs", "evolution")
 _SELF_MODEL_UPDATABLE = frozenset(_SELF_MODEL_OBJECT_FIELDS + _SELF_MODEL_LIST_FIELDS)
 
 
 def validate_self_model(data, partial: bool = False) -> dict:
-    """Valida cambios sobre el self-model.
-
-    Reglas:
-      - Solo acepta los 11 campos JSONB declarados.
-      - Los 4 campos "objeto" (identity, purpose, current_state, knowledge_state) deben ser dict.
-      - Los 7 campos "lista" (capabilities, tools, models, ...) deben ser list.
-      - No admite dict vacio: si no hay cambios reales, es un error.
-    """
     if not isinstance(data, dict):
         raise ValidationError("el registro debe ser un objeto")
     if not data:
@@ -327,7 +347,6 @@ def validate_self_model(data, partial: bool = False) -> dict:
     return out
 
 
-# V8-Fase6: validador de learning_events (Contrato V8 s6).
 _LEARNING_INPUT = {
     "source", "event", "lesson", "knowledge_nodes", "relationships",
     "confidence", "outcome", "reuse_count", "last_reused_at",
@@ -339,13 +358,6 @@ _LEARNING_UPDATABLE = {
 
 
 def validate_learning_event(data, partial: bool = False) -> dict:
-    """Valida un LearningEvent.
-
-    Campos obligatorios (creacion): source, event, lesson.
-    knowledge_nodes y relationships son listas de strings (ids de nodos u otras entidades).
-    outcome debe ser uno de LEARNING_OUTCOMES.
-    reuse_count solo crece (>= 0).
-    """
     if not isinstance(data, dict):
         raise ValidationError("el registro debe ser un objeto")
     allowed = _LEARNING_UPDATABLE if partial else _LEARNING_INPUT
@@ -387,7 +399,6 @@ def validate_learning_event(data, partial: bool = False) -> dict:
     return out
 
 
-# V8-Fase6: validador de graph_nodes.
 _NODE_INPUT = {
     "node_type", "label", "description", "node_metadata", "weight", "confidence",
     "reuse_count", "owner_scope", "privacy_level", "status", "last_used_at",
@@ -399,7 +410,6 @@ _NODE_UPDATABLE = {
 
 
 def validate_graph_node(data, partial: bool = False) -> dict:
-    """Valida un GraphNode. Campos obligatorios: node_type, label."""
     if not isinstance(data, dict):
         raise ValidationError("el registro debe ser un objeto")
     allowed = _NODE_UPDATABLE if partial else _NODE_INPUT
@@ -442,7 +452,6 @@ def validate_graph_node(data, partial: bool = False) -> dict:
     return out
 
 
-# V8-Fase6: validador de graph_edges.
 _EDGE_INPUT = {
     "from_node", "to_node", "relation_type", "weight", "confidence",
     "frequency", "origin", "success_count", "failure_count", "status", "last_used_at",
@@ -454,7 +463,6 @@ _EDGE_UPDATABLE = {
 
 
 def validate_graph_edge(data, partial: bool = False) -> dict:
-    """Valida un GraphEdge. Campos obligatorios: from_node, to_node, relation_type."""
     if not isinstance(data, dict):
         raise ValidationError("el registro debe ser un objeto")
     allowed = _EDGE_UPDATABLE if partial else _EDGE_INPUT
@@ -497,6 +505,81 @@ def validate_graph_edge(data, partial: bool = False) -> dict:
     return out
 
 
+# V8-Fase7: validador de cognitive_cycles (cabecera).
+_CYCLE_INPUT = {
+    "trigger", "input", "current_stage", "status", "completed_at",
+}
+_CYCLE_UPDATABLE = {
+    "current_stage", "status", "completed_at",
+}
+
+
+def validate_cognitive_cycle(data, partial: bool = False) -> dict:
+    """Valida un CognitiveCycle. Campo obligatorio: trigger."""
+    if not isinstance(data, dict):
+        raise ValidationError("el registro debe ser un objeto")
+    allowed = _CYCLE_UPDATABLE if partial else _CYCLE_INPUT
+    extra = sorted(set(data) - allowed)
+    if extra:
+        raise ValidationError(f"campos no permitidos: {extra}")
+    if partial and not data:
+        raise ValidationError("no hay cambios")
+    if not partial and "trigger" not in data:
+        raise ValidationError("falta el campo obligatorio trigger")
+
+    out = {}
+    if "trigger" in data:
+        out["trigger"] = _str("trigger", data["trigger"], 64)
+    if "input" in data:
+        v = data["input"]
+        if not isinstance(v, dict):
+            raise ValidationError("input debe ser un objeto (dict)")
+        out["input"] = v
+    if "current_stage" in data or not partial:
+        out["current_stage"] = _choice("current_stage", data.get("current_stage", "observe"), COGNITIVE_STAGES)
+    if "status" in data or not partial:
+        out["status"] = _choice("status", data.get("status", "in_progress"), COGNITIVE_CYCLE_STATUSES)
+    if "completed_at" in data:
+        out["completed_at"] = _str("completed_at", data["completed_at"], 64)
+    return out
+
+
+# V8-Fase7: validador de cognitive_events (append-only).
+_EVENT_INPUT = {
+    "cycle_id", "stage", "status", "data", "error",
+}
+
+
+def validate_cognitive_event(data, partial: bool = False) -> dict:
+    """Valida un CognitiveEvent. Campos obligatorios: cycle_id, stage.
+    Los eventos son append-only: no se aceptan cambios (partial siempre False)."""
+    if partial:
+        raise ValidationError("cognitive_events es append-only: no admite actualizaciones")
+    if not isinstance(data, dict):
+        raise ValidationError("el registro debe ser un objeto")
+    extra = sorted(set(data) - _EVENT_INPUT)
+    if extra:
+        raise ValidationError(f"campos no permitidos: {extra}")
+    for req in ("cycle_id", "stage"):
+        if req not in data:
+            raise ValidationError(f"falta el campo obligatorio {req}")
+
+    out = {}
+    out["cycle_id"] = _str("cycle_id", data["cycle_id"], 64)
+    out["stage"] = _choice("stage", data["stage"], COGNITIVE_STAGES)
+    out["status"] = _choice("status", data.get("status", "success"), ("success", "failure"))
+    v = data.get("data", {})
+    if not isinstance(v, dict):
+        raise ValidationError("data debe ser un objeto (dict)")
+    out["data"] = v
+    if data.get("error") is not None:
+        e = data["error"]
+        if not isinstance(e, dict):
+            raise ValidationError("error debe ser un objeto (dict) o None")
+        out["error"] = e
+    return out
+
+
 def normalize_filters(entity: str, filters):
     """Devuelve [(tipo, campo, valor)]. Solo campos en lista blanca; nunca se interpola texto del usuario en SQL."""
     spec = entity_spec(entity)
@@ -532,7 +615,7 @@ class PersistenceRepository(ABC):
 
     @abstractmethod
     def create(self, entity: str, record: dict):
-        """Inserta. Devuelve (registro_guardado, creado_bool). Con idempotency_key repetida devuelve el existente y False."""
+        """Inserta. Devuelve (registro_guardado, creado_bool)."""
 
     @abstractmethod
     def get(self, entity: str, record_id: str):
@@ -540,11 +623,10 @@ class PersistenceRepository(ABC):
 
     @abstractmethod
     def update(self, entity: str, record_id: str, changes: dict, expected_version: int) -> dict:
-        """Actualiza con bloqueo optimista. NotFoundError o ConflictError si corresponde."""
+        """Actualiza con bloqueo optimista."""
 
     @abstractmethod
-    def delete(self, entity: str, record_id: str) -> bool:
-        """Borrado fisico. Reservado a politicas de retencion: el servicio usa archived."""
+    def delete(self, entity: str, record_id: str) -> bool: ...
 
     @abstractmethod
     def exists(self, entity: str, record_id: str) -> bool: ...
@@ -560,12 +642,10 @@ class PersistenceRepository(ABC):
     def count(self, entity: str, filters=None) -> int: ...
 
     @abstractmethod
-    def transaction(self):
-        """Context manager: `with repo.transaction() as tx:` ; commit al salir, rollback ante excepcion."""
+    def transaction(self): ...
 
     @abstractmethod
-    def append_audit(self, entry: dict) -> None:
-        """Auditoria (que hizo el sistema), separada de la memoria."""
+    def append_audit(self, entry: dict) -> None: ...
 
     @abstractmethod
     def audit_search(self, actor=None, action_prefix=None, limit: int = 20) -> list: ...
