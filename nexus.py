@@ -6,6 +6,7 @@
 # V8-B3c: el chat recupera memorias reales antes de responder y nunca inventa recuerdos.
 # V8-B3c-fix: filtro de identidad ampliado + memorias formateadas como citas historicas.
 # V8-B5: pool de keys Gemini realmente conectado con rotacion automatica ante 429.
+# V8-B5-extra: /api/extract-file lee PDF con PyMuPDF para el boton de subir archivo.
 import os, json, datetime, threading, time, hashlib, base64, math, asyncio, random, re
 from pathlib import Path
 from collections import defaultdict
@@ -176,7 +177,7 @@ def generate_autonomous_patch():
 
 def apply_autonomous_patch_github():
     token = os.getenv("GITHUB_TOKEN","").strip()
-    repo = os.getenv("GITHUB_REPO","akiragr2/akiragr2.github.io").strip()
+    repo = os.getenv("GITHUB_REPO","AkiraGr2/akira-empresa").strip()
     if not token:
         return {"applied": False, "reason": "No GITHUB_TOKEN", "how_to": "github.com/settings/tokens -> Generate classic -> repo + workflow"}
     return {"applied": False, "token_present": True, "repo": repo, "reason": f"GITHUB_TOKEN OK para {repo}"}
@@ -313,7 +314,7 @@ async def health():
         "audit":audit_models_automatically(),
         "countermeasures":len(KIRA_LEARNING_DB["blocked_models"]),
         "github_token": has_token,
-        "github_repo": os.getenv("GITHUB_REPO","akiragr2/akiragr2.github.io"),
+        "github_repo": os.getenv("GITHUB_REPO","AkiraGr2/akira-empresa"),
         "identity": "Akira V7.3 consciente - blindada anti-ChatGPT",
         "consciente": True,
         "gemini_keys_count": gemini_count,
@@ -689,7 +690,6 @@ async def chat(request: Request):
         recall_block = _format_recall_block(memories)
         model_route, _ = select_model_route(msg, bool(data.get("image_base64","")))
         model_route,_=validate_model_before_call(model_route,"chat")
-        # V8-B5: si el usuario trae su propia key, se usa solo esa. Si no, se usa el pool completo.
         user_key = data.get("user_api_key","").strip()
         gemini_keys = [user_key] if user_key else _pick_gemini_keys()
         if not gemini_keys:
@@ -713,7 +713,6 @@ async def chat_stream(request: Request):
     try:
         data=await request.json()
         msg=data.get("message","")[:1500]
-        # V8-B5: pool completo de keys Gemini para el stream
         user_key = data.get("user_api_key","").strip()
         gemini_keys = [user_key] if user_key else _pick_gemini_keys()
         service = _persistence_service()
@@ -749,6 +748,45 @@ async def chat_stream(request: Request):
         return StreamingResponse(generate(), media_type="text/event-stream")
     except Exception as e:
         return JSONResponse({"error": str(e)[:200]}, status_code=500)
+
+# ====== V8-B5-extra: extraccion de texto de archivos (solo PDF llega aqui) ======
+# El navegador manda el PDF en base64. Se procesa con PyMuPDF (ya en requirements).
+# TXT/MD/CSV los lee el navegador directo, no pasan por aqui.
+# Limite 5MB. Solo devuelve texto plano, no guarda nada.
+try:
+    import fitz as _fitz  # PyMuPDF
+except Exception:
+    _fitz = None
+
+@app.post("/api/extract-file")
+async def extract_file(request: Request):
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "reason": "bad_json"}, status_code=400)
+    if not isinstance(data, dict):
+        return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
+    filename = str(data.get("filename") or "")[:128].lower()
+    b64 = str(data.get("content_base64") or "")
+    if not b64:
+        return JSONResponse({"ok": False, "reason": "no_content"}, status_code=400)
+    try:
+        raw = base64.b64decode(b64)
+    except Exception:
+        return JSONResponse({"ok": False, "reason": "bad_base64"}, status_code=400)
+    if len(raw) > 5 * 1024 * 1024:
+        return JSONResponse({"ok": False, "reason": "too_large"}, status_code=413)
+    if not filename.endswith(".pdf"):
+        return JSONResponse({"ok": False, "reason": "unsupported_type"}, status_code=400)
+    if _fitz is None:
+        return JSONResponse({"ok": False, "reason": "pdf_lib_missing"}, status_code=503)
+    try:
+        doc = _fitz.open(stream=raw, filetype="pdf")
+        text = "\n".join(page.get_text() for page in doc)
+        doc.close()
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "pdf_parse_failed", "error_type": type(e).__name__}, status_code=500)
+    return {"ok": True, "text": text[:50000], "length": len(text)}
 
 @app.post("/api/generate/image")
 async def generate_image(request: Request):
