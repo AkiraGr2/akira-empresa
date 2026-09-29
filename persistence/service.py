@@ -2,11 +2,11 @@
 
 Secuencia de toda escritura importante: VALIDATE -> WRITE -> COMMIT -> VERIFY -> RETURN SUCCESS.
 Si algo falla se lanza una excepcion: nunca se devuelve exito ("guardado") sobre una escritura no confirmada.
-El servicio guarda y recupera; NO decide relevancia, significado ni que aprender (eso es Memory Engine).
 
-V8-Fase5: agrega soporte para self-model persistente (singleton con id="akira_primary").
-V8-Fase6: agrega soporte para learning_events, graph_nodes y graph_edges.
-V8-Fase7: agrega soporte para cognitive_cycles y cognitive_events (append-only).
+V8-Fase5: self-model persistente (singleton con id="akira_primary").
+V8-Fase6: learning_events, graph_nodes, graph_edges.
+V8-Fase7: cognitive_cycles y cognitive_events (append-only).
+V8-Fase8: tools y tool_invocations (log append-only).
 """
 from __future__ import annotations
 
@@ -15,10 +15,12 @@ import datetime as _dt
 from .core import (COGNITIVE_CYCLE_SCHEMA_VERSION, COGNITIVE_EVENT_SCHEMA_VERSION,
                    COGNITIVE_STAGES, GRAPH_EDGE_SCHEMA_VERSION, GRAPH_NODE_SCHEMA_VERSION,
                    HIVE_VISIBLE, LEARNING_SCHEMA_VERSION, MEMORY_SCHEMA_VERSION,
-                   SELF_MODEL_PRIMARY_ID, SELF_MODEL_SCHEMA_VERSION, ConflictError, NotFoundError,
-                   PersistenceError, StorageError, ValidationError, VerificationError, new_id,
+                   SELF_MODEL_PRIMARY_ID, SELF_MODEL_SCHEMA_VERSION, TOOL_INVOCATION_SCHEMA_VERSION,
+                   TOOL_SCHEMA_VERSION, ConflictError, NotFoundError, PersistenceError,
+                   StorageError, ValidationError, VerificationError, new_id,
                    validate_cognitive_cycle, validate_cognitive_event, validate_graph_edge,
-                   validate_graph_node, validate_learning_event, validate_memory, validate_self_model)
+                   validate_graph_node, validate_learning_event, validate_memory,
+                   validate_self_model, validate_tool, validate_tool_invocation)
 
 _COMPARE_FIELDS = ("content", "memory_type", "importance", "confidence", "tags", "privacy_level",
                    "source", "owner_scope")
@@ -57,6 +59,7 @@ _SELF_MODEL_DEFAULTS = {
         {"name": "learning_persistent", "status": "verified"},
         {"name": "graph_persistent", "status": "verified"},
         {"name": "cognitive_cycle_persistent", "status": "verified"},
+        {"name": "tool_registry", "status": "verified"},
         {"name": "agents", "status": "not_implemented"},
         {"name": "missions", "status": "not_implemented"},
         {"name": "self_repair_full", "status": "not_implemented"},
@@ -71,6 +74,7 @@ _SELF_MODEL_DEFAULTS = {
         {"name": "google_auth", "role": "identidad", "status": "verified"},
         {"name": "pymupdf", "role": "pdf", "status": "verified"},
         {"name": "pollinations", "role": "imagen", "status": "verified"},
+        {"name": "tool_registry", "role": "herramientas", "status": "verified"},
         {"name": "r2", "role": "almacenamiento", "status": "partial"},
     ],
     "models": [
@@ -82,7 +86,7 @@ _SELF_MODEL_DEFAULTS = {
     "uncertainties": [
         "No hay pruebas de conciencia subjetiva.",
         "La calidad de las respuestas depende del proveedor externo.",
-        "El grafo neuronal real todavia no existe.",
+        "El grafo neuronal completo todavia no existe.",
         "Los agentes y misiones todavia no existen.",
         "R2 tiene arquitectura preparada pero sin escritura real verificada.",
     ],
@@ -417,9 +421,8 @@ class PersistenceService:
     def count_edges(self, filters=None):
         return self.repo.count("graph_edges", filters or {})
 
-    # ------------------------------------------------------------ V8-Fase7: ciclo cognitivo
+    # ------------------------------------------------------------ ciclo cognitivo
     def start_cycle(self, trigger, input_data=None, actor="system", idempotency_key=None):
-        """Crea la cabecera de un ciclo cognitivo. Devuelve {"outcome", "record"}."""
         data = {
             "trigger": trigger,
             "input": input_data or {},
@@ -455,8 +458,6 @@ class PersistenceService:
         return {"outcome": "created" if created else "already_synced", "record": verified}
 
     def record_stage(self, cycle_id, stage, data=None, status="success", error=None, actor="system", idempotency_key=None):
-        """Registra una etapa del ciclo. Escribe UN evento (append-only) y actualiza
-        current_stage de la cabecera. Devuelve {"event": ..., "cycle": ...}."""
         if stage not in COGNITIVE_STAGES:
             raise ValidationError(f"stage invalido: {stage!r}")
         cycle = self.repo.get("cognitive_cycles", cycle_id)
@@ -505,8 +506,6 @@ class PersistenceService:
         return {"event": verified_event, "cycle": updated_cycle}
 
     def complete_cycle(self, cycle_id, final_status="completed", actor="system"):
-        """Marca el ciclo como completado. NO escribe evento; el evento 'update_self_model'
-        debe registrarse antes con record_stage()."""
         if final_status not in ("completed", "failed", "aborted"):
             raise ValidationError("final_status debe ser completed, failed o aborted")
         cycle = self.repo.get("cognitive_cycles", cycle_id)
@@ -536,13 +535,11 @@ class PersistenceService:
         return self.repo.get("cognitive_cycles", cycle_id)
 
     def list_cycle_events(self, cycle_id, limit=100):
-        """Devuelve los eventos de un ciclo, ordenados cronologicamente (append-only)."""
         limit = max(1, min(int(limit), 500))
         return self.repo.search("cognitive_events", {"cycle_id": cycle_id}, limit=limit,
                                 offset=0, order_by="created_at", descending=False)
 
     def get_cycle_with_events(self, cycle_id):
-        """Devuelve {"cycle": ..., "events": [...]} o None si no existe el ciclo."""
         cycle = self.repo.get("cognitive_cycles", cycle_id)
         if cycle is None:
             return None
@@ -554,3 +551,130 @@ class PersistenceService:
 
     def count_cycle_events(self, filters=None):
         return self.repo.count("cognitive_events", filters or {})
+
+    # ------------------------------------------------------------ V8-Fase8: tool registry
+    def register_tool(self, data, actor="system", idempotency_key=None):
+        """Registra una herramienta en el registry. Idempotente por name (indice unico).
+        Si ya existe una tool con el mismo name, se actualiza la metadata (upsert manual)."""
+        fields = validate_tool(data)
+        # Buscar si ya existe por name
+        existing = self.repo.search("tools", {"name": fields.get("name")}, limit=1)
+        if existing:
+            current = existing[0]
+            changes = {k: v for k, v in fields.items() if k != "name"}
+            if not changes:
+                return {"outcome": "already_synced", "record": current}
+            try:
+                with self.repo.transaction() as tx:
+                    updated = tx.update("tools", current["id"], changes, current["version"])
+                    tx.append_audit({
+                        "actor": actor, "action": "tool.update", "resource": "tools",
+                        "resource_id": current["id"], "status": "success",
+                        "detail": {"fields": sorted(changes)},
+                    })
+            except PersistenceError:
+                raise
+            except Exception as e:
+                raise StorageError(type(e).__name__) from e
+            return {"outcome": "updated", "record": updated}
+
+        record = dict(fields, id=new_id("tool"), schema_version=TOOL_SCHEMA_VERSION)
+        if idempotency_key is not None:
+            if not isinstance(idempotency_key, str) or not 0 < len(idempotency_key.strip()) <= 200:
+                raise ValidationError("idempotency_key debe ser texto de 1 a 200 caracteres")
+            record["idempotency_key"] = idempotency_key.strip()
+
+        try:
+            with self.repo.transaction() as tx:
+                stored, created = tx.create("tools", record)
+                tx.append_audit({
+                    "actor": actor,
+                    "action": "tool.create" if created else "tool.create.already_synced",
+                    "resource": "tools", "resource_id": stored["id"], "status": "success",
+                    "detail": {"name": stored.get("name"), "category": stored.get("category")},
+                })
+        except PersistenceError as e:
+            self._audit_failure_generic(actor, "tool.create", "tools", None, e)
+            raise
+        except Exception as e:
+            self._audit_failure_generic(actor, "tool.create", "tools", None, e)
+            raise StorageError(type(e).__name__) from e
+
+        verified = self.repo.get("tools", stored["id"])
+        if verified is None:
+            raise VerificationError("tool no confirmada: no se puede releer")
+        return {"outcome": "created" if created else "already_synced", "record": verified}
+
+    def get_tool_by_name(self, name):
+        rows = self.repo.search("tools", {"name": name}, limit=1)
+        return rows[0] if rows else None
+
+    def get_tool(self, tool_id):
+        return self.repo.get("tools", tool_id)
+
+    def list_tools(self, category=None, status=None, limit=100):
+        filters = {}
+        if category:
+            filters["category"] = category
+        if status:
+            filters["status"] = status
+        limit = max(1, min(int(limit), 200))
+        return self.repo.search("tools", filters, limit=limit, offset=0,
+                                order_by="name", descending=False)
+
+    def count_tools(self, filters=None):
+        return self.repo.count("tools", filters or {})
+
+    def log_invocation(self, tool_name, inputs, outputs, status, actor, duration_ms, error=None, idempotency_key=None):
+        """Registra una invocacion en el log append-only. Siempre se escribe, exito o fallo."""
+        data = {
+            "tool_name": tool_name,
+            "actor": actor,
+            "inputs": inputs if isinstance(inputs, dict) else {},
+            "outputs": outputs if isinstance(outputs, dict) else {},
+            "status": status,
+            "duration_ms": int(duration_ms),
+        }
+        if error is not None:
+            data["error"] = error
+        clean = validate_tool_invocation(data)
+        record = dict(clean, id=new_id("inv"), schema_version=TOOL_INVOCATION_SCHEMA_VERSION)
+        if idempotency_key is not None:
+            if not isinstance(idempotency_key, str) or not 0 < len(idempotency_key.strip()) <= 200:
+                raise ValidationError("idempotency_key debe ser texto de 1 a 200 caracteres")
+            record["idempotency_key"] = idempotency_key.strip()
+
+        try:
+            with self.repo.transaction() as tx:
+                stored, created = tx.create("tool_invocations", record)
+                tx.append_audit({
+                    "actor": actor,
+                    "action": "tool.invoke" if status == "success" else "tool.invoke.failed",
+                    "resource": "tool_invocations", "resource_id": stored["id"],
+                    "status": "success" if status == "success" else "failure",
+                    "detail": {"tool_name": tool_name, "duration_ms": duration_ms,
+                               "error_type": (error or {}).get("type") if error else None},
+                })
+        except PersistenceError as e:
+            self._audit_failure_generic(actor, "tool.log_invocation", "tool_invocations", None, e)
+            raise
+        except Exception as e:
+            self._audit_failure_generic(actor, "tool.log_invocation", "tool_invocations", None, e)
+            raise StorageError(type(e).__name__) from e
+
+        return {"outcome": "created" if created else "already_synced", "record": stored}
+
+    def list_invocations(self, tool_name=None, status=None, actor=None, limit=50):
+        filters = {}
+        if tool_name:
+            filters["tool_name"] = tool_name
+        if status:
+            filters["status"] = status
+        if actor:
+            filters["actor"] = actor
+        limit = max(1, min(int(limit), 200))
+        return self.repo.search("tool_invocations", filters, limit=limit, offset=0,
+                                order_by="created_at", descending=True)
+
+    def count_invocations(self, filters=None):
+        return self.repo.count("tool_invocations", filters or {})
