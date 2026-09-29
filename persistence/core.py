@@ -74,6 +74,16 @@ COGNITIVE_STAGES = (
 
 COGNITIVE_CYCLE_STATUSES = ("in_progress", "completed", "failed", "aborted")
 
+# V8-Fase8: tool registry (Contrato V8 s13).
+TOOL_SCHEMA_VERSION = "tool.v1"
+TOOL_INVOCATION_SCHEMA_VERSION = "tool_invocation.v1"
+
+TOOL_STATUSES = ("available", "disabled", "deprecated")
+TOOL_CATEGORIES = (
+    "web", "memory", "knowledge", "code", "files", "documents",
+    "image", "apis", "computer", "internal", "general",
+)
+
 
 def new_id(prefix: str) -> str:
     """Formato Fase 3: <tipo>_<uuid>."""
@@ -179,7 +189,6 @@ ENTITIES = {
         "orderable": ("created_at", "updated_at", "weight", "frequency", "last_used_at"),
         "idempotent": True,
     },
-    # V8-Fase7: cabecera del ciclo cognitivo. Se actualiza en cada etapa.
     "cognitive_cycles": {
         "table": "cognitive_cycles",
         "columns": (
@@ -193,7 +202,6 @@ ENTITIES = {
         "orderable": ("created_at", "updated_at", "started_at", "completed_at"),
         "idempotent": True,
     },
-    # V8-Fase7: eventos del ciclo. Append-only, uno por etapa ejecutada.
     "cognitive_events": {
         "table": "cognitive_events",
         "columns": (
@@ -205,6 +213,42 @@ ENTITIES = {
         "filterable": ("id", "cycle_id", "stage", "status", "idempotency_key"),
         "in_filterable": ("cycle_id", "stage", "status"),
         "orderable": ("created_at", "updated_at"),
+        "idempotent": True,
+    },
+    # V8-Fase8: registro de herramientas (Contrato V8 s13).
+    "tools": {
+        "table": "tools",
+        "columns": (
+            "id", "name", "description", "category", "permissions",
+            "inputs_schema", "outputs_schema", "limits_json", "risks",
+            "status", "schema_version", "idempotency_key",
+        ),
+        "json_columns": (
+            "permissions", "inputs_schema", "outputs_schema", "limits_json", "risks",
+        ),
+        "mutable": (
+            "description", "category", "permissions", "inputs_schema", "outputs_schema",
+            "limits_json", "risks", "status",
+        ),
+        "filterable": ("id", "name", "category", "status", "idempotency_key"),
+        "in_filterable": ("category", "status"),
+        "orderable": ("created_at", "updated_at", "name"),
+        "idempotent": True,
+    },
+    # V8-Fase8: log append-only de invocaciones de herramientas.
+    "tool_invocations": {
+        "table": "tool_invocations",
+        "columns": (
+            "id", "tool_name", "actor", "inputs", "outputs", "status",
+            "error", "duration_ms", "schema_version", "idempotency_key",
+        ),
+        "json_columns": ("inputs", "outputs", "error"),
+        "mutable": (),
+        "filterable": (
+            "id", "tool_name", "actor", "status", "idempotency_key",
+        ),
+        "in_filterable": ("tool_name", "actor", "status"),
+        "orderable": ("created_at", "updated_at", "duration_ms"),
         "idempotent": True,
     },
 }
@@ -268,6 +312,12 @@ def _choice(name, value, options):
     if value not in options:
         raise ValidationError(f"{name} debe ser uno de {list(options)}")
     return value
+
+
+def _string_list(name, value, max_items=50, max_len=256):
+    if not isinstance(value, list) or len(value) > max_items:
+        raise ValidationError(f"{name} debe ser una lista de maximo {max_items} textos")
+    return [_str(name[:-1] if name.endswith('s') else name, x, max_len) for x in value]
 
 
 _MEMORY_INPUT = {
@@ -379,15 +429,9 @@ def validate_learning_event(data, partial: bool = False) -> dict:
     if "lesson" in data:
         out["lesson"] = _str("lesson", data["lesson"], 5000)
     if "knowledge_nodes" in data or not partial:
-        v = data.get("knowledge_nodes", [])
-        if not isinstance(v, list) or len(v) > 100:
-            raise ValidationError("knowledge_nodes debe ser una lista de maximo 100 textos")
-        out["knowledge_nodes"] = [_str("knowledge_node", x, 256) for x in v]
+        out["knowledge_nodes"] = _string_list("knowledge_nodes", data.get("knowledge_nodes", []), 100, 256)
     if "relationships" in data or not partial:
-        v = data.get("relationships", [])
-        if not isinstance(v, list) or len(v) > 100:
-            raise ValidationError("relationships debe ser una lista de maximo 100 textos")
-        out["relationships"] = [_str("relationship", x, 256) for x in v]
+        out["relationships"] = _string_list("relationships", data.get("relationships", []), 100, 256)
     if "confidence" in data or not partial:
         out["confidence"] = _float_0_1("confidence", data.get("confidence", 0.5))
     if "outcome" in data or not partial:
@@ -505,7 +549,6 @@ def validate_graph_edge(data, partial: bool = False) -> dict:
     return out
 
 
-# V8-Fase7: validador de cognitive_cycles (cabecera).
 _CYCLE_INPUT = {
     "trigger", "input", "current_stage", "status", "completed_at",
 }
@@ -515,7 +558,6 @@ _CYCLE_UPDATABLE = {
 
 
 def validate_cognitive_cycle(data, partial: bool = False) -> dict:
-    """Valida un CognitiveCycle. Campo obligatorio: trigger."""
     if not isinstance(data, dict):
         raise ValidationError("el registro debe ser un objeto")
     allowed = _CYCLE_UPDATABLE if partial else _CYCLE_INPUT
@@ -544,15 +586,12 @@ def validate_cognitive_cycle(data, partial: bool = False) -> dict:
     return out
 
 
-# V8-Fase7: validador de cognitive_events (append-only).
 _EVENT_INPUT = {
     "cycle_id", "stage", "status", "data", "error",
 }
 
 
 def validate_cognitive_event(data, partial: bool = False) -> dict:
-    """Valida un CognitiveEvent. Campos obligatorios: cycle_id, stage.
-    Los eventos son append-only: no se aceptan cambios (partial siempre False)."""
     if partial:
         raise ValidationError("cognitive_events es append-only: no admite actualizaciones")
     if not isinstance(data, dict):
@@ -577,6 +616,106 @@ def validate_cognitive_event(data, partial: bool = False) -> dict:
         if not isinstance(e, dict):
             raise ValidationError("error debe ser un objeto (dict) o None")
         out["error"] = e
+    return out
+
+
+# V8-Fase8: validador de tools.
+_TOOL_INPUT = {
+    "name", "description", "category", "permissions", "inputs_schema",
+    "outputs_schema", "limits_json", "risks", "status",
+}
+_TOOL_UPDATABLE = {
+    "description", "category", "permissions", "inputs_schema", "outputs_schema",
+    "limits_json", "risks", "status",
+}
+
+
+def validate_tool(data, partial: bool = False) -> dict:
+    """Valida una Tool. Campos obligatorios al crear: name, description.
+    permissions, limits_json y risks son contenedores declarativos, no instrucciones."""
+    if not isinstance(data, dict):
+        raise ValidationError("el registro debe ser un objeto")
+    allowed = _TOOL_UPDATABLE if partial else _TOOL_INPUT
+    extra = sorted(set(data) - allowed)
+    if extra:
+        raise ValidationError(f"campos no permitidos: {extra}")
+    if partial and not data:
+        raise ValidationError("no hay cambios")
+    if not partial:
+        for req in ("name", "description"):
+            if req not in data:
+                raise ValidationError(f"falta el campo obligatorio {req}")
+
+    out = {}
+    if "name" in data:
+        nm = _str("name", data["name"], 64)
+        if not all(c.isalnum() or c in "_-" for c in nm):
+            raise ValidationError("name solo admite letras, numeros, guion y guion bajo")
+        out["name"] = nm
+    if "description" in data:
+        out["description"] = _str("description", data["description"], 1000)
+    if "category" in data or not partial:
+        out["category"] = _choice("category", data.get("category", "general"), TOOL_CATEGORIES)
+    if "permissions" in data or not partial:
+        out["permissions"] = _string_list("permissions", data.get("permissions", []), 20, 64)
+    if "inputs_schema" in data or not partial:
+        v = data.get("inputs_schema", {})
+        if not isinstance(v, dict):
+            raise ValidationError("inputs_schema debe ser un objeto (dict)")
+        out["inputs_schema"] = v
+    if "outputs_schema" in data or not partial:
+        v = data.get("outputs_schema", {})
+        if not isinstance(v, dict):
+            raise ValidationError("outputs_schema debe ser un objeto (dict)")
+        out["outputs_schema"] = v
+    if "limits_json" in data or not partial:
+        v = data.get("limits_json", {})
+        if not isinstance(v, dict):
+            raise ValidationError("limits_json debe ser un objeto (dict)")
+        out["limits_json"] = v
+    if "risks" in data or not partial:
+        out["risks"] = _string_list("risks", data.get("risks", []), 20, 256)
+    if "status" in data or not partial:
+        out["status"] = _choice("status", data.get("status", "available"), TOOL_STATUSES)
+    return out
+
+
+# V8-Fase8: validador de tool_invocations (append-only).
+_INVOCATION_INPUT = {
+    "tool_name", "actor", "inputs", "outputs", "status", "error", "duration_ms",
+}
+
+
+def validate_tool_invocation(data, partial: bool = False) -> dict:
+    """Valida una ToolInvocation. Append-only: no admite cambios."""
+    if partial:
+        raise ValidationError("tool_invocations es append-only: no admite actualizaciones")
+    if not isinstance(data, dict):
+        raise ValidationError("el registro debe ser un objeto")
+    extra = sorted(set(data) - _INVOCATION_INPUT)
+    if extra:
+        raise ValidationError(f"campos no permitidos: {extra}")
+    if "tool_name" not in data:
+        raise ValidationError("falta el campo obligatorio tool_name")
+
+    out = {}
+    out["tool_name"] = _str("tool_name", data["tool_name"], 64)
+    out["actor"] = _str("actor", data.get("actor", "system"), 64)
+    v = data.get("inputs", {})
+    if not isinstance(v, dict):
+        raise ValidationError("inputs debe ser un objeto (dict)")
+    out["inputs"] = v
+    v = data.get("outputs", {})
+    if not isinstance(v, dict):
+        raise ValidationError("outputs debe ser un objeto (dict)")
+    out["outputs"] = v
+    out["status"] = _choice("status", data.get("status", "success"), ("success", "failure"))
+    if data.get("error") is not None:
+        e = data["error"]
+        if not isinstance(e, dict):
+            raise ValidationError("error debe ser un objeto (dict) o None")
+        out["error"] = e
+    out["duration_ms"] = _non_negative_int("duration_ms", data.get("duration_ms", 0))
     return out
 
 
