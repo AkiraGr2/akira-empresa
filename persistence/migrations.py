@@ -146,4 +146,37 @@ MIGRATIONS = [
         CREATE INDEX graph_edges_weight_idx ON graph_edges (weight DESC, frequency DESC)
         """,
     ),
+    (
+        "004_cognitive_cycle",
+        """
+        CREATE TABLE cognitive_cycles (
+            id TEXT PRIMARY KEY,
+            trigger TEXT NOT NULL,
+            input JSONB NOT NULL DEFAULT '{}'::jsonb,
+            current_stage TEXT NOT NULL DEFAULT 'observe',
+            status TEXT NOT NULL DEFAULT 'in_progress' CHECK (status IN ('in_progress','completed','failed','aborted')),
+            started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            completed_at TIMESTAMPTZ,
+            schema_version TEXT NOT NULL DEFAULT 'cognitive_cycle.v1',
+            version INTEGER NOT NULL DEFAULT 1,
+            idempotency_key TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX cognitive_cycles_idempotency_key_uq ON cognitive_cycles (idempotency_key);
+        CREATE INDEX cognitive_cycles_status_idx ON cognitive_cycles (status, started_at DESC);
+        CREATE INDEX cognitive_cycles_trigger_idx ON cognitive_cycles (trigger, started_at DESC);
+        CREATE TABLE cognitive_events (
+            id BIGSERIAL PRIMARY KEY,
+            cycle_id TEXT NOT NULL,
+            stage TEXT NOT NULL CHECK (stage IN ('observe','interpret','reason','decide','act','observe_result','evaluate','learn','update_self_model')),
+            status TEXT NOT NULL DEFAULT 'success' CHECK (status IN ('success','failure')),
+            data JSONB NOT NULL DEFAULT '{}'::jsonb,
+            error JSONB,
+            ts TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX cognitive_events_cycle_idx ON cognitive_events (cycle_id, ts ASC);
+        CREATE INDEX cognitive_events_stage_idx ON cognitive_events (stage, ts DESC)
+        """,
+    ),
 ]
