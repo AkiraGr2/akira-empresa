@@ -80,7 +80,6 @@ TOOL_CATEGORIES = (
     "image", "apis", "computer", "internal", "general",
 )
 
-# V8-Fase9: agentes.
 AGENT_SCHEMA_VERSION = "agent.v1"
 AGENT_TASK_SCHEMA_VERSION = "agent_task.v1"
 
@@ -91,6 +90,15 @@ AGENT_ROLES = (
     "researcher", "memorizer", "graph_builder", "learner",
     "internal", "generic",
 )
+
+# V8-Fase10: misiones.
+MISSION_SCHEMA_VERSION = "mission.v1"
+MISSION_STATUSES = (
+    "created", "planning", "running", "paused", "waiting_approval",
+    "completed", "failed", "cancelled",
+)
+# Flujos admitidos hoy. Se agregan cuando se construyan sus flujos.
+MISSION_FLOW_TYPES = ("generic",)
 
 
 def new_id(prefix: str) -> str:
@@ -161,7 +169,6 @@ ENTITIES = {
     },
     "graph_nodes": {
         "table": "graph_nodes",
-        # 010_graph_tags: se agrega "tags" (JSONB) para auto-conexion por tags compartidos.
         "columns": (
             "id", "node_type", "label", "description", "node_metadata", "tags",
             "weight", "confidence", "reuse_count", "owner_scope", "privacy_level",
@@ -256,7 +263,6 @@ ENTITIES = {
         "orderable": ("created_at", "updated_at", "duration_ms"),
         "idempotent": True,
     },
-    # V8-Fase9: agentes.
     "agents": {
         "table": "agents",
         "columns": (
@@ -289,6 +295,30 @@ ENTITIES = {
         "filterable": ("id", "agent_name", "tool_name", "status", "mission_id", "idempotency_key"),
         "in_filterable": ("agent_name", "tool_name", "status"),
         "orderable": ("created_at", "updated_at", "duration_ms", "started_at", "completed_at"),
+        "idempotent": True,
+    },
+    # V8-Fase10: misiones.
+    "missions": {
+        "table": "missions",
+        "columns": (
+            "id", "title", "objective", "description", "status", "priority",
+            "created_by", "authorized_by", "flow_type", "flow_config",
+            "plan", "parent_mission_id", "success_criteria", "result",
+            "learning_refs", "schema_version", "idempotency_key",
+            "started_at", "completed_at",
+        ),
+        "json_columns": ("flow_config", "plan", "result", "learning_refs"),
+        "mutable": (
+            "title", "objective", "description", "status", "priority",
+            "authorized_by", "flow_config", "plan", "success_criteria",
+            "result", "learning_refs", "started_at", "completed_at",
+        ),
+        "filterable": (
+            "id", "status", "priority", "flow_type", "created_by",
+            "parent_mission_id", "idempotency_key",
+        ),
+        "in_filterable": ("status", "flow_type", "created_by"),
+        "orderable": ("created_at", "updated_at", "priority", "started_at", "completed_at"),
         "idempotent": True,
     },
 }
@@ -497,7 +527,6 @@ def validate_learning_event(data, partial: bool = False) -> dict:
     return out
 
 
-# 010_graph_tags: se agrega "tags" para auto-conexion.
 _NODE_INPUT = {
     "node_type", "label", "description", "node_metadata", "tags", "weight", "confidence",
     "reuse_count", "owner_scope", "privacy_level", "status", "last_used_at",
@@ -765,7 +794,6 @@ def validate_tool_invocation(data, partial: bool = False) -> dict:
     return out
 
 
-# V8-Fase9: validador de agents (incluye current_action del Contrato V8 s11).
 _AGENT_INPUT = {
     "name", "role", "description", "allowed_tools", "status",
     "current_task_id", "current_action", "tasks_completed", "tasks_failed", "last_active_at",
@@ -817,7 +845,6 @@ def validate_agent(data, partial: bool = False) -> dict:
     return out
 
 
-# V8-Fase9: validador de agent_tasks (incluye model, mission_id, memory_used del Contrato V8 s11).
 _TASK_INPUT = {
     "agent_name", "tool_name", "status", "model", "mission_id",
     "inputs", "outputs", "memory_used", "error", "duration_ms",
@@ -883,6 +910,84 @@ def validate_agent_task(data, partial: bool = False) -> dict:
     return out
 
 
+# V8-Fase10: misiones.
+_MISSION_INPUT = {
+    "title", "objective", "description", "status", "priority",
+    "created_by", "authorized_by", "flow_type", "flow_config",
+    "plan", "parent_mission_id", "success_criteria", "result",
+    "learning_refs", "started_at", "completed_at",
+}
+_MISSION_UPDATABLE = {
+    "title", "objective", "description", "status", "priority",
+    "authorized_by", "flow_config", "plan", "success_criteria",
+    "result", "learning_refs", "started_at", "completed_at",
+}
+
+
+def validate_mission(data, partial: bool = False) -> dict:
+    """Valida un registro de mision. Obligatorios al crear: title, objective.
+    created_by lo agrega el servicio desde el actor si no viene."""
+    if not isinstance(data, dict):
+        raise ValidationError("el registro debe ser un objeto")
+    allowed = _MISSION_UPDATABLE if partial else _MISSION_INPUT
+    extra = sorted(set(data) - allowed)
+    if extra:
+        raise ValidationError(f"campos no permitidos: {extra}")
+    if partial and not data:
+        raise ValidationError("no hay cambios")
+    if not partial:
+        for req in ("title", "objective"):
+            if req not in data:
+                raise ValidationError(f"falta el campo obligatorio {req}")
+
+    out = {}
+    if "title" in data:
+        out["title"] = _str("title", data["title"], 200)
+    if "objective" in data:
+        out["objective"] = _str("objective", data["objective"], 2000)
+    if "description" in data:
+        out["description"] = _optional_str("description", data["description"], 5000)
+    if "status" in data or not partial:
+        out["status"] = _choice("status", data.get("status", "created"), MISSION_STATUSES)
+    if "priority" in data or not partial:
+        priority = data.get("priority", 5)
+        if isinstance(priority, bool) or not isinstance(priority, int) or not 1 <= priority <= 10:
+            raise ValidationError("priority debe ser un entero entre 1 y 10")
+        out["priority"] = priority
+    if "created_by" in data:
+        out["created_by"] = _str("created_by", data["created_by"], 200)
+    if "authorized_by" in data:
+        out["authorized_by"] = _optional_str("authorized_by", data["authorized_by"], 200)
+    if "flow_type" in data or not partial:
+        out["flow_type"] = _choice("flow_type", data.get("flow_type", "generic"), MISSION_FLOW_TYPES)
+    if "flow_config" in data or not partial:
+        v = data.get("flow_config", {})
+        if not isinstance(v, dict):
+            raise ValidationError("flow_config debe ser un objeto (dict)")
+        out["flow_config"] = v
+    if "plan" in data or not partial:
+        v = data.get("plan", {})
+        if not isinstance(v, dict):
+            raise ValidationError("plan debe ser un objeto (dict)")
+        out["plan"] = v
+    if "parent_mission_id" in data:
+        out["parent_mission_id"] = _optional_str("parent_mission_id", data["parent_mission_id"], 64)
+    if "success_criteria" in data:
+        out["success_criteria"] = _optional_str("success_criteria", data["success_criteria"], 2000)
+    if "result" in data or not partial:
+        v = data.get("result", {})
+        if not isinstance(v, dict):
+            raise ValidationError("result debe ser un objeto (dict)")
+        out["result"] = v
+    if "learning_refs" in data or not partial:
+        out["learning_refs"] = _string_list("learning_refs", data.get("learning_refs", []), 100, 256)
+    if "started_at" in data:
+        out["started_at"] = _optional_str("started_at", data["started_at"], 64)
+    if "completed_at" in data:
+        out["completed_at"] = _optional_str("completed_at", data["completed_at"], 64)
+    return out
+
+
 def normalize_filters(entity: str, filters):
     """Devuelve [(tipo, campo, valor)]. Solo campos en lista blanca; nunca se interpola texto del usuario en SQL."""
     spec = entity_spec(entity)
@@ -895,7 +1000,6 @@ def normalize_filters(entity: str, filters):
                 raise ValidationError("text_contains solo esta disponible para memories")
             out.append(("text", "content", _str("text_contains", value, 200)))
         elif key == "tag":
-            # 010_graph_tags: el filtro por tag ahora aplica a memories y a graph_nodes.
             if entity not in ("memories", "graph_nodes"):
                 raise ValidationError("tag solo esta disponible para memories y graph_nodes")
             out.append(("tag", "tags", _str("tag", value, 64)))
