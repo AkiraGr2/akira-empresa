@@ -308,4 +308,11 @@ MIGRATIONS = [
         CREATE INDEX agent_tasks_mission_idx ON agent_tasks (mission_id, created_at DESC)
         """,
     ),
+    (
+        "010_graph_tags",
+        """
+        ALTER TABLE graph_nodes ADD COLUMN tags JSONB NOT NULL DEFAULT '[]'::jsonb;
+        CREATE INDEX graph_nodes_tags_idx ON graph_nodes USING GIN (tags)
+        """,
+    ),
 ]
