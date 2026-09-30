@@ -2,39 +2,31 @@
 
 Regla (Fase 4): ningun modulo cognitivo escribe directo en la base.
 Flujo: Modulo cognitivo -> PersistenceService -> PersistenceRepository -> Storage.
+Fase 10.7.2: entidades conversations y conversation_messages para persistencia de chats.
 """
 from __future__ import annotations
 
 import uuid
 from abc import ABC, abstractmethod
 
-
-# ---------------------------------------------------------------- errores
 class PersistenceError(Exception):
     """Base de todos los errores de persistencia."""
-
 
 class ValidationError(PersistenceError):
     """El registro no cumple el esquema. No se escribio nada."""
 
-
 class NotFoundError(PersistenceError):
     """El registro no existe."""
-
 
 class ConflictError(PersistenceError):
     """Version esperada distinta de la real (otro proceso modifico el registro)."""
 
-
 class VerificationError(PersistenceError):
     """La escritura se hizo pero la relectura no coincide: estado NO confirmado."""
-
 
 class StorageError(PersistenceError):
     """Fallo del almacenamiento (conexion, SQL, timeout)."""
 
-
-# ---------------------------------------------------------------- constantes
 MEMORY_TYPES = ("episodic", "semantic", "procedural", "working", "user_context", "system")
 PRIVACY_LEVELS = ("PRIVATE", "SENSITIVE", "SHAREABLE", "COLLECTIVE")
 HIVE_VISIBLE = ("SHAREABLE", "COLLECTIVE")
@@ -91,22 +83,23 @@ AGENT_ROLES = (
     "internal", "generic",
 )
 
-# V8-Fase10: misiones.
 MISSION_SCHEMA_VERSION = "mission.v1"
 MISSION_STATUSES = (
     "created", "planning", "running", "paused", "waiting_approval",
     "completed", "failed", "cancelled",
 )
-# Flujos admitidos hoy. Se agregan cuando se construyan sus flujos.
 MISSION_FLOW_TYPES = ("generic",)
 
+# Fase 10.7.2: persistencia de conversaciones.
+CONVERSATION_SCHEMA_VERSION = "conversation.v1"
+CONVERSATION_MESSAGE_SCHEMA_VERSION = "conversation_message.v1"
+CONVERSATION_STATUSES = ("active", "archived", "deleted")
+MESSAGE_ROLES = ("user", "assistant", "system")
 
 def new_id(prefix: str) -> str:
     """Formato Fase 3: <tipo>_<uuid>."""
     return f"{prefix}_{uuid.uuid4().hex}"
 
-
-# ---------------------------------------------------------------- esquema de entidades
 ENTITIES = {
     "memories": {
         "table": "memories",
@@ -297,7 +290,6 @@ ENTITIES = {
         "orderable": ("created_at", "updated_at", "duration_ms", "started_at", "completed_at"),
         "idempotent": True,
     },
-    # V8-Fase10: misiones.
     "missions": {
         "table": "missions",
         "columns": (
@@ -321,8 +313,35 @@ ENTITIES = {
         "orderable": ("created_at", "updated_at", "priority", "started_at", "completed_at"),
         "idempotent": True,
     },
+    # Fase 10.7.2: persistencia de conversaciones.
+    "conversations": {
+        "table": "conversations",
+        "columns": (
+            "id", "title", "created_by", "status", "message_count",
+            "last_message_at", "schema_version", "idempotency_key",
+        ),
+        "json_columns": (),
+        "mutable": ("title", "status", "message_count", "last_message_at"),
+        "filterable": ("id", "status", "created_by", "idempotency_key"),
+        "in_filterable": ("status", "created_by"),
+        "orderable": ("created_at", "updated_at", "last_message_at"),
+        "idempotent": True,
+    },
+    "conversation_messages": {
+        "table": "conversation_messages",
+        "columns": (
+            "id", "conversation_id", "role", "content", "model",
+            "memories_used", "error", "duration_ms",
+            "schema_version", "idempotency_key",
+        ),
+        "json_columns": ("memories_used", "error"),
+        "mutable": (),
+        "filterable": ("id", "conversation_id", "role", "idempotency_key"),
+        "in_filterable": ("conversation_id", "role"),
+        "orderable": ("created_at", "updated_at", "duration_ms"),
+        "idempotent": True,
+    },
 }
-
 
 def entity_spec(entity: str) -> dict:
     try:
@@ -330,8 +349,6 @@ def entity_spec(entity: str) -> dict:
     except KeyError:
         raise ValidationError(f"entidad desconocida: {entity!r}") from None
 
-
-# ---------------------------------------------------------------- validacion
 def _str(name, value, max_len, allow_empty=False):
     if not isinstance(value, str):
         raise ValidationError(f"{name} debe ser texto")
@@ -342,30 +359,25 @@ def _str(name, value, max_len, allow_empty=False):
         raise ValidationError(f"{name} supera {max_len} caracteres")
     return value
 
-
 def _int_0_10(name, value):
     if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 10:
         raise ValidationError(f"{name} debe ser un entero entre 0 y 10")
     return value
-
 
 def _float_0_1(name, value):
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
         raise ValidationError(f"{name} debe ser un numero entre 0 y 1")
     return float(value)
 
-
 def _non_negative_int(name, value):
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValidationError(f"{name} debe ser un entero >= 0")
     return value
 
-
 def _non_negative_float(name, value):
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
         raise ValidationError(f"{name} debe ser un numero >= 0")
     return float(value)
-
 
 def _tags(value):
     if not isinstance(value, list) or len(value) > 30:
@@ -377,18 +389,15 @@ def _tags(value):
             out.append(t)
     return out
 
-
 def _choice(name, value, options):
     if value not in options:
         raise ValidationError(f"{name} debe ser uno de {list(options)}")
     return value
 
-
 def _string_list(name, value, max_items=50, max_len=256):
     if not isinstance(value, list) or len(value) > max_items:
         raise ValidationError(f"{name} debe ser una lista de maximo {max_items} textos")
     return [_str(name[:-1] if name.endswith('s') else name, x, max_len) for x in value]
-
 
 def _optional_str(name, value, max_len):
     """Texto opcional: acepta None o cadena vacia -> None. Si no, valida longitud."""
@@ -403,7 +412,6 @@ def _optional_str(name, value, max_len):
         raise ValidationError(f"{name} supera {max_len} caracteres")
     return value
 
-
 _MEMORY_INPUT = {
     "content", "memory_type", "importance", "confidence", "source", "source_id",
     "source_reference", "created_by", "tags", "owner_scope", "privacy_level",
@@ -411,7 +419,6 @@ _MEMORY_INPUT = {
 _MEMORY_UPDATABLE = {
     "content", "memory_type", "importance", "confidence", "source_reference", "tags", "privacy_level",
 }
-
 
 def validate_memory(data, partial: bool = False) -> dict:
     if not isinstance(data, dict):
@@ -451,11 +458,9 @@ def validate_memory(data, partial: bool = False) -> dict:
             out["created_by"] = _str("created_by", data["created_by"], 64)
     return out
 
-
 _SELF_MODEL_OBJECT_FIELDS = ("identity", "purpose", "current_state", "knowledge_state")
 _SELF_MODEL_LIST_FIELDS = ("capabilities", "tools", "models", "uncertainties", "errors", "repairs", "evolution")
 _SELF_MODEL_UPDATABLE = frozenset(_SELF_MODEL_OBJECT_FIELDS + _SELF_MODEL_LIST_FIELDS)
-
 
 def validate_self_model(data, partial: bool = False) -> dict:
     if not isinstance(data, dict):
@@ -480,7 +485,6 @@ def validate_self_model(data, partial: bool = False) -> dict:
             out[field] = v
     return out
 
-
 _LEARNING_INPUT = {
     "source", "event", "lesson", "knowledge_nodes", "relationships",
     "confidence", "outcome", "reuse_count", "last_reused_at",
@@ -489,7 +493,6 @@ _LEARNING_UPDATABLE = {
     "source", "event", "lesson", "knowledge_nodes", "relationships",
     "confidence", "outcome", "reuse_count", "last_reused_at",
 }
-
 
 def validate_learning_event(data, partial: bool = False) -> dict:
     if not isinstance(data, dict):
@@ -526,7 +529,6 @@ def validate_learning_event(data, partial: bool = False) -> dict:
         out["last_reused_at"] = _str("last_reused_at", data["last_reused_at"], 64)
     return out
 
-
 _NODE_INPUT = {
     "node_type", "label", "description", "node_metadata", "tags", "weight", "confidence",
     "reuse_count", "owner_scope", "privacy_level", "status", "last_used_at",
@@ -535,7 +537,6 @@ _NODE_UPDATABLE = {
     "label", "description", "node_metadata", "tags", "weight", "confidence",
     "reuse_count", "privacy_level", "status", "last_used_at",
 }
-
 
 def validate_graph_node(data, partial: bool = False) -> dict:
     if not isinstance(data, dict):
@@ -581,7 +582,6 @@ def validate_graph_node(data, partial: bool = False) -> dict:
         out["last_used_at"] = _str("last_used_at", data["last_used_at"], 64)
     return out
 
-
 _EDGE_INPUT = {
     "from_node", "to_node", "relation_type", "weight", "confidence",
     "frequency", "origin", "success_count", "failure_count", "status", "last_used_at",
@@ -590,7 +590,6 @@ _EDGE_UPDATABLE = {
     "relation_type", "weight", "confidence", "frequency", "origin",
     "success_count", "failure_count", "status", "last_used_at",
 }
-
 
 def validate_graph_edge(data, partial: bool = False) -> dict:
     if not isinstance(data, dict):
@@ -634,10 +633,8 @@ def validate_graph_edge(data, partial: bool = False) -> dict:
         out["last_used_at"] = _str("last_used_at", data["last_used_at"], 64)
     return out
 
-
 _CYCLE_INPUT = {"trigger", "input", "current_stage", "status", "completed_at"}
 _CYCLE_UPDATABLE = {"current_stage", "status", "completed_at"}
-
 
 def validate_cognitive_cycle(data, partial: bool = False) -> dict:
     if not isinstance(data, dict):
@@ -667,9 +664,7 @@ def validate_cognitive_cycle(data, partial: bool = False) -> dict:
         out["completed_at"] = _str("completed_at", data["completed_at"], 64)
     return out
 
-
 _EVENT_INPUT = {"cycle_id", "stage", "status", "data", "error"}
-
 
 def validate_cognitive_event(data, partial: bool = False) -> dict:
     if partial:
@@ -698,7 +693,6 @@ def validate_cognitive_event(data, partial: bool = False) -> dict:
         out["error"] = e
     return out
 
-
 _TOOL_INPUT = {
     "name", "description", "category", "permissions", "inputs_schema",
     "outputs_schema", "limits_json", "risks", "status",
@@ -707,7 +701,6 @@ _TOOL_UPDATABLE = {
     "description", "category", "permissions", "inputs_schema", "outputs_schema",
     "limits_json", "risks", "status",
 }
-
 
 def validate_tool(data, partial: bool = False) -> dict:
     if not isinstance(data, dict):
@@ -756,11 +749,9 @@ def validate_tool(data, partial: bool = False) -> dict:
         out["status"] = _choice("status", data.get("status", "available"), TOOL_STATUSES)
     return out
 
-
 _INVOCATION_INPUT = {
     "tool_name", "actor", "inputs", "outputs", "status", "error", "duration_ms",
 }
-
 
 def validate_tool_invocation(data, partial: bool = False) -> dict:
     if partial:
@@ -793,7 +784,6 @@ def validate_tool_invocation(data, partial: bool = False) -> dict:
     out["duration_ms"] = _non_negative_int("duration_ms", data.get("duration_ms", 0))
     return out
 
-
 _AGENT_INPUT = {
     "name", "role", "description", "allowed_tools", "status",
     "current_task_id", "current_action", "tasks_completed", "tasks_failed", "last_active_at",
@@ -802,7 +792,6 @@ _AGENT_UPDATABLE = {
     "description", "allowed_tools", "status", "current_task_id", "current_action",
     "tasks_completed", "tasks_failed", "last_active_at",
 }
-
 
 def validate_agent(data, partial: bool = False) -> dict:
     if not isinstance(data, dict):
@@ -844,7 +833,6 @@ def validate_agent(data, partial: bool = False) -> dict:
         out["last_active_at"] = _optional_str("last_active_at", data["last_active_at"], 64)
     return out
 
-
 _TASK_INPUT = {
     "agent_name", "tool_name", "status", "model", "mission_id",
     "inputs", "outputs", "memory_used", "error", "duration_ms",
@@ -854,7 +842,6 @@ _TASK_UPDATABLE = {
     "status", "model", "mission_id", "outputs", "memory_used", "error",
     "duration_ms", "started_at", "completed_at",
 }
-
 
 def validate_agent_task(data, partial: bool = False) -> dict:
     if not isinstance(data, dict):
@@ -909,8 +896,6 @@ def validate_agent_task(data, partial: bool = False) -> dict:
         out["completed_at"] = _optional_str("completed_at", data["completed_at"], 64)
     return out
 
-
-# V8-Fase10: misiones.
 _MISSION_INPUT = {
     "title", "objective", "description", "status", "priority",
     "created_by", "authorized_by", "flow_type", "flow_config",
@@ -922,7 +907,6 @@ _MISSION_UPDATABLE = {
     "authorized_by", "flow_config", "plan", "success_criteria",
     "result", "learning_refs", "started_at", "completed_at",
 }
-
 
 def validate_mission(data, partial: bool = False) -> dict:
     """Valida un registro de mision. Obligatorios al crear: title, objective.
@@ -987,6 +971,71 @@ def validate_mission(data, partial: bool = False) -> dict:
         out["completed_at"] = _optional_str("completed_at", data["completed_at"], 64)
     return out
 
+# Fase 10.7.2: validadores de conversaciones.
+_CONVERSATION_INPUT = {"title", "created_by", "status", "message_count", "last_message_at"}
+_CONVERSATION_UPDATABLE = {"title", "status", "message_count", "last_message_at"}
+
+def validate_conversation(data, partial: bool = False) -> dict:
+    """Valida una conversacion. Al crear, created_by se auto-rellena desde el actor
+    si no viene, y title se genera a partir del primer mensaje."""
+    if not isinstance(data, dict):
+        raise ValidationError("el registro debe ser un objeto")
+    allowed = _CONVERSATION_UPDATABLE if partial else _CONVERSATION_INPUT
+    extra = sorted(set(data) - allowed)
+    if extra:
+        raise ValidationError(f"campos no permitidos: {extra}")
+    if partial and not data:
+        raise ValidationError("no hay cambios")
+    if not partial and "title" not in data:
+        raise ValidationError("falta el campo obligatorio title")
+
+    out = {}
+    if "title" in data:
+        out["title"] = _str("title", data["title"], 200)
+    if "created_by" in data:
+        out["created_by"] = _str("created_by", data["created_by"], 200)
+    if "status" in data or not partial:
+        out["status"] = _choice("status", data.get("status", "active"), CONVERSATION_STATUSES)
+    if "message_count" in data:
+        out["message_count"] = _non_negative_int("message_count", data["message_count"])
+    if "last_message_at" in data:
+        out["last_message_at"] = _optional_str("last_message_at", data["last_message_at"], 64)
+    return out
+
+_MESSAGE_INPUT = {
+    "conversation_id", "role", "content", "model",
+    "memories_used", "error", "duration_ms",
+}
+
+def validate_conversation_message(data, partial: bool = False) -> dict:
+    """Valida un mensaje. Es append-only: una vez escrito, no se edita."""
+    if partial:
+        raise ValidationError("conversation_messages es append-only: no admite actualizaciones")
+    if not isinstance(data, dict):
+        raise ValidationError("el registro debe ser un objeto")
+    extra = sorted(set(data) - _MESSAGE_INPUT)
+    if extra:
+        raise ValidationError(f"campos no permitidos: {extra}")
+    for req in ("conversation_id", "role", "content"):
+        if req not in data:
+            raise ValidationError(f"falta el campo obligatorio {req}")
+
+    out = {}
+    out["conversation_id"] = _str("conversation_id", data["conversation_id"], 64)
+    out["role"] = _choice("role", data["role"], MESSAGE_ROLES)
+    out["content"] = _str("content", data["content"], 50000)
+    if data.get("model") is not None:
+        out["model"] = _optional_str("model", data["model"], 64)
+    if data.get("memories_used") is not None:
+        out["memories_used"] = _string_list("memories_used", data["memories_used"], 100, 256)
+    if data.get("error") is not None:
+        e = data["error"]
+        if not isinstance(e, dict):
+            raise ValidationError("error debe ser un objeto (dict) o None")
+        out["error"] = e
+    if "duration_ms" in data:
+        out["duration_ms"] = _non_negative_int("duration_ms", data["duration_ms"])
+    return out
 
 def normalize_filters(entity: str, filters):
     """Devuelve [(tipo, campo, valor)]. Solo campos en lista blanca; nunca se interpola texto del usuario en SQL."""
@@ -1016,8 +1065,6 @@ def normalize_filters(entity: str, filters):
             raise ValidationError(f"filtro no permitido: {key}")
     return out
 
-
-# ---------------------------------------------------------------- interfaz del repositorio
 class PersistenceRepository(ABC):
     """Contrato de almacenamiento (Fase 4 s3). Sin logica cognitiva: solo guardar y recuperar."""
 
