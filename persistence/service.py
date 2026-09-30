@@ -1,8 +1,8 @@
 """PersistenceService: puerta unica a la persistencia de AKIRA.
 
 V8-Fase5-9: self-model, learning, graph, cognitive, tools, agents.
-Sub-fase 10.0: auto-conexion del grafo.
-Sub-fase 10.0-bis: nucleo 'Akira', conexion de todos los nodos al nucleo.
+Sub-fase 10.0: auto-conexion del grafo + nucleo Akira.
+Sub-fase 10.2: misiones (CRUD + transiciones de estado validadas).
 """
 from __future__ import annotations
 
@@ -12,13 +12,14 @@ from .core import (AGENT_SCHEMA_VERSION, AGENT_TASK_SCHEMA_VERSION,
                    COGNITIVE_CYCLE_SCHEMA_VERSION, COGNITIVE_EVENT_SCHEMA_VERSION,
                    COGNITIVE_STAGES, GRAPH_EDGE_SCHEMA_VERSION, GRAPH_NODE_SCHEMA_VERSION,
                    HIVE_VISIBLE, LEARNING_SCHEMA_VERSION, MEMORY_SCHEMA_VERSION,
+                   MISSION_SCHEMA_VERSION, MISSION_STATUSES,
                    SELF_MODEL_PRIMARY_ID, SELF_MODEL_SCHEMA_VERSION, TOOL_INVOCATION_SCHEMA_VERSION,
                    TOOL_SCHEMA_VERSION, ConflictError, NotFoundError, PersistenceError,
                    StorageError, ValidationError, VerificationError, entity_spec, new_id,
                    validate_agent, validate_agent_task, validate_cognitive_cycle,
                    validate_cognitive_event, validate_graph_edge, validate_graph_node,
-                   validate_learning_event, validate_memory, validate_self_model,
-                   validate_tool, validate_tool_invocation)
+                   validate_learning_event, validate_memory, validate_mission,
+                   validate_self_model, validate_tool, validate_tool_invocation)
 
 _COMPARE_FIELDS = ("content", "memory_type", "importance", "confidence", "tags", "privacy_level",
                    "source", "owner_scope")
@@ -38,6 +39,19 @@ _CORE_NODE_TAGS = ["core", "akira", "nucleo"]
 _CORE_NODE_WEIGHT = 10.0
 _CORE_EDGE_WEIGHT = 0.6
 
+# V8-Fase10: transiciones validas de estado de mision.
+# Cada estado solo puede cambiar a los estados listados aqui.
+MISSION_STATUS_TRANSITIONS = {
+    "created":          ("planning", "cancelled"),
+    "planning":         ("waiting_approval", "failed", "cancelled"),
+    "waiting_approval": ("running", "cancelled"),
+    "running":          ("completed", "failed", "paused"),
+    "paused":           ("running", "cancelled", "failed"),
+    "completed":        (),  # terminal
+    "failed":           (),  # terminal
+    "cancelled":        (),  # terminal
+}
+
 _SELF_MODEL_DEFAULTS = {
     "identity": {"name": "Akira", "version": "V7.3", "creator": "Jhon Grimm",
                  "language": "es-CO",
@@ -55,7 +69,7 @@ _SELF_MODEL_DEFAULTS = {
         {"name": "self_model_persistent", "status": "verified"}, {"name": "learning_persistent", "status": "verified"},
         {"name": "graph_persistent", "status": "verified"}, {"name": "graph_auto_connect", "status": "verified"},
         {"name": "cognitive_cycle_persistent", "status": "verified"}, {"name": "tool_registry", "status": "verified"},
-        {"name": "agents_persistent", "status": "verified"}, {"name": "missions", "status": "not_implemented"},
+        {"name": "agents_persistent", "status": "verified"}, {"name": "missions", "status": "partial"},
         {"name": "self_repair_full", "status": "not_implemented"}, {"name": "evolution_engine", "status": "not_implemented"},
         {"name": "hive", "status": "not_implemented"}, {"name": "knowledge_graph_full", "status": "partial"},
     ],
@@ -79,7 +93,7 @@ _SELF_MODEL_DEFAULTS = {
         "No hay pruebas de conciencia subjetiva.",
         "La calidad de las respuestas depende del proveedor externo.",
         "El grafo tiene auto-conexion por tags, agentes y learning, pero falta consolidacion y pruning.",
-        "Los agentes existen; las misiones todavia no.",
+        "Los agentes existen; las misiones estan en construccion (Fase 10).",
         "R2 tiene arquitectura preparada pero sin escritura real verificada.",
     ],
     "errors": [], "repairs": [], "evolution": [],
@@ -762,8 +776,7 @@ class PersistenceService:
 
     def auto_connect_node_tags(self, node_id, actor="auto-connect"):
         node = self.repo.get("graph_nodes", node_id)
-        if node is None or node.get("status") != "active":
-            return {"connected": 0}
+        if node is None or node.get("status") != "active": return {"connected": 0}
         my_tags = set(t.lower() for t in (node.get("tags") or []))
         if not my_tags: return {"connected": 0}
         my_privacy = node.get("privacy_level") or "PRIVATE"
@@ -836,10 +849,8 @@ class PersistenceService:
         return {"memory_node": memory_node["id"], "connected": connected}
 
     def reinforce_frequent_pairs(self, actor="auto-connect", limit_nodes=200):
-        """Refuerza pares + crea nucleo + conecta TODOS los nodos al nucleo."""
         core = self.ensure_core_node(actor=actor)
         core_id = core["id"] if core else None
-
         reinforced = 0
         frequent_pairs = 0
         try:
@@ -869,7 +880,6 @@ class PersistenceService:
                         if edge: reinforced += 1
         except Exception as e:
             print(f"[reinforce] pares fallo: {type(e).__name__}: {str(e)[:200]}")
-
         connected_to_core = 0
         if core_id:
             try:
@@ -883,7 +893,6 @@ class PersistenceService:
                     if r: connected_to_core += 1
             except Exception as e:
                 print(f"[reinforce] conexion al nucleo fallo: {type(e).__name__}: {str(e)[:200]}")
-
         try:
             self.record_audit(actor, "graph.auto_connect.reinforce", "graph_edges",
                               None, "success", {"reinforced": reinforced,
@@ -895,9 +904,6 @@ class PersistenceService:
         return {"reinforced": reinforced, "frequent_pairs": frequent_pairs,
                 "connected_to_core": connected_to_core, "core_id": core_id}
 
-    # ============================================================
-    # NUCLEO DEL GRAFO
-    # ============================================================
     def ensure_core_node(self, actor="system"):
         try:
             rows = self.repo.search("graph_nodes", {"status": "active"}, limit=500)
@@ -928,3 +934,194 @@ class PersistenceService:
             return self._upsert_edge(node_id, core["id"], "part_of", delta_weight=w, actor=actor)
         except Exception:
             return None
+
+    # ============================================================
+    # V8-Fase10: MISIONES
+    # ============================================================
+    def _validate_mission_transition(self, current, new):
+        """Verifica que la transicion current -> new sea valida.
+        Lanza ValidationError si no lo es. Si son iguales, no es error."""
+        if current == new:
+            return
+        allowed = MISSION_STATUS_TRANSITIONS.get(current)
+        if allowed is None:
+            raise ValidationError(f"estado actual desconocido: {current!r}")
+        if new not in allowed:
+            raise ValidationError(f"transicion invalida: {current} -> {new} "
+                                  f"(permitidos desde {current}: {list(allowed) or 'ninguno'})")
+
+    def create_mission(self, data, actor="system", idempotency_key=None):
+        """Crea una mision. title y objective obligatorios. created_by se auto-rellena
+        desde el actor si no viene. Sigue el patron VALIDATE -> WRITE -> VERIFY."""
+        fields = validate_mission(data)
+        if "created_by" not in fields:
+            fields["created_by"] = actor
+        record = dict(fields, id=new_id("mission"), schema_version=MISSION_SCHEMA_VERSION)
+        if idempotency_key is not None:
+            if not isinstance(idempotency_key, str) or not 0 < len(idempotency_key.strip()) <= 200:
+                raise ValidationError("idempotency_key debe ser texto de 1 a 200 caracteres")
+            record["idempotency_key"] = idempotency_key.strip()
+        try:
+            with self.repo.transaction() as tx:
+                stored, created = tx.create("missions", record)
+                tx.append_audit({"actor": actor,
+                    "action": "mission.create" if created else "mission.create.already_synced",
+                    "resource": "missions", "resource_id": stored["id"], "status": "success",
+                    "detail": {"title": stored.get("title"), "flow_type": stored.get("flow_type"),
+                               "priority": stored.get("priority")}})
+        except PersistenceError as e:
+            self._audit_failure_generic(actor, "mission.create", "missions", None, e); raise
+        except Exception as e:
+            self._audit_failure_generic(actor, "mission.create", "missions", None, e)
+            raise StorageError(type(e).__name__) from e
+        verified = self.repo.get("missions", stored["id"])
+        if verified is None: raise VerificationError("mision no confirmada")
+        return {"outcome": "created" if created else "already_synced", "record": verified}
+
+    def get_mission(self, mission_id):
+        return self.repo.get("missions", mission_id)
+
+    def list_missions(self, status=None, flow_type=None, created_by=None, limit=50, offset=0,
+                      order_by="created_at", descending=True):
+        """Lista misiones con filtros opcionales. Ordenadas por created_at DESC por defecto."""
+        filters = {}
+        if status: filters["status"] = status
+        if flow_type: filters["flow_type"] = flow_type
+        if created_by: filters["created_by"] = created_by
+        limit = max(1, min(int(limit), 200))
+        offset = max(0, int(offset))
+        return self.repo.search("missions", filters, limit=limit, offset=offset,
+                                order_by=order_by, descending=descending)
+
+    def count_missions(self, filters=None):
+        return self.repo.count("missions", filters or {})
+
+    def update_mission_status(self, mission_id, new_status, expected_version, actor="system"):
+        """Cambia el estado de una mision validando la transicion.
+        Es el UNICO lugar donde se cambia status; complete/fail/cancel son atajos."""
+        current = self.repo.get("missions", mission_id)
+        if current is None: raise NotFoundError(mission_id)
+        if new_status not in MISSION_STATUSES:
+            raise ValidationError(f"status invalido: {new_status!r}")
+        self._validate_mission_transition(current.get("status"), new_status)
+        changes = {"status": new_status}
+        if new_status == "running" and not current.get("started_at"):
+            changes["started_at"] = _now_iso()
+        if new_status in ("completed", "failed", "cancelled") and not current.get("completed_at"):
+            changes["completed_at"] = _now_iso()
+        try:
+            with self.repo.transaction() as tx:
+                updated = tx.update("missions", mission_id, changes, expected_version)
+                tx.append_audit({"actor": actor,
+                    "action": f"mission.status.{new_status}",
+                    "resource": "missions", "resource_id": mission_id, "status": "success",
+                    "detail": {"from": current.get("status"), "to": new_status,
+                               "new_version": updated["version"]}})
+        except PersistenceError as e:
+            self._audit_failure_generic(actor, f"mission.status.{new_status}", "missions", mission_id, e); raise
+        except Exception as e:
+            self._audit_failure_generic(actor, f"mission.status.{new_status}", "missions", mission_id, e)
+            raise StorageError(type(e).__name__) from e
+        verified = self.repo.get("missions", mission_id)
+        if (verified is None or verified["version"] != expected_version + 1
+                or verified.get("status") != new_status):
+            raise VerificationError("cambio de estado no confirmado al releer")
+        return verified
+
+    def update_mission_plan(self, mission_id, plan, expected_version, actor="system"):
+        """Guarda el plan (JSONB) de una mision. No cambia el estado."""
+        if not isinstance(plan, dict):
+            raise ValidationError("plan debe ser un objeto (dict)")
+        current = self.repo.get("missions", mission_id)
+        if current is None: raise NotFoundError(mission_id)
+        try:
+            with self.repo.transaction() as tx:
+                updated = tx.update("missions", mission_id, {"plan": plan}, expected_version)
+                tx.append_audit({"actor": actor, "action": "mission.plan.update",
+                    "resource": "missions", "resource_id": mission_id, "status": "success",
+                    "detail": {"new_version": updated["version"],
+                               "steps": len(plan.get("steps") or [])}})
+        except PersistenceError as e:
+            self._audit_failure_generic(actor, "mission.plan.update", "missions", mission_id, e); raise
+        except Exception as e:
+            self._audit_failure_generic(actor, "mission.plan.update", "missions", mission_id, e)
+            raise StorageError(type(e).__name__) from e
+        verified = self.repo.get("missions", mission_id)
+        if verified is None or verified["version"] != expected_version + 1 or verified.get("plan") != plan:
+            raise VerificationError("plan no confirmado al releer")
+        return verified
+
+    def complete_mission(self, mission_id, result=None, learning_refs=None, actor="system"):
+        """Atajo: marca la mision como completed con resultado y aprendizajes."""
+        current = self.repo.get("missions", mission_id)
+        if current is None: raise NotFoundError(mission_id)
+        changes = {"status": "completed"}
+        if result is not None:
+            if not isinstance(result, dict):
+                raise ValidationError("result debe ser un objeto (dict)")
+            changes["result"] = result
+        if learning_refs is not None:
+            if not isinstance(learning_refs, list) or not all(isinstance(x, str) for x in learning_refs):
+                raise ValidationError("learning_refs debe ser lista de textos")
+            changes["learning_refs"] = learning_refs
+        if not current.get("completed_at"):
+            changes["completed_at"] = _now_iso()
+        # Validar transicion
+        self._validate_mission_transition(current.get("status"), "completed")
+        try:
+            with self.repo.transaction() as tx:
+                updated = tx.update("missions", mission_id, changes, current["version"])
+                tx.append_audit({"actor": actor, "action": "mission.complete",
+                    "resource": "missions", "resource_id": mission_id, "status": "success",
+                    "detail": {"learning_refs_count": len(learning_refs or [])}})
+        except PersistenceError as e:
+            self._audit_failure_generic(actor, "mission.complete", "missions", mission_id, e); raise
+        except Exception as e:
+            self._audit_failure_generic(actor, "mission.complete", "missions", mission_id, e)
+            raise StorageError(type(e).__name__) from e
+        return self.repo.get("missions", mission_id)
+
+    def fail_mission(self, mission_id, error, actor="system"):
+        """Atajo: marca la mision como failed con motivo."""
+        current = self.repo.get("missions", mission_id)
+        if current is None: raise NotFoundError(mission_id)
+        err_dict = error if isinstance(error, dict) else {"message": str(error)[:500]}
+        changes = {"status": "failed", "result": {"error": err_dict}}
+        if not current.get("completed_at"):
+            changes["completed_at"] = _now_iso()
+        self._validate_mission_transition(current.get("status"), "failed")
+        try:
+            with self.repo.transaction() as tx:
+                updated = tx.update("missions", mission_id, changes, current["version"])
+                tx.append_audit({"actor": actor, "action": "mission.fail",
+                    "resource": "missions", "resource_id": mission_id, "status": "failure",
+                    "detail": {"error_type": err_dict.get("type")}})
+        except PersistenceError as e:
+            self._audit_failure_generic(actor, "mission.fail", "missions", mission_id, e); raise
+        except Exception as e:
+            self._audit_failure_generic(actor, "mission.fail", "missions", mission_id, e)
+            raise StorageError(type(e).__name__) from e
+        return self.repo.get("missions", mission_id)
+
+    def cancel_mission(self, mission_id, reason=None, actor="system"):
+        """Atajo: marca la mision como cancelled con motivo opcional."""
+        current = self.repo.get("missions", mission_id)
+        if current is None: raise NotFoundError(mission_id)
+        changes = {"status": "cancelled"}
+        if reason:
+            changes["result"] = {"cancel_reason": str(reason)[:500]}
+        if not current.get("completed_at"):
+            changes["completed_at"] = _now_iso()
+        self._validate_mission_transition(current.get("status"), "cancelled")
+        try:
+            with self.repo.transaction() as tx:
+                updated = tx.update("missions", mission_id, changes, current["version"])
+                tx.append_audit({"actor": actor, "action": "mission.cancel",
+                    "resource": "missions", "resource_id": mission_id, "status": "success",
+                    "detail": {"from": current.get("status"), "reason": (str(reason)[:200] if reason else None)}})
+        except PersistenceError as e:
+            self._audit_failure_generic(actor, "mission.cancel", "missions", mission_id, e); raise
+        except Exception as e:
+            self._audit_failure_generic(actor, "mission.cancel", "missions", mission_id, e)
+            raise StorageError(type(e).__name__) from e
+        return self.repo.get("missions", mission_id)
