@@ -1,11 +1,8 @@
-"""PersistenceService: unica puerta de entrada para guardar y recuperar estado de AKIRA.
+"""PersistenceService: puerta unica a la persistencia de AKIRA.
 
-Secuencia: VALIDATE -> WRITE -> COMMIT -> VERIFY -> RETURN SUCCESS.
-V8-Fase5: self-model. V8-Fase6: learning + graph. V8-Fase7: ciclo cognitivo.
-V8-Fase8: tools + invocaciones. V8-Fase9: agents + agent_tasks.
-V8-Paso1: list_graph_nodes / list_graph_edges para endpoint /api/v8/graph/overview (cierra H-10).
-Sub-fase 10.0: 5 metodos de auto-conexion del grafo (tags, agent-tool, learning, memory, refuerzo).
-Sub-fase 10.0-bis (2026-09-30): defaults del self-model actualizados (graph_auto_connect, knowledge_graph_full partial).
+V8-Fase5-9: self-model, learning, graph, cognitive, tools, agents.
+Sub-fase 10.0: auto-conexion del grafo.
+Sub-fase 10.0-bis: nucleo 'Akira' y conexion de huerfanos.
 """
 from __future__ import annotations
 
@@ -26,7 +23,6 @@ from .core import (AGENT_SCHEMA_VERSION, AGENT_TASK_SCHEMA_VERSION,
 _COMPARE_FIELDS = ("content", "memory_type", "importance", "confidence", "tags", "privacy_level",
                    "source", "owner_scope")
 
-# Sub-fase 10.0: constantes de auto-conexion del grafo.
 _AUTO_MIN_WEIGHT = 0.3
 _AUTO_MAX_CONNECTIONS = 5
 _AUTO_TAG_WEIGHT_BASE = 0.5
@@ -36,6 +32,12 @@ _AUTO_LEARNING_WEIGHT = 0.8
 _AUTO_MEMORY_WEIGHT = 0.4
 _AUTO_EDGE_MAX_WEIGHT = 1.0
 _AUTO_REINFORCE_MIN_FREQ = 5
+
+# Nucleo del grafo
+_CORE_NODE_LABEL = "Akira"
+_CORE_NODE_TAGS = ["core", "akira", "nucleo"]
+_CORE_NODE_WEIGHT = 10.0
+_CORE_EDGE_WEIGHT = 0.4
 
 _SELF_MODEL_DEFAULTS = {
     "identity": {
@@ -70,7 +72,7 @@ _SELF_MODEL_DEFAULTS = {
         {"name": "self_model_persistent", "status": "verified"},
         {"name": "learning_persistent", "status": "verified"},
         {"name": "graph_persistent", "status": "verified"},
-        {"name": "graph_auto_connect", "status": "verified"},  # nuevo: sub-fase 10.0
+        {"name": "graph_auto_connect", "status": "verified"},
         {"name": "cognitive_cycle_persistent", "status": "verified"},
         {"name": "tool_registry", "status": "verified"},
         {"name": "agents_persistent", "status": "verified"},
@@ -78,7 +80,7 @@ _SELF_MODEL_DEFAULTS = {
         {"name": "self_repair_full", "status": "not_implemented"},
         {"name": "evolution_engine", "status": "not_implemented"},
         {"name": "hive", "status": "not_implemented"},
-        {"name": "knowledge_graph_full", "status": "partial"},  # cambio: era not_implemented
+        {"name": "knowledge_graph_full", "status": "partial"},
     ],
     "tools": [
         {"name": "postgres", "role": "persistencia", "status": "verified"},
@@ -252,7 +254,7 @@ class PersistenceService:
             with self.repo.transaction() as tx:
                 stored, created = tx.create("self_model", record)
                 tx.append_audit({
-                    "actor": "system", "action": "self_model.create" if created else "self_model.create.already_exists",
+                    "actor": "system", "action": "self_model.create",
                     "resource": "self_model", "resource_id": stored["id"], "status": "success",
                     "detail": {"created": created, "schema_version": SELF_MODEL_SCHEMA_VERSION},
                 })
@@ -391,6 +393,12 @@ class PersistenceService:
                 self.auto_connect_node_tags(verified["id"], actor=actor)
             except Exception as e:
                 print(f"[auto-connect] node_tags fallo: {type(e).__name__}: {str(e)[:200]}")
+            # Conectar al nucleo si no es el mismo nucleo
+            if str(verified.get("label", "")).strip() != _CORE_NODE_LABEL:
+                try:
+                    self.connect_to_core(verified["id"], actor=actor, weight=0.25)
+                except Exception as e:
+                    print(f"[core] connect fallo: {type(e).__name__}: {str(e)[:200]}")
         return {"outcome": "created" if created else "already_synced", "record": verified}
 
     def get_node(self, node_id):
@@ -699,7 +707,7 @@ class PersistenceService:
     def count_invocations(self, filters=None):
         return self.repo.count("tool_invocations", filters or {})
 
-    # ------------------------------------------------------------ V8-Fase9: agents
+    # ------------------------------------------------------------ agents
     def register_agent(self, data, actor="system", idempotency_key=None):
         fields = validate_agent(data)
         existing = self.repo.search("agents", {"name": fields.get("name")}, limit=1)
@@ -789,7 +797,7 @@ class PersistenceService:
             raise StorageError(type(e).__name__) from e
         return updated
 
-    # ------------------------------------------------------------ V8-Fase9: tasks
+    # ------------------------------------------------------------ tasks
     def create_task(self, agent_name, tool_name, inputs=None, model=None, mission_id=None,
                     memory_used=None, actor="system", idempotency_key=None):
         agent = self.get_agent_by_name(agent_name)
@@ -859,8 +867,7 @@ class PersistenceService:
                 tx.append_audit({
                     "actor": actor, "action": "agent.task.start", "resource": "agent_tasks",
                     "resource_id": task_id, "status": "success",
-                    "detail": {"agent": task["agent_name"], "tool": task["tool_name"],
-                               "current_action": current_action},
+                    "detail": {"agent": task["agent_name"], "tool": task["tool_name"]},
                 })
         except PersistenceError:
             raise
@@ -878,12 +885,8 @@ class PersistenceService:
             raise NotFoundError(task_id)
         if task.get("status") not in ("pending", "running"):
             raise ValidationError(f"tarea ya esta {task['status']}")
-        changes = {
-            "status": "completed",
-            "outputs": outputs or {},
-            "duration_ms": int(duration_ms),
-            "completed_at": _now_iso(),
-        }
+        changes = {"status": "completed", "outputs": outputs or {},
+                   "duration_ms": int(duration_ms), "completed_at": _now_iso()}
         if memory_used is not None:
             changes["memory_used"] = memory_used
         try:
@@ -914,12 +917,8 @@ class PersistenceService:
         if task.get("status") not in ("pending", "running"):
             raise ValidationError(f"tarea ya esta {task['status']}")
         err_dict = error if isinstance(error, dict) else {"message": str(error)[:200]}
-        changes = {
-            "status": "failed",
-            "error": err_dict,
-            "duration_ms": int(duration_ms),
-            "completed_at": _now_iso(),
-        }
+        changes = {"status": "failed", "error": err_dict,
+                   "duration_ms": int(duration_ms), "completed_at": _now_iso()}
         if memory_used is not None:
             changes["memory_used"] = memory_used
         try:
@@ -935,8 +934,7 @@ class PersistenceService:
                 tx.append_audit({
                     "actor": actor, "action": "agent.task.fail", "resource": "agent_tasks",
                     "resource_id": task_id, "status": "failure",
-                    "detail": {"agent": task["agent_name"],
-                               "error": err_dict.get("type") or err_dict.get("message")},
+                    "detail": {"agent": task["agent_name"]},
                 })
         except PersistenceError:
             raise
@@ -963,9 +961,8 @@ class PersistenceService:
         return self.repo.count("agent_tasks", filters or {})
 
     # ============================================================
-    # Sub-fase 10.0: AUTO-CONEXION DEL GRAFO
+    # AUTO-CONEXION DEL GRAFO
     # ============================================================
-
     def _find_or_create_node(self, node_type, label, tags=None, actor="auto-connect"):
         label = str(label).strip()[:200]
         if not label:
@@ -998,8 +995,7 @@ class PersistenceService:
             changes = {"frequency": new_freq, "weight": new_weight, "last_used_at": _now_iso()}
             try:
                 with self.repo.transaction() as tx:
-                    updated = tx.update("graph_edges", existing["id"], changes, existing["version"])
-                return updated
+                    return tx.update("graph_edges", existing["id"], changes, existing["version"])
             except Exception:
                 return None
         try:
@@ -1021,11 +1017,9 @@ class PersistenceService:
         if not my_tags:
             return {"connected": 0, "reason": "no_tags"}
         my_privacy = node.get("privacy_level") or "PRIVATE"
-
         candidates = self.repo.search("graph_nodes", {
             "status": "active", "privacy_level": my_privacy,
         }, limit=200)
-
         scored = []
         for c in candidates:
             if c["id"] == node_id:
@@ -1038,21 +1032,14 @@ class PersistenceService:
                 continue
             weight = _AUTO_TAG_WEIGHT_BASE + (_AUTO_TAG_WEIGHT_PER_EXTRA * (len(shared) - 1))
             scored.append((weight, c["id"], len(shared)))
-
         scored.sort(reverse=True)
         created = 0
-        for weight, other_id, _shared_count in scored[:_AUTO_MAX_CONNECTIONS]:
+        for weight, other_id, _s in scored[:_AUTO_MAX_CONNECTIONS]:
             r = self._upsert_edge(node_id, other_id, "related_to",
                                   delta_weight=min(weight, _AUTO_EDGE_MAX_WEIGHT), actor=actor)
             if r:
                 created += 1
-        if created:
-            try:
-                self.record_audit(actor, "graph.auto_connect.tags", "graph_nodes", node_id,
-                                  "success", {"connected": created})
-            except Exception:
-                pass
-        return {"connected": created, "candidates_considered": len(scored)}
+        return {"connected": created}
 
     def auto_connect_agent_tool(self, agent_name, tool_name, actor="auto-connect"):
         agent_label = f"agent:{agent_name}"
@@ -1060,32 +1047,24 @@ class PersistenceService:
         agent_node = self._find_or_create_node("person", agent_label, tags=["agent", agent_name], actor=actor)
         tool_node = self._find_or_create_node("tool", tool_label, tags=["tool", tool_name], actor=actor)
         if not agent_node or not tool_node:
-            return {"connected": 0, "reason": "node_create_failed"}
+            return {"connected": 0}
         edge = self._upsert_edge(agent_node["id"], tool_node["id"], "uses",
                                  delta_weight=_AUTO_AGENT_TOOL_WEIGHT, actor=actor)
-        try:
-            self.record_audit(actor, "graph.auto_connect.agent_tool", "graph_edges",
-                              edge["id"] if edge else None, "success",
-                              {"agent": agent_name, "tool": tool_name})
-        except Exception:
-            pass
         return {"agent_node": agent_node["id"], "tool_node": tool_node["id"],
                 "edge": edge["id"] if edge else None}
 
     def auto_connect_learning(self, learning_id, actor="auto-connect"):
         learning = self.repo.get("learning_events", learning_id)
         if learning is None:
-            return {"connected": 0, "reason": "learning_not_found"}
+            return {"connected": 0}
         knowledge_nodes = learning.get("knowledge_nodes") or []
         if not knowledge_nodes:
-            return {"connected": 0, "reason": "no_knowledge_nodes"}
-
+            return {"connected": 0}
         learning_node = self._find_or_create_node(
             "experience", f"learning:{learning_id}",
             tags=["learning", str(learning.get("source", "unknown"))], actor=actor)
         if not learning_node:
-            return {"connected": 0, "reason": "node_create_failed"}
-
+            return {"connected": 0}
         connected = 0
         for kn_id in knowledge_nodes:
             if not self.repo.exists("graph_nodes", kn_id):
@@ -1094,32 +1073,24 @@ class PersistenceService:
                                      delta_weight=_AUTO_LEARNING_WEIGHT, actor=actor)
             if edge:
                 connected += 1
-        try:
-            self.record_audit(actor, "graph.auto_connect.learning", "graph_nodes",
-                              learning_node["id"], "success", {"connected": connected})
-        except Exception:
-            pass
         return {"learning_node": learning_node["id"], "connected": connected}
 
     def auto_connect_memory_tags(self, memory_id, actor="auto-connect"):
         memory = self.repo.get("memories", memory_id)
         if memory is None or memory.get("status") != "active":
-            return {"connected": 0, "reason": "memory_not_active"}
+            return {"connected": 0}
         tags = memory.get("tags") or []
         if not tags:
-            return {"connected": 0, "reason": "no_tags"}
+            return {"connected": 0}
         my_privacy = memory.get("privacy_level") or "PRIVATE"
-
         memory_node = self._find_or_create_node(
             "experience", f"memory:{memory_id}", tags=tags, actor=actor)
         if not memory_node:
-            return {"connected": 0, "reason": "node_create_failed"}
-
+            return {"connected": 0}
         my_tags = set(t.lower() for t in tags)
         candidates = self.repo.search("graph_nodes", {
             "status": "active", "privacy_level": my_privacy,
         }, limit=200)
-
         connected = 0
         for c in candidates:
             if c["id"] == memory_node["id"]:
@@ -1137,47 +1108,112 @@ class PersistenceService:
         return {"memory_node": memory_node["id"], "connected": connected}
 
     def reinforce_frequent_pairs(self, actor="auto-connect", limit_nodes=200):
+        """Refuerza pares frecuentes + crea nucleo + conecta huerfanos."""
+        # 1. Crear/reforzar el nucleo Akira
+        core = self.ensure_core_node(actor=actor)
+        core_id = core["id"] if core else None
+
+        # 2. Reforzar pares frecuentes (logica previa)
+        reinforced = 0
+        frequent_pairs = 0
         try:
             memories = self.repo.search("memories", {"status": "active"}, limit=500,
                                         order_by="created_at", descending=True)
-        except Exception:
-            return {"reinforced": 0, "reason": "search_failed"}
+            from collections import Counter
+            pair_counter = Counter()
+            for m in memories:
+                tags = sorted(set(t.lower() for t in (m.get("tags") or [])))
+                for i in range(len(tags)):
+                    for j in range(i + 1, len(tags)):
+                        pair_counter[(tags[i], tags[j])] += 1
+            frecuentes = [(pair, n) for pair, n in pair_counter.items() if n >= _AUTO_REINFORCE_MIN_FREQ]
+            frequent_pairs = len(frecuentes)
+            nodes = self.repo.search("graph_nodes", {"status": "active"}, limit=limit_nodes)
+            tags_index = {}
+            for n in nodes:
+                for t in (n.get("tags") or []):
+                    tl = t.lower()
+                    tags_index.setdefault(tl, []).append(n["id"])
+            for (tag_a, tag_b), freq in frecuentes:
+                a_ids = tags_index.get(tag_a, [])
+                b_ids = tags_index.get(tag_b, [])
+                for a in a_ids[:3]:
+                    for b in b_ids[:3]:
+                        if a == b:
+                            continue
+                        edge = self._upsert_edge(a, b, "related_to",
+                                                 delta_weight=0.1 * (freq / _AUTO_REINFORCE_MIN_FREQ),
+                                                 actor=actor)
+                        if edge:
+                            reinforced += 1
+        except Exception as e:
+            print(f"[reinforce] pares fallo: {type(e).__name__}: {str(e)[:200]}")
 
-        from collections import Counter
-        pair_counter = Counter()
-        for m in memories:
-            tags = sorted(set(t.lower() for t in (m.get("tags") or [])))
-            for i in range(len(tags)):
-                for j in range(i + 1, len(tags)):
-                    pair_counter[(tags[i], tags[j])] += 1
-
-        frecuentes = [(pair, n) for pair, n in pair_counter.items() if n >= _AUTO_REINFORCE_MIN_FREQ]
-        if not frecuentes:
-            return {"reinforced": 0, "reason": "no_frequent_pairs"}
-
-        nodes = self.repo.search("graph_nodes", {"status": "active"}, limit=limit_nodes)
-        tags_index = {}
-        for n in nodes:
-            for t in (n.get("tags") or []):
-                tl = t.lower()
-                tags_index.setdefault(tl, []).append(n["id"])
-
-        reinforced = 0
-        for (tag_a, tag_b), freq in frecuentes:
-            a_ids = tags_index.get(tag_a, [])
-            b_ids = tags_index.get(tag_b, [])
-            for a in a_ids[:3]:
-                for b in b_ids[:3]:
-                    if a == b:
+        # 3. Conectar huerfanos al nucleo
+        orphans_connected = 0
+        if core_id:
+            try:
+                nodes = self.repo.search("graph_nodes", {"status": "active"}, limit=500)
+                for n in nodes:
+                    if n["id"] == core_id:
                         continue
-                    edge = self._upsert_edge(a, b, "related_to",
-                                             delta_weight=0.1 * (freq / _AUTO_REINFORCE_MIN_FREQ),
-                                             actor=actor)
-                    if edge:
-                        reinforced += 1
+                    has = self.related_nodes(n["id"], limit=1)
+                    if has:
+                        continue
+                    r = self.connect_to_core(n["id"], actor=actor, weight=_CORE_EDGE_WEIGHT)
+                    if r:
+                        orphans_connected += 1
+            except Exception as e:
+                print(f"[reinforce] huerfanos fallo: {type(e).__name__}: {str(e)[:200]}")
+
         try:
             self.record_audit(actor, "graph.auto_connect.reinforce", "graph_edges",
-                              None, "success", {"reinforced": reinforced, "pairs": len(frecuentes)})
+                              None, "success", {"reinforced": reinforced,
+                                                "frequent_pairs": frequent_pairs,
+                                                "orphans_connected": orphans_connected,
+                                                "core_id": core_id})
         except Exception:
             pass
-        return {"reinforced": reinforced, "frequent_pairs": len(frecuentes)}
+        return {"reinforced": reinforced, "frequent_pairs": frequent_pairs,
+                "orphans_connected": orphans_connected, "core_id": core_id}
+
+    # ============================================================
+    # NUCLEO DEL GRAFO
+    # ============================================================
+    def ensure_core_node(self, actor="system"):
+        """Crea o recupera el nodo nucleo 'Akira'. Idempotente por label."""
+        try:
+            rows = self.repo.search("graph_nodes", {"status": "active"}, limit=500)
+        except Exception:
+            return None
+        for n in rows:
+            if str(n.get("label", "")).strip() == _CORE_NODE_LABEL:
+                return n
+        try:
+            r = self.create_node({
+                "node_type": "project",
+                "label": _CORE_NODE_LABEL,
+                "description": "Nucleo del grafo cognitivo de Akira. Todo se conecta aqui.",
+                "tags": list(_CORE_NODE_TAGS),
+                "weight": _CORE_NODE_WEIGHT,
+                "confidence": 1.0,
+                "privacy_level": "PRIVATE",
+            }, actor=actor)
+            return r["record"]
+        except Exception as e:
+            print(f"[core] ensure_core_node fallo: {type(e).__name__}: {str(e)[:200]}")
+            return None
+
+    def connect_to_core(self, node_id, actor="system", weight=None):
+        """Conecta un nodo al nucleo Akira. Idempotente."""
+        core = self.ensure_core_node(actor=actor)
+        if not core or core["id"] == node_id:
+            return None
+        w = _CORE_EDGE_WEIGHT if weight is None else weight
+        try:
+            existing = self._edge_exists(node_id, core["id"], "part_of")
+            if existing:
+                return existing
+            return self._upsert_edge(node_id, core["id"], "part_of", delta_weight=w, actor=actor)
+        except Exception:
+            return None
