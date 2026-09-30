@@ -4,6 +4,7 @@ Secuencia: VALIDATE -> WRITE -> COMMIT -> VERIFY -> RETURN SUCCESS.
 V8-Fase5: self-model. V8-Fase6: learning + graph. V8-Fase7: ciclo cognitivo.
 V8-Fase8: tools + invocaciones. V8-Fase9: agents + agent_tasks.
 V8-Paso1: list_graph_nodes / list_graph_edges para endpoint /api/v8/graph/overview (cierra H-10).
+Sub-fase 10.0: 5 metodos de auto-conexion del grafo (tags, agent-tool, learning, memory, refuerzo).
 """
 from __future__ import annotations
 
@@ -23,6 +24,17 @@ from .core import (AGENT_SCHEMA_VERSION, AGENT_TASK_SCHEMA_VERSION,
 
 _COMPARE_FIELDS = ("content", "memory_type", "importance", "confidence", "tags", "privacy_level",
                    "source", "owner_scope")
+
+# Sub-fase 10.0: constantes de auto-conexion del grafo.
+_AUTO_MIN_WEIGHT = 0.3           # aristas con peso < esto no se muestran en la Membrana.
+_AUTO_MAX_CONNECTIONS = 5        # maximo de conexiones nuevas por nodo, para no crear ruido.
+_AUTO_TAG_WEIGHT_BASE = 0.5      # peso base por compartir 1 tag.
+_AUTO_TAG_WEIGHT_PER_EXTRA = 0.15  # suma por cada tag adicional compartido.
+_AUTO_AGENT_TOOL_WEIGHT = 0.6    # peso base de arista agente -> tool.
+_AUTO_LEARNING_WEIGHT = 0.8      # peso base de arista learning -> knowledge_node.
+_AUTO_MEMORY_WEIGHT = 0.4        # peso base de arista memoria -> nodo por tags.
+_AUTO_EDGE_MAX_WEIGHT = 1.0      # tope para no inflar demasiado.
+_AUTO_REINFORCE_MIN_FREQ = 5     # pares que aparecen juntos >= veces suben su arista.
 
 _SELF_MODEL_DEFAULTS = {
     "identity": {
@@ -156,6 +168,12 @@ class PersistenceService:
         result = {"outcome": "created" if created else "already_synced", "record": verified}
         if not created:
             result["matches_request"] = all(verified.get(f) == fields.get(f) for f in fields if f in verified)
+        # Sub-fase 10.0: auto-conexion memoria -> nodos por tags compartidos (best-effort).
+        if created:
+            try:
+                self.auto_connect_memory_tags(verified["id"], actor=actor)
+            except Exception as e:
+                print(f"[auto-connect] memory_tags fallo: {type(e).__name__}: {str(e)[:200]}")
         return result
 
     def get_memory(self, memory_id):
@@ -302,6 +320,12 @@ class PersistenceService:
         verified = self.repo.get("learning_events", stored["id"])
         if verified is None:
             raise VerificationError("learning no confirmado")
+        # Sub-fase 10.0: auto-conexion learning -> knowledge_nodes (best-effort).
+        if created:
+            try:
+                self.auto_connect_learning(verified["id"], actor=actor)
+            except Exception as e:
+                print(f"[auto-connect] learning fallo: {type(e).__name__}: {str(e)[:200]}")
         return {"outcome": "created" if created else "already_synced", "record": verified}
 
     def get_learning(self, learning_id):
@@ -362,6 +386,12 @@ class PersistenceService:
         verified = self.repo.get("graph_nodes", stored["id"])
         if verified is None:
             raise VerificationError("nodo no confirmado")
+        # Sub-fase 10.0: auto-conexion por tags compartidos (best-effort).
+        if created:
+            try:
+                self.auto_connect_node_tags(verified["id"], actor=actor)
+            except Exception as e:
+                print(f"[auto-connect] node_tags fallo: {type(e).__name__}: {str(e)[:200]}")
         return {"outcome": "created" if created else "already_synced", "record": verified}
 
     def get_node(self, node_id):
@@ -847,6 +877,11 @@ class PersistenceService:
             raise
         except Exception as e:
             raise StorageError(type(e).__name__) from e
+        # Sub-fase 10.0: auto-conexion agente -> tool (best-effort).
+        try:
+            self.auto_connect_agent_tool(task["agent_name"], task["tool_name"], actor=actor)
+        except Exception as e:
+            print(f"[auto-connect] agent_tool fallo: {type(e).__name__}: {str(e)[:200]}")
         return updated
 
     def complete_task(self, task_id, outputs=None, duration_ms=0, memory_used=None, actor="system"):
@@ -938,3 +973,249 @@ class PersistenceService:
 
     def count_tasks(self, filters=None):
         return self.repo.count("agent_tasks", filters or {})
+
+    # ============================================================
+    # Sub-fase 10.0: AUTO-CONEXION DEL GRAFO
+    # ============================================================
+    # Reglas que respetan D009 (grafo real), D010 (privacidad) y D012 (no parches sueltos).
+    # Todas las operaciones son best-effort: si fallan, solo loguean y siguen.
+
+    def _find_or_create_node(self, node_type, label, tags=None, actor="auto-connect"):
+        """Busca un nodo por (node_type, label). Si no existe, lo crea. Idempotente."""
+        label = str(label).strip()[:200]
+        if not label:
+            return None
+        rows = self.repo.search("graph_nodes", {"node_type": node_type, "status": "active"}, limit=200)
+        for r in rows:
+            if str(r.get("label", "")).strip().lower() == label.lower():
+                return r
+        data = {"node_type": node_type, "label": label, "tags": tags or []}
+        try:
+            result = self.create_node(data, actor=actor)
+            return result["record"]
+        except Exception:
+            return None
+
+    def _edge_exists(self, from_node, to_node, relation_type):
+        rows = self.repo.search("graph_edges", {
+            "from_node": from_node, "to_node": to_node,
+            "relation_type": relation_type, "status": "active",
+        }, limit=1)
+        return rows[0] if rows else None
+
+    def _upsert_edge(self, from_node, to_node, relation_type, delta_weight=0.5, actor="auto-connect"):
+        """Crea o refuerza una arista. Si existe, sube frequency y weight (con tope). Si no, la crea."""
+        if from_node == to_node:
+            return None
+        existing = self._edge_exists(from_node, to_node, relation_type)
+        if existing:
+            new_freq = int(existing.get("frequency") or 1) + 1
+            new_weight = min(_AUTO_EDGE_MAX_WEIGHT, float(existing.get("weight") or 0.5) + delta_weight * 0.5)
+            changes = {"frequency": new_freq, "weight": new_weight, "last_used_at": _now_iso()}
+            try:
+                with self.repo.transaction() as tx:
+                    updated = tx.update("graph_edges", existing["id"], changes, existing["version"])
+                return updated
+            except Exception:
+                return None
+        try:
+            data = {
+                "from_node": from_node, "to_node": to_node,
+                "relation_type": relation_type, "weight": delta_weight,
+                "confidence": 0.5, "origin": "auto_connect",
+            }
+            r = self.create_edge(data, actor=actor)
+            return r["record"]
+        except Exception:
+            return None
+
+    def auto_connect_node_tags(self, node_id, actor="auto-connect"):
+        """Regla 1: conecta un nodo nuevo con nodos existentes que compartan tags.
+
+        - Respeta privacidad: solo conecta nodos con el mismo privacy_level.
+        - Maximo _AUTO_MAX_CONNECTIONS conexiones nuevas.
+        - Peso proporcional a cuantos tags comparten.
+        """
+        node = self.repo.get("graph_nodes", node_id)
+        if node is None or node.get("status") != "active":
+            return {"connected": 0, "reason": "node_not_active"}
+        my_tags = set(t.lower() for t in (node.get("tags") or []))
+        if not my_tags:
+            return {"connected": 0, "reason": "no_tags"}
+        my_privacy = node.get("privacy_level") or "PRIVATE"
+
+        candidates = self.repo.search("graph_nodes", {
+            "status": "active", "privacy_level": my_privacy,
+        }, limit=200)
+
+        scored = []
+        for c in candidates:
+            if c["id"] == node_id:
+                continue
+            other_tags = set(t.lower() for t in (c.get("tags") or []))
+            if not other_tags:
+                continue
+            shared = my_tags & other_tags
+            if not shared:
+                continue
+            weight = _AUTO_TAG_WEIGHT_BASE + (_AUTO_TAG_WEIGHT_PER_EXTRA * (len(shared) - 1))
+            scored.append((weight, c["id"], len(shared)))
+
+        scored.sort(reverse=True)
+        created = 0
+        for weight, other_id, _shared_count in scored[:_AUTO_MAX_CONNECTIONS]:
+            r = self._upsert_edge(node_id, other_id, "related_to",
+                                  delta_weight=min(weight, _AUTO_EDGE_MAX_WEIGHT), actor=actor)
+            if r:
+                created += 1
+        if created:
+            try:
+                self.record_audit(actor, "graph.auto_connect.tags", "graph_nodes", node_id,
+                                  "success", {"connected": created})
+            except Exception:
+                pass
+        return {"connected": created, "candidates_considered": len(scored)}
+
+    def auto_connect_agent_tool(self, agent_name, tool_name, actor="auto-connect"):
+        """Regla 2: cuando un agente usa una tool, crea nodos (si no existen) y arista uses."""
+        agent_label = f"agent:{agent_name}"
+        tool_label = f"tool:{tool_name}"
+        agent_node = self._find_or_create_node("person", agent_label, tags=["agent", agent_name], actor=actor)
+        tool_node = self._find_or_create_node("tool", tool_label, tags=["tool", tool_name], actor=actor)
+        if not agent_node or not tool_node:
+            return {"connected": 0, "reason": "node_create_failed"}
+        edge = self._upsert_edge(agent_node["id"], tool_node["id"], "uses",
+                                 delta_weight=_AUTO_AGENT_TOOL_WEIGHT, actor=actor)
+        try:
+            self.record_audit(actor, "graph.auto_connect.agent_tool", "graph_edges",
+                              edge["id"] if edge else None, "success",
+                              {"agent": agent_name, "tool": tool_name})
+        except Exception:
+            pass
+        return {"agent_node": agent_node["id"], "tool_node": tool_node["id"],
+                "edge": edge["id"] if edge else None}
+
+    def auto_connect_learning(self, learning_id, actor="auto-connect"):
+        """Regla 3: conecta un learning con sus knowledge_nodes (si existen como nodos del grafo)."""
+        learning = self.repo.get("learning_events", learning_id)
+        if learning is None:
+            return {"connected": 0, "reason": "learning_not_found"}
+        knowledge_nodes = learning.get("knowledge_nodes") or []
+        if not knowledge_nodes:
+            return {"connected": 0, "reason": "no_knowledge_nodes"}
+
+        learning_node = self._find_or_create_node(
+            "experience", f"learning:{learning_id}",
+            tags=["learning", str(learning.get("source", "unknown"))], actor=actor)
+        if not learning_node:
+            return {"connected": 0, "reason": "node_create_failed"}
+
+        connected = 0
+        for kn_id in knowledge_nodes:
+            # Solo conectamos con nodos que existan de verdad en el grafo.
+            if not self.repo.exists("graph_nodes", kn_id):
+                continue
+            edge = self._upsert_edge(learning_node["id"], kn_id, "learned_from",
+                                     delta_weight=_AUTO_LEARNING_WEIGHT, actor=actor)
+            if edge:
+                connected += 1
+        try:
+            self.record_audit(actor, "graph.auto_connect.learning", "graph_nodes",
+                              learning_node["id"], "success", {"connected": connected})
+        except Exception:
+            pass
+        return {"learning_node": learning_node["id"], "connected": connected}
+
+    def auto_connect_memory_tags(self, memory_id, actor="auto-connect"):
+        """Regla 4: conecta una memoria (como nodo) con nodos que compartan tags.
+
+        La memoria se representa como nodo tipo 'experience' con label 'memory:<id>'.
+        """
+        memory = self.repo.get("memories", memory_id)
+        if memory is None or memory.get("status") != "active":
+            return {"connected": 0, "reason": "memory_not_active"}
+        tags = memory.get("tags") or []
+        if not tags:
+            return {"connected": 0, "reason": "no_tags"}
+        my_privacy = memory.get("privacy_level") or "PRIVATE"
+
+        memory_node = self._find_or_create_node(
+            "experience", f"memory:{memory_id}", tags=tags, actor=actor)
+        if not memory_node:
+            return {"connected": 0, "reason": "node_create_failed"}
+
+        my_tags = set(t.lower() for t in tags)
+        candidates = self.repo.search("graph_nodes", {
+            "status": "active", "privacy_level": my_privacy,
+        }, limit=200)
+
+        connected = 0
+        for c in candidates:
+            if c["id"] == memory_node["id"]:
+                continue
+            other_tags = set(t.lower() for t in (c.get("tags") or []))
+            shared = my_tags & other_tags
+            if not shared:
+                continue
+            edge = self._upsert_edge(memory_node["id"], c["id"], "related_to",
+                                     delta_weight=_AUTO_MEMORY_WEIGHT, actor=actor)
+            if edge:
+                connected += 1
+            if connected >= _AUTO_MAX_CONNECTIONS:
+                break
+        return {"memory_node": memory_node["id"], "connected": connected}
+
+    def reinforce_frequent_pairs(self, actor="auto-connect", limit_nodes=200):
+        """Regla 5: mira pares de nodos que aparecen juntos frecuentemente en memorias
+        y refuerza sus aristas. Best-effort. Se llama manualmente o en mantenimiento.
+
+        Estrategia simple: para cada par de tags con >= _AUTO_REINFORCE_MIN_FREQ apariciones
+        en memorias, sube el peso de la arista entre sus nodos correspondientes (si existen).
+        """
+        try:
+            memories = self.repo.search("memories", {"status": "active"}, limit=500,
+                                        order_by="created_at", descending=True)
+        except Exception:
+            return {"reinforced": 0, "reason": "search_failed"}
+
+        # Contamos co-ocurrencia de tags.
+        from collections import Counter
+        pair_counter = Counter()
+        for m in memories:
+            tags = sorted(set(t.lower() for t in (m.get("tags") or [])))
+            for i in range(len(tags)):
+                for j in range(i + 1, len(tags)):
+                    pair_counter[(tags[i], tags[j])] += 1
+
+        # Solo pares que superan el umbral.
+        frecuentes = [(pair, n) for pair, n in pair_counter.items() if n >= _AUTO_REINFORCE_MIN_FREQ]
+        if not frecuentes:
+            return {"reinforced": 0, "reason": "no_frequent_pairs"}
+
+        # Buscamos nodos que compartan esos tags y reforzamos sus aristas.
+        nodes = self.repo.search("graph_nodes", {"status": "active"}, limit=limit_nodes)
+        tags_index = {}
+        for n in nodes:
+            for t in (n.get("tags") or []):
+                tl = t.lower()
+                tags_index.setdefault(tl, []).append(n["id"])
+
+        reinforced = 0
+        for (tag_a, tag_b), freq in frecuentes:
+            a_ids = tags_index.get(tag_a, [])
+            b_ids = tags_index.get(tag_b, [])
+            for a in a_ids[:3]:
+                for b in b_ids[:3]:
+                    if a == b:
+                        continue
+                    edge = self._upsert_edge(a, b, "related_to",
+                                             delta_weight=0.1 * (freq / _AUTO_REINFORCE_MIN_FREQ),
+                                             actor=actor)
+                    if edge:
+                        reinforced += 1
+        try:
+            self.record_audit(actor, "graph.auto_connect.reinforce", "graph_edges",
+                              None, "success", {"reinforced": reinforced, "pairs": len(frecuentes)})
+        except Exception:
+            pass
+        return {"reinforced": reinforced, "frequent_pairs": len(frecuentes)}
