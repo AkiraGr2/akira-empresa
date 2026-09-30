@@ -36,7 +36,7 @@ _AUTO_REINFORCE_MIN_FREQ = 5
 _CORE_NODE_LABEL = "Akira"
 _CORE_NODE_TAGS = ["core", "akira", "nucleo"]
 _CORE_NODE_WEIGHT = 10.0
-_CORE_EDGE_WEIGHT = 0.4
+_CORE_EDGE_WEIGHT = 0.6
 
 _SELF_MODEL_DEFAULTS = {
     "identity": {"name": "Akira", "version": "V7.3", "creator": "Jhon Grimm",
