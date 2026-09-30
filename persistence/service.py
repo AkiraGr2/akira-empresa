@@ -5,6 +5,7 @@ V8-Fase5: self-model. V8-Fase6: learning + graph. V8-Fase7: ciclo cognitivo.
 V8-Fase8: tools + invocaciones. V8-Fase9: agents + agent_tasks.
 V8-Paso1: list_graph_nodes / list_graph_edges para endpoint /api/v8/graph/overview (cierra H-10).
 Sub-fase 10.0: 5 metodos de auto-conexion del grafo (tags, agent-tool, learning, memory, refuerzo).
+Sub-fase 10.0-bis (2026-09-30): defaults del self-model actualizados (graph_auto_connect, knowledge_graph_full partial).
 """
 from __future__ import annotations
 
@@ -26,15 +27,15 @@ _COMPARE_FIELDS = ("content", "memory_type", "importance", "confidence", "tags",
                    "source", "owner_scope")
 
 # Sub-fase 10.0: constantes de auto-conexion del grafo.
-_AUTO_MIN_WEIGHT = 0.3           # aristas con peso < esto no se muestran en la Membrana.
-_AUTO_MAX_CONNECTIONS = 5        # maximo de conexiones nuevas por nodo, para no crear ruido.
-_AUTO_TAG_WEIGHT_BASE = 0.5      # peso base por compartir 1 tag.
-_AUTO_TAG_WEIGHT_PER_EXTRA = 0.15  # suma por cada tag adicional compartido.
-_AUTO_AGENT_TOOL_WEIGHT = 0.6    # peso base de arista agente -> tool.
-_AUTO_LEARNING_WEIGHT = 0.8      # peso base de arista learning -> knowledge_node.
-_AUTO_MEMORY_WEIGHT = 0.4        # peso base de arista memoria -> nodo por tags.
-_AUTO_EDGE_MAX_WEIGHT = 1.0      # tope para no inflar demasiado.
-_AUTO_REINFORCE_MIN_FREQ = 5     # pares que aparecen juntos >= veces suben su arista.
+_AUTO_MIN_WEIGHT = 0.3
+_AUTO_MAX_CONNECTIONS = 5
+_AUTO_TAG_WEIGHT_BASE = 0.5
+_AUTO_TAG_WEIGHT_PER_EXTRA = 0.15
+_AUTO_AGENT_TOOL_WEIGHT = 0.6
+_AUTO_LEARNING_WEIGHT = 0.8
+_AUTO_MEMORY_WEIGHT = 0.4
+_AUTO_EDGE_MAX_WEIGHT = 1.0
+_AUTO_REINFORCE_MIN_FREQ = 5
 
 _SELF_MODEL_DEFAULTS = {
     "identity": {
@@ -69,6 +70,7 @@ _SELF_MODEL_DEFAULTS = {
         {"name": "self_model_persistent", "status": "verified"},
         {"name": "learning_persistent", "status": "verified"},
         {"name": "graph_persistent", "status": "verified"},
+        {"name": "graph_auto_connect", "status": "verified"},  # nuevo: sub-fase 10.0
         {"name": "cognitive_cycle_persistent", "status": "verified"},
         {"name": "tool_registry", "status": "verified"},
         {"name": "agents_persistent", "status": "verified"},
@@ -76,7 +78,7 @@ _SELF_MODEL_DEFAULTS = {
         {"name": "self_repair_full", "status": "not_implemented"},
         {"name": "evolution_engine", "status": "not_implemented"},
         {"name": "hive", "status": "not_implemented"},
-        {"name": "knowledge_graph_full", "status": "not_implemented"},
+        {"name": "knowledge_graph_full", "status": "partial"},  # cambio: era not_implemented
     ],
     "tools": [
         {"name": "postgres", "role": "persistencia", "status": "verified"},
@@ -98,8 +100,8 @@ _SELF_MODEL_DEFAULTS = {
     "uncertainties": [
         "No hay pruebas de conciencia subjetiva.",
         "La calidad de las respuestas depende del proveedor externo.",
-        "El grafo neuronal completo todavia no existe.",
-        "Los agentes existen pero las misiones todavia no.",
+        "El grafo tiene auto-conexion por tags, agentes y learning, pero falta consolidacion y pruning.",
+        "Los agentes existen; las misiones todavia no.",
         "R2 tiene arquitectura preparada pero sin escritura real verificada.",
     ],
     "errors": [],
@@ -168,7 +170,6 @@ class PersistenceService:
         result = {"outcome": "created" if created else "already_synced", "record": verified}
         if not created:
             result["matches_request"] = all(verified.get(f) == fields.get(f) for f in fields if f in verified)
-        # Sub-fase 10.0: auto-conexion memoria -> nodos por tags compartidos (best-effort).
         if created:
             try:
                 self.auto_connect_memory_tags(verified["id"], actor=actor)
@@ -320,7 +321,6 @@ class PersistenceService:
         verified = self.repo.get("learning_events", stored["id"])
         if verified is None:
             raise VerificationError("learning no confirmado")
-        # Sub-fase 10.0: auto-conexion learning -> knowledge_nodes (best-effort).
         if created:
             try:
                 self.auto_connect_learning(verified["id"], actor=actor)
@@ -386,7 +386,6 @@ class PersistenceService:
         verified = self.repo.get("graph_nodes", stored["id"])
         if verified is None:
             raise VerificationError("nodo no confirmado")
-        # Sub-fase 10.0: auto-conexion por tags compartidos (best-effort).
         if created:
             try:
                 self.auto_connect_node_tags(verified["id"], actor=actor)
@@ -450,15 +449,12 @@ class PersistenceService:
     def count_edges(self, filters=None):
         return self.repo.count("graph_edges", filters or {})
 
-    # V8-Paso1: listado para endpoint /api/v8/graph/overview (Membrana real, cierra H-10).
     def list_graph_nodes(self, limit=500, offset=0, order_by="weight", descending=True):
-        """Lista nodos activos del grafo. Ordenado por weight desc por defecto (los mas relevantes primero)."""
         limit = max(1, min(int(limit), 2000))
         return self.repo.search("graph_nodes", {"status": "active"}, limit=limit,
                                 offset=max(0, int(offset)), order_by=order_by, descending=descending)
 
     def list_graph_edges(self, limit=1000, offset=0, order_by="weight", descending=True):
-        """Lista aristas activas del grafo. Ordenado por weight desc por defecto."""
         limit = max(1, min(int(limit), 5000))
         return self.repo.search("graph_edges", {"status": "active"}, limit=limit,
                                 offset=max(0, int(offset)), order_by=order_by, descending=descending)
@@ -705,7 +701,6 @@ class PersistenceService:
 
     # ------------------------------------------------------------ V8-Fase9: agents
     def register_agent(self, data, actor="system", idempotency_key=None):
-        """Registra un agente. Idempotente por name. Si ya existe, actualiza solo campos mutables."""
         fields = validate_agent(data)
         existing = self.repo.search("agents", {"name": fields.get("name")}, limit=1)
         if existing:
@@ -797,12 +792,6 @@ class PersistenceService:
     # ------------------------------------------------------------ V8-Fase9: tasks
     def create_task(self, agent_name, tool_name, inputs=None, model=None, mission_id=None,
                     memory_used=None, actor="system", idempotency_key=None):
-        """Crea una tarea en estado pending. Valida agente y tool permitidos.
-
-        model: modelo LLM usado (opcional, Contrato V8 s11).
-        mission_id: mision a la que pertenece (opcional, preparado para Fase 10).
-        memory_used: lista de ids de memorias usadas (opcional).
-        """
         agent = self.get_agent_by_name(agent_name)
         if agent is None:
             raise NotFoundError(f"agente no existe: {agent_name}")
@@ -877,7 +866,6 @@ class PersistenceService:
             raise
         except Exception as e:
             raise StorageError(type(e).__name__) from e
-        # Sub-fase 10.0: auto-conexion agente -> tool (best-effort).
         try:
             self.auto_connect_agent_tool(task["agent_name"], task["tool_name"], actor=actor)
         except Exception as e:
@@ -977,11 +965,8 @@ class PersistenceService:
     # ============================================================
     # Sub-fase 10.0: AUTO-CONEXION DEL GRAFO
     # ============================================================
-    # Reglas que respetan D009 (grafo real), D010 (privacidad) y D012 (no parches sueltos).
-    # Todas las operaciones son best-effort: si fallan, solo loguean y siguen.
 
     def _find_or_create_node(self, node_type, label, tags=None, actor="auto-connect"):
-        """Busca un nodo por (node_type, label). Si no existe, lo crea. Idempotente."""
         label = str(label).strip()[:200]
         if not label:
             return None
@@ -1004,7 +989,6 @@ class PersistenceService:
         return rows[0] if rows else None
 
     def _upsert_edge(self, from_node, to_node, relation_type, delta_weight=0.5, actor="auto-connect"):
-        """Crea o refuerza una arista. Si existe, sube frequency y weight (con tope). Si no, la crea."""
         if from_node == to_node:
             return None
         existing = self._edge_exists(from_node, to_node, relation_type)
@@ -1030,12 +1014,6 @@ class PersistenceService:
             return None
 
     def auto_connect_node_tags(self, node_id, actor="auto-connect"):
-        """Regla 1: conecta un nodo nuevo con nodos existentes que compartan tags.
-
-        - Respeta privacidad: solo conecta nodos con el mismo privacy_level.
-        - Maximo _AUTO_MAX_CONNECTIONS conexiones nuevas.
-        - Peso proporcional a cuantos tags comparten.
-        """
         node = self.repo.get("graph_nodes", node_id)
         if node is None or node.get("status") != "active":
             return {"connected": 0, "reason": "node_not_active"}
@@ -1077,7 +1055,6 @@ class PersistenceService:
         return {"connected": created, "candidates_considered": len(scored)}
 
     def auto_connect_agent_tool(self, agent_name, tool_name, actor="auto-connect"):
-        """Regla 2: cuando un agente usa una tool, crea nodos (si no existen) y arista uses."""
         agent_label = f"agent:{agent_name}"
         tool_label = f"tool:{tool_name}"
         agent_node = self._find_or_create_node("person", agent_label, tags=["agent", agent_name], actor=actor)
@@ -1096,7 +1073,6 @@ class PersistenceService:
                 "edge": edge["id"] if edge else None}
 
     def auto_connect_learning(self, learning_id, actor="auto-connect"):
-        """Regla 3: conecta un learning con sus knowledge_nodes (si existen como nodos del grafo)."""
         learning = self.repo.get("learning_events", learning_id)
         if learning is None:
             return {"connected": 0, "reason": "learning_not_found"}
@@ -1112,7 +1088,6 @@ class PersistenceService:
 
         connected = 0
         for kn_id in knowledge_nodes:
-            # Solo conectamos con nodos que existan de verdad en el grafo.
             if not self.repo.exists("graph_nodes", kn_id):
                 continue
             edge = self._upsert_edge(learning_node["id"], kn_id, "learned_from",
@@ -1127,10 +1102,6 @@ class PersistenceService:
         return {"learning_node": learning_node["id"], "connected": connected}
 
     def auto_connect_memory_tags(self, memory_id, actor="auto-connect"):
-        """Regla 4: conecta una memoria (como nodo) con nodos que compartan tags.
-
-        La memoria se representa como nodo tipo 'experience' con label 'memory:<id>'.
-        """
         memory = self.repo.get("memories", memory_id)
         if memory is None or memory.get("status") != "active":
             return {"connected": 0, "reason": "memory_not_active"}
@@ -1166,19 +1137,12 @@ class PersistenceService:
         return {"memory_node": memory_node["id"], "connected": connected}
 
     def reinforce_frequent_pairs(self, actor="auto-connect", limit_nodes=200):
-        """Regla 5: mira pares de nodos que aparecen juntos frecuentemente en memorias
-        y refuerza sus aristas. Best-effort. Se llama manualmente o en mantenimiento.
-
-        Estrategia simple: para cada par de tags con >= _AUTO_REINFORCE_MIN_FREQ apariciones
-        en memorias, sube el peso de la arista entre sus nodos correspondientes (si existen).
-        """
         try:
             memories = self.repo.search("memories", {"status": "active"}, limit=500,
                                         order_by="created_at", descending=True)
         except Exception:
             return {"reinforced": 0, "reason": "search_failed"}
 
-        # Contamos co-ocurrencia de tags.
         from collections import Counter
         pair_counter = Counter()
         for m in memories:
@@ -1187,12 +1151,10 @@ class PersistenceService:
                 for j in range(i + 1, len(tags)):
                     pair_counter[(tags[i], tags[j])] += 1
 
-        # Solo pares que superan el umbral.
         frecuentes = [(pair, n) for pair, n in pair_counter.items() if n >= _AUTO_REINFORCE_MIN_FREQ]
         if not frecuentes:
             return {"reinforced": 0, "reason": "no_frequent_pairs"}
 
-        # Buscamos nodos que compartan esos tags y reforzamos sus aristas.
         nodes = self.repo.search("graph_nodes", {"status": "active"}, limit=limit_nodes)
         tags_index = {}
         for n in nodes:
