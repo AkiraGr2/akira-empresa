@@ -161,14 +161,15 @@ ENTITIES = {
     },
     "graph_nodes": {
         "table": "graph_nodes",
+        # 010_graph_tags: se agrega "tags" (JSONB) para auto-conexion por tags compartidos.
         "columns": (
-            "id", "node_type", "label", "description", "node_metadata",
+            "id", "node_type", "label", "description", "node_metadata", "tags",
             "weight", "confidence", "reuse_count", "owner_scope", "privacy_level",
             "status", "schema_version", "idempotency_key", "last_used_at",
         ),
-        "json_columns": ("node_metadata",),
+        "json_columns": ("node_metadata", "tags"),
         "mutable": (
-            "label", "description", "node_metadata", "weight", "confidence",
+            "label", "description", "node_metadata", "tags", "weight", "confidence",
             "reuse_count", "privacy_level", "status", "last_used_at",
         ),
         "filterable": (
@@ -496,12 +497,13 @@ def validate_learning_event(data, partial: bool = False) -> dict:
     return out
 
 
+# 010_graph_tags: se agrega "tags" para auto-conexion.
 _NODE_INPUT = {
-    "node_type", "label", "description", "node_metadata", "weight", "confidence",
+    "node_type", "label", "description", "node_metadata", "tags", "weight", "confidence",
     "reuse_count", "owner_scope", "privacy_level", "status", "last_used_at",
 }
 _NODE_UPDATABLE = {
-    "label", "description", "node_metadata", "weight", "confidence",
+    "label", "description", "node_metadata", "tags", "weight", "confidence",
     "reuse_count", "privacy_level", "status", "last_used_at",
 }
 
@@ -532,6 +534,8 @@ def validate_graph_node(data, partial: bool = False) -> dict:
         if not isinstance(v, dict):
             raise ValidationError("node_metadata debe ser un objeto (dict)")
         out["node_metadata"] = v
+    if "tags" in data or not partial:
+        out["tags"] = _tags(data.get("tags", []))
     if "weight" in data or not partial:
         out["weight"] = _non_negative_float("weight", data.get("weight", 1.0))
     if "confidence" in data or not partial:
@@ -891,8 +895,9 @@ def normalize_filters(entity: str, filters):
                 raise ValidationError("text_contains solo esta disponible para memories")
             out.append(("text", "content", _str("text_contains", value, 200)))
         elif key == "tag":
-            if entity != "memories":
-                raise ValidationError("tag solo esta disponible para memories")
+            # 010_graph_tags: el filtro por tag ahora aplica a memories y a graph_nodes.
+            if entity not in ("memories", "graph_nodes"):
+                raise ValidationError("tag solo esta disponible para memories y graph_nodes")
             out.append(("tag", "tags", _str("tag", value, 64)))
         elif key.endswith("__in"):
             field = key[:-4]
