@@ -3,7 +3,7 @@
 V8-Fase5-9: self-model, learning, graph, cognitive, tools, agents.
 Sub-fase 10.0: auto-conexion del grafo + nucleo Akira.
 Sub-fase 10.2: misiones (CRUD + transiciones de estado validadas).
-Sub-fase 10.7.2: fix Neon+pooler. get_mission/get_task/get_learning con fallback.
+Sub-fase 10.7.2: persistencia de conversaciones (chats independientes + historial global).
 """
 from __future__ import annotations
 
@@ -11,16 +11,20 @@ import datetime as _dt
 
 from .core import (AGENT_SCHEMA_VERSION, AGENT_TASK_SCHEMA_VERSION,
                    COGNITIVE_CYCLE_SCHEMA_VERSION, COGNITIVE_EVENT_SCHEMA_VERSION,
-                   COGNITIVE_STAGES, GRAPH_EDGE_SCHEMA_VERSION, GRAPH_NODE_SCHEMA_VERSION,
-                   HIVE_VISIBLE, LEARNING_SCHEMA_VERSION, MEMORY_SCHEMA_VERSION,
-                   MISSION_SCHEMA_VERSION, MISSION_STATUSES,
-                   SELF_MODEL_PRIMARY_ID, SELF_MODEL_SCHEMA_VERSION, TOOL_INVOCATION_SCHEMA_VERSION,
-                   TOOL_SCHEMA_VERSION, ConflictError, NotFoundError, PersistenceError,
-                   StorageError, ValidationError, VerificationError, entity_spec, new_id,
+                   COGNITIVE_STAGES, CONVERSATION_MESSAGE_SCHEMA_VERSION,
+                   CONVERSATION_SCHEMA_VERSION, GRAPH_EDGE_SCHEMA_VERSION,
+                   GRAPH_NODE_SCHEMA_VERSION, HIVE_VISIBLE, LEARNING_SCHEMA_VERSION,
+                   MEMORY_SCHEMA_VERSION, MISSION_SCHEMA_VERSION, MISSION_STATUSES,
+                   SELF_MODEL_PRIMARY_ID, SELF_MODEL_SCHEMA_VERSION,
+                   TOOL_INVOCATION_SCHEMA_VERSION, TOOL_SCHEMA_VERSION,
+                   ConflictError, NotFoundError, PersistenceError, StorageError,
+                   ValidationError, VerificationError, entity_spec, new_id,
                    validate_agent, validate_agent_task, validate_cognitive_cycle,
-                   validate_cognitive_event, validate_graph_edge, validate_graph_node,
-                   validate_learning_event, validate_memory, validate_mission,
-                   validate_self_model, validate_tool, validate_tool_invocation)
+                   validate_cognitive_event, validate_conversation,
+                   validate_conversation_message, validate_graph_edge,
+                   validate_graph_node, validate_learning_event, validate_memory,
+                   validate_mission, validate_self_model, validate_tool,
+                   validate_tool_invocation)
 
 _COMPARE_FIELDS = ("content", "memory_type", "importance", "confidence", "tags", "privacy_level",
                    "source", "owner_scope")
@@ -69,6 +73,7 @@ _SELF_MODEL_DEFAULTS = {
         {"name": "graph_persistent", "status": "verified"}, {"name": "graph_auto_connect", "status": "verified"},
         {"name": "cognitive_cycle_persistent", "status": "verified"}, {"name": "tool_registry", "status": "verified"},
         {"name": "agents_persistent", "status": "verified"}, {"name": "missions", "status": "partial"},
+        {"name": "conversations_persistent", "status": "partial"},
         {"name": "self_repair_full", "status": "not_implemented"}, {"name": "evolution_engine", "status": "not_implemented"},
         {"name": "hive", "status": "not_implemented"}, {"name": "knowledge_graph_full", "status": "partial"},
     ],
@@ -1133,3 +1138,155 @@ class PersistenceService:
             self._audit_failure_generic(actor, "mission.cancel", "missions", mission_id, e)
             raise StorageError(type(e).__name__) from e
         return self.repo.get("missions", mission_id)
+
+    # ============================================================
+    # V8-Fase10.7.2: CONVERSACIONES
+    # ============================================================
+    def create_conversation(self, data, actor="system", idempotency_key=None):
+        """Crea una conversacion. El title lo calcula el endpoint (primeros 50 chars del primer mensaje).
+        created_by se auto-rellena desde el actor si no viene."""
+        fields = validate_conversation(data)
+        if "created_by" not in fields:
+            fields["created_by"] = actor
+        record = dict(fields, id=new_id("conv"), schema_version=CONVERSATION_SCHEMA_VERSION)
+        if idempotency_key is not None:
+            if not isinstance(idempotency_key, str) or not 0 < len(idempotency_key.strip()) <= 200:
+                raise ValidationError("idempotency_key debe ser texto de 1 a 200 caracteres")
+            record["idempotency_key"] = idempotency_key.strip()
+        try:
+            with self.repo.transaction() as tx:
+                stored, created = tx.create("conversations", record)
+                tx.append_audit({"actor": actor,
+                    "action": "conversation.create" if created else "conversation.create.already_synced",
+                    "resource": "conversations", "resource_id": stored["id"], "status": "success",
+                    "detail": {"title": stored.get("title"), "created_by": stored.get("created_by")}})
+        except PersistenceError as e:
+            self._audit_failure_generic(actor, "conversation.create", "conversations", None, e); raise
+        except Exception as e:
+            self._audit_failure_generic(actor, "conversation.create", "conversations", None, e)
+            raise StorageError(type(e).__name__) from e
+        verified = self.repo.get("conversations", stored["id"])
+        if verified is None: raise VerificationError("conversacion no confirmada")
+        return {"outcome": "created" if created else "already_synced", "record": verified}
+
+    def get_conversation(self, conversation_id):
+        """Fix Neon+pooler: WHERE id a veces falla. Fallback a search sin filtro."""
+        rec = self.repo.get("conversations", conversation_id)
+        if rec is not None:
+            return rec
+        try:
+            rows = self.repo.search("conversations", {}, limit=300)
+            for r in rows:
+                if r.get("id") == conversation_id:
+                    return r
+        except Exception:
+            pass
+        return None
+
+    def list_conversations(self, created_by=None, status=None, limit=50, offset=0,
+                           order_by="last_message_at", descending=True):
+        """Lista conversaciones del usuario. Por defecto ordena por last_message_at DESC
+        (mas recientes primero). Si status=None, trae solo 'active'."""
+        filters = {}
+        if created_by: filters["created_by"] = created_by
+        filters["status"] = status if status else "active"
+        limit = max(1, min(int(limit), 200))
+        offset = max(0, int(offset))
+        return self.repo.search("conversations", filters, limit=limit, offset=offset,
+                                order_by=order_by, descending=descending)
+
+    def count_conversations(self, filters=None):
+        return self.repo.count("conversations", filters or {})
+
+    def update_conversation(self, conversation_id, changes, expected_version, actor="system"):
+        """Actualiza titulo o status. No se puede cambiar created_by."""
+        clean = validate_conversation(changes, partial=True)
+        if isinstance(expected_version, bool) or not isinstance(expected_version, int) or expected_version < 1:
+            raise ValidationError("expected_version debe ser un entero >= 1")
+        try:
+            with self.repo.transaction() as tx:
+                updated = tx.update("conversations", conversation_id, clean, expected_version)
+                tx.append_audit({"actor": actor, "action": "conversation.update",
+                    "resource": "conversations", "resource_id": conversation_id, "status": "success",
+                    "detail": {"fields": sorted(clean), "new_version": updated["version"]}})
+        except NotFoundError as e:
+            self._audit_failure_generic(actor, "conversation.update", "conversations", conversation_id, e); raise
+        except PersistenceError as e:
+            self._audit_failure_generic(actor, "conversation.update", "conversations", conversation_id, e); raise
+        except Exception as e:
+            self._audit_failure_generic(actor, "conversation.update", "conversations", conversation_id, e)
+            raise StorageError(type(e).__name__) from e
+        verified = self.repo.get("conversations", conversation_id)
+        if (verified is None or verified["version"] != expected_version + 1
+                or any(verified.get(k) != v for k, v in clean.items())):
+            raise VerificationError("actualizacion de conversacion no confirmada")
+        return verified
+
+    def archive_conversation(self, conversation_id, expected_version=None, actor="system"):
+        if expected_version is None:
+            current = self.repo.get("conversations", conversation_id)
+            if current is None: raise NotFoundError(conversation_id)
+            expected_version = current["version"]
+        return self.update_conversation(conversation_id, {"status": "archived"}, expected_version, actor)
+
+    def add_message(self, conversation_id, role, content, model=None,
+                    memories_used=None, duration_ms=0, error=None, actor="system",
+                    idempotency_key=None):
+        """Añade un mensaje a una conversacion. En la MISMA transaccion:
+        - crea el mensaje (append-only)
+        - actualiza conversations.message_count +1
+        - actualiza conversations.last_message_at al ahora
+        Devuelve {"record": mensaje, "conversation": conversacion_actualizada}."""
+        current_conv = self.get_conversation(conversation_id)
+        if current_conv is None:
+            raise NotFoundError(f"conversacion no existe: {conversation_id}")
+        if current_conv.get("status") != "active":
+            raise ValidationError(f"la conversacion esta {current_conv.get('status')}")
+
+        data = {"conversation_id": conversation_id, "role": role,
+                "content": content, "duration_ms": int(duration_ms)}
+        if model is not None: data["model"] = model
+        if memories_used is not None: data["memories_used"] = memories_used
+        if error is not None: data["error"] = error
+        fields = validate_conversation_message(data)
+        record = dict(fields, id=new_id("msg"), schema_version=CONVERSATION_MESSAGE_SCHEMA_VERSION)
+        if idempotency_key is not None:
+            if not isinstance(idempotency_key, str) or not 0 < len(idempotency_key.strip()) <= 200:
+                raise ValidationError("idempotency_key debe ser texto de 1 a 200 caracteres")
+            record["idempotency_key"] = idempotency_key.strip()
+
+        now_iso = _now_iso()
+        new_count = int(current_conv.get("message_count") or 0) + 1
+
+        try:
+            with self.repo.transaction() as tx:
+                stored_msg, created = tx.create("conversation_messages", record)
+                updated_conv = tx.update("conversations", conversation_id,
+                                         {"message_count": new_count, "last_message_at": now_iso},
+                                         current_conv["version"])
+                tx.append_audit({"actor": actor,
+                    "action": "conversation.message.create" if created else "conversation.message.create.already_synced",
+                    "resource": "conversation_messages", "resource_id": stored_msg["id"],
+                    "status": "success",
+                    "detail": {"conversation_id": conversation_id, "role": role,
+                               "duration_ms": int(duration_ms),
+                               "has_error": error is not None}})
+        except PersistenceError as e:
+            self._audit_failure_generic(actor, "conversation.message.create", "conversation_messages", None, e); raise
+        except Exception as e:
+            self._audit_failure_generic(actor, "conversation.message.create", "conversation_messages", None, e)
+            raise StorageError(type(e).__name__) from e
+
+        verified_msg = self.repo.get("conversation_messages", stored_msg["id"])
+        if verified_msg is None: raise VerificationError("mensaje no confirmado")
+        return {"record": verified_msg, "conversation": updated_conv}
+
+    def list_messages(self, conversation_id, limit=200, offset=0):
+        """Mensajes de una conversacion, orden ascendente (cronologico)."""
+        limit = max(1, min(int(limit), 500))
+        offset = max(0, int(offset))
+        return self.repo.search("conversation_messages", {"conversation_id": conversation_id},
+                                limit=limit, offset=offset, order_by="created_at", descending=False)
+
+    def count_messages(self, conversation_id):
+        return self.repo.count("conversation_messages", {"conversation_id": conversation_id})
