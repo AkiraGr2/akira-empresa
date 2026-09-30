@@ -350,4 +350,43 @@ MIGRATIONS = [
         CREATE INDEX missions_created_by_idx ON missions (created_by, created_at DESC)
         """,
     ),
+    (
+        "012_conversations",
+        """
+        CREATE TABLE conversations (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            created_by TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','archived','deleted')),
+            message_count INTEGER NOT NULL DEFAULT 0 CHECK (message_count >= 0),
+            last_message_at TIMESTAMPTZ,
+            schema_version TEXT NOT NULL DEFAULT 'conversation.v1',
+            version INTEGER NOT NULL DEFAULT 1,
+            idempotency_key TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX conversations_idempotency_key_uq ON conversations (idempotency_key);
+        CREATE INDEX conversations_created_by_idx ON conversations (created_by, last_message_at DESC NULLS LAST);
+        CREATE INDEX conversations_status_idx ON conversations (status, created_at DESC);
+        CREATE TABLE conversation_messages (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('user','assistant','system')),
+            content TEXT NOT NULL,
+            model TEXT,
+            memories_used JSONB NOT NULL DEFAULT '[]'::jsonb,
+            error JSONB,
+            duration_ms INTEGER NOT NULL DEFAULT 0 CHECK (duration_ms >= 0),
+            schema_version TEXT NOT NULL DEFAULT 'conversation_message.v1',
+            version INTEGER NOT NULL DEFAULT 1,
+            idempotency_key TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX conversation_messages_idempotency_key_uq ON conversation_messages (idempotency_key);
+        CREATE INDEX conversation_messages_conv_idx ON conversation_messages (conversation_id, created_at ASC);
+        CREATE INDEX conversation_messages_role_idx ON conversation_messages (conversation_id, role, created_at ASC)
+        """,
+    ),
 ]
