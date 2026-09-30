@@ -3,6 +3,7 @@
 V8-Fase5-9: self-model, learning, graph, cognitive, tools, agents.
 Sub-fase 10.0: auto-conexion del grafo + nucleo Akira.
 Sub-fase 10.2: misiones (CRUD + transiciones de estado validadas).
+Sub-fase 10.7.2: fix Neon+pooler. get_mission/get_task/get_learning con fallback.
 """
 from __future__ import annotations
 
@@ -39,17 +40,15 @@ _CORE_NODE_TAGS = ["core", "akira", "nucleo"]
 _CORE_NODE_WEIGHT = 10.0
 _CORE_EDGE_WEIGHT = 0.6
 
-# V8-Fase10: transiciones validas de estado de mision.
-# Cada estado solo puede cambiar a los estados listados aqui.
 MISSION_STATUS_TRANSITIONS = {
     "created":          ("planning", "cancelled"),
     "planning":         ("waiting_approval", "failed", "cancelled"),
     "waiting_approval": ("running", "cancelled"),
     "running":          ("completed", "failed", "paused"),
     "paused":           ("running", "cancelled", "failed"),
-    "completed":        (),  # terminal
-    "failed":           (),  # terminal
-    "cancelled":        (),  # terminal
+    "completed":        (),
+    "failed":           (),
+    "cancelled":        (),
 }
 
 _SELF_MODEL_DEFAULTS = {
@@ -99,16 +98,13 @@ _SELF_MODEL_DEFAULTS = {
     "errors": [], "repairs": [], "evolution": [],
 }
 
-
 def _now_iso():
     return _dt.datetime.now(_dt.timezone.utc).isoformat()
-
 
 class PersistenceService:
     def __init__(self, repo):
         self.repo = repo
 
-    # ------------------------------------------------------------ auditoria
     def record_audit(self, actor, action, resource, resource_id=None, status="success", detail=None):
         self.repo.append_audit({"actor": actor, "action": action, "resource": resource,
                                 "resource_id": resource_id, "status": status, "detail": detail or {}})
@@ -123,7 +119,6 @@ class PersistenceService:
     def recent_audit(self, actor=None, action_prefix=None, limit=20):
         return self.repo.audit_search(actor=actor, action_prefix=action_prefix, limit=limit)
 
-    # ------------------------------------------------------------ memoria
     def save_memory(self, data, actor="system", idempotency_key=None):
         fields = validate_memory(data)
         if "created_by" not in fields:
@@ -202,7 +197,6 @@ class PersistenceService:
         return self.repo.count("memories", self._memory_filters(filters, hive))
     def health(self): return self.repo.ping()
 
-    # ------------------------------------------------------------ self-model
     def get_self_model(self):
         current = self.repo.get("self_model", SELF_MODEL_PRIMARY_ID)
         if current is not None: return current
@@ -243,7 +237,6 @@ class PersistenceService:
         current = self.repo.get("self_model", SELF_MODEL_PRIMARY_ID)
         return None if current is None else current.get("version")
 
-    # ------------------------------------------------------------ learning
     def save_learning(self, data, actor="system", idempotency_key=None):
         fields = validate_learning_event(data)
         record = dict(fields, id=new_id("learn"), schema_version=LEARNING_SCHEMA_VERSION)
@@ -269,7 +262,21 @@ class PersistenceService:
             try: self.auto_connect_learning(verified["id"], actor=actor)
             except Exception as e: print(f"[auto-connect] learning fallo: {type(e).__name__}: {str(e)[:200]}")
         return {"outcome": "created" if created else "already_synced", "record": verified}
-    def get_learning(self, learning_id): return self.repo.get("learning_events", learning_id)
+
+    def get_learning(self, learning_id):
+        """Fix Neon+pooler: WHERE id a veces falla. Fallback a search sin filtro."""
+        rec = self.repo.get("learning_events", learning_id)
+        if rec is not None:
+            return rec
+        try:
+            rows = self.repo.search("learning_events", {}, limit=300)
+            for r in rows:
+                if r.get("id") == learning_id:
+                    return r
+        except Exception:
+            pass
+        return None
+
     def record_reuse(self, learning_id, actor="system"):
         current = self.repo.get("learning_events", learning_id)
         if current is None: raise NotFoundError(learning_id)
@@ -288,7 +295,6 @@ class PersistenceService:
         return self.repo.search("learning_events", filters or {}, limit=limit,
                                 offset=max(0, int(offset)), order_by=order_by, descending=descending)
 
-    # ------------------------------------------------------------ graph
     def create_node(self, data, actor="system", idempotency_key=None):
         fields = validate_graph_node(data)
         record = dict(fields, id=new_id("node"), status="active", schema_version=GRAPH_NODE_SCHEMA_VERSION)
@@ -369,7 +375,6 @@ class PersistenceService:
         return self.repo.search("graph_edges", {"status": "active"}, limit=limit,
                                 offset=max(0, int(offset)), order_by=order_by, descending=descending)
 
-    # ------------------------------------------------------------ ciclo cognitivo
     def start_cycle(self, trigger, input_data=None, actor="system", idempotency_key=None):
         data = {"trigger": trigger, "input": input_data or {},
                 "current_stage": "observe", "status": "in_progress"}
@@ -456,7 +461,6 @@ class PersistenceService:
     def count_cycles(self, filters=None): return self.repo.count("cognitive_cycles", filters or {})
     def count_cycle_events(self, filters=None): return self.repo.count("cognitive_events", filters or {})
 
-    # ------------------------------------------------------------ tools
     def register_tool(self, data, actor="system", idempotency_key=None):
         fields = validate_tool(data)
         existing = self.repo.search("tools", {"name": fields.get("name")}, limit=1)
@@ -545,7 +549,6 @@ class PersistenceService:
                                 order_by="created_at", descending=True)
     def count_invocations(self, filters=None): return self.repo.count("tool_invocations", filters or {})
 
-    # ------------------------------------------------------------ agents
     def register_agent(self, data, actor="system", idempotency_key=None):
         fields = validate_agent(data)
         existing = self.repo.search("agents", {"name": fields.get("name")}, limit=1)
@@ -610,7 +613,6 @@ class PersistenceService:
         except Exception as e: raise StorageError(type(e).__name__) from e
         return updated
 
-    # ------------------------------------------------------------ tasks
     def create_task(self, agent_name, tool_name, inputs=None, model=None, mission_id=None,
                     memory_used=None, actor="system", idempotency_key=None):
         agent = self.get_agent_by_name(agent_name)
@@ -722,7 +724,20 @@ class PersistenceService:
         except Exception as e: raise StorageError(type(e).__name__) from e
         return updated
 
-    def get_task(self, task_id): return self.repo.get("agent_tasks", task_id)
+    def get_task(self, task_id):
+        """Fix Neon+pooler: WHERE id a veces falla. Fallback a search sin filtro."""
+        rec = self.repo.get("agent_tasks", task_id)
+        if rec is not None:
+            return rec
+        try:
+            rows = self.repo.search("agent_tasks", {}, limit=300)
+            for r in rows:
+                if r.get("id") == task_id:
+                    return r
+        except Exception:
+            pass
+        return None
+
     def list_tasks(self, agent_name=None, status=None, mission_id=None, limit=50):
         filters = {}
         if agent_name: filters["agent_name"] = agent_name
@@ -733,9 +748,6 @@ class PersistenceService:
                                 order_by="created_at", descending=True)
     def count_tasks(self, filters=None): return self.repo.count("agent_tasks", filters or {})
 
-    # ============================================================
-    # AUTO-CONEXION DEL GRAFO
-    # ============================================================
     def _find_or_create_node(self, node_type, label, tags=None, actor="auto-connect"):
         label = str(label).strip()[:200]
         if not label: return None
@@ -935,12 +947,7 @@ class PersistenceService:
         except Exception:
             return None
 
-    # ============================================================
-    # V8-Fase10: MISIONES
-    # ============================================================
     def _validate_mission_transition(self, current, new):
-        """Verifica que la transicion current -> new sea valida.
-        Lanza ValidationError si no lo es. Si son iguales, no es error."""
         if current == new:
             return
         allowed = MISSION_STATUS_TRANSITIONS.get(current)
@@ -951,8 +958,6 @@ class PersistenceService:
                                   f"(permitidos desde {current}: {list(allowed) or 'ninguno'})")
 
     def create_mission(self, data, actor="system", idempotency_key=None):
-        """Crea una mision. title y objective obligatorios. created_by se auto-rellena
-        desde el actor si no viene. Sigue el patron VALIDATE -> WRITE -> VERIFY."""
         fields = validate_mission(data)
         if "created_by" not in fields:
             fields["created_by"] = actor
@@ -979,11 +984,21 @@ class PersistenceService:
         return {"outcome": "created" if created else "already_synced", "record": verified}
 
     def get_mission(self, mission_id):
-        return self.repo.get("missions", mission_id)
+        """Fix Neon+pooler: WHERE id a veces falla. Fallback a search sin filtro."""
+        rec = self.repo.get("missions", mission_id)
+        if rec is not None:
+            return rec
+        try:
+            rows = self.repo.search("missions", {}, limit=300)
+            for r in rows:
+                if r.get("id") == mission_id:
+                    return r
+        except Exception:
+            pass
+        return None
 
     def list_missions(self, status=None, flow_type=None, created_by=None, limit=50, offset=0,
                       order_by="created_at", descending=True):
-        """Lista misiones con filtros opcionales. Ordenadas por created_at DESC por defecto."""
         filters = {}
         if status: filters["status"] = status
         if flow_type: filters["flow_type"] = flow_type
@@ -997,8 +1012,6 @@ class PersistenceService:
         return self.repo.count("missions", filters or {})
 
     def update_mission_status(self, mission_id, new_status, expected_version, actor="system"):
-        """Cambia el estado de una mision validando la transicion.
-        Es el UNICO lugar donde se cambia status; complete/fail/cancel son atajos."""
         current = self.repo.get("missions", mission_id)
         if current is None: raise NotFoundError(mission_id)
         if new_status not in MISSION_STATUSES:
@@ -1029,7 +1042,6 @@ class PersistenceService:
         return verified
 
     def update_mission_plan(self, mission_id, plan, expected_version, actor="system"):
-        """Guarda el plan (JSONB) de una mision. No cambia el estado."""
         if not isinstance(plan, dict):
             raise ValidationError("plan debe ser un objeto (dict)")
         current = self.repo.get("missions", mission_id)
@@ -1052,7 +1064,6 @@ class PersistenceService:
         return verified
 
     def complete_mission(self, mission_id, result=None, learning_refs=None, actor="system"):
-        """Atajo: marca la mision como completed con resultado y aprendizajes."""
         current = self.repo.get("missions", mission_id)
         if current is None: raise NotFoundError(mission_id)
         changes = {"status": "completed"}
@@ -1066,7 +1077,6 @@ class PersistenceService:
             changes["learning_refs"] = learning_refs
         if not current.get("completed_at"):
             changes["completed_at"] = _now_iso()
-        # Validar transicion
         self._validate_mission_transition(current.get("status"), "completed")
         try:
             with self.repo.transaction() as tx:
@@ -1082,7 +1092,6 @@ class PersistenceService:
         return self.repo.get("missions", mission_id)
 
     def fail_mission(self, mission_id, error, actor="system"):
-        """Atajo: marca la mision como failed con motivo."""
         current = self.repo.get("missions", mission_id)
         if current is None: raise NotFoundError(mission_id)
         err_dict = error if isinstance(error, dict) else {"message": str(error)[:500]}
@@ -1104,7 +1113,6 @@ class PersistenceService:
         return self.repo.get("missions", mission_id)
 
     def cancel_mission(self, mission_id, reason=None, actor="system"):
-        """Atajo: marca la mision como cancelled con motivo opcional."""
         current = self.repo.get("missions", mission_id)
         if current is None: raise NotFoundError(mission_id)
         changes = {"status": "cancelled"}
