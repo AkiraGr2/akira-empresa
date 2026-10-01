@@ -874,7 +874,7 @@ async def _on_startup():
         _cleanup_orphan_missions(_persistence_service())
     except Exception as e:
         print(f"[startup cleanup] error: {e}")
-        @app.get("/health")
+@app.get("/health")
 async def health():
     return {
         "status":"ok", "version":VERSION, "membrana":membrana.count(),
