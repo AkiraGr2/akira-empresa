@@ -247,6 +247,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 import json as json_lib
 app=FastAPI(title="Akira V7.3 Consciente")
+
 class CORSFixMiddleware:
     def __init__(self, app):
         self.app = app
@@ -557,8 +558,7 @@ def _check_llm_daily_limit():
         return False
     _mission_llm_daily_count["count"] += 1
     return True
-
-def _cleanup_orphan_missions(service):
+    def _cleanup_orphan_missions(service):
     if service is None:
         return
     try:
@@ -870,7 +870,7 @@ async def _on_startup():
         _seed_tools_and_agents()
     except Exception as e:
         print(f"[startup seed] error: {e}")
-            try:
+    try:
         _cleanup_orphan_missions(_persistence_service())
     except Exception as e:
         print(f"[startup cleanup] error: {e}")
@@ -878,7 +878,6 @@ async def _on_startup():
 @app.get("/health")
 async def health():
     return {
- 
         "status":"ok", "version":VERSION, "membrana":membrana.count(),
         "audit":audit_models_automatically(),
         "countermeasures":len(KIRA_LEARNING_DB["blocked_models"]),
@@ -1265,8 +1264,7 @@ def _execute_cognitive_cycle(service, trigger, input_data, actor):
     final_status = "completed" if answer else "failed"
     final_cycle = service.complete_cycle(cycle_id, final_status, actor=actor)
     return {"cycle": final_cycle, "events": events, "answer": final_response, "learning_id": learning_id}
-
-@app.post("/api/v8/cognitive/cycle")
+    @app.post("/api/v8/cognitive/cycle")
 def v8_cognitive_cycle(request: Request, payload: dict):
     s = get_session(request)
     if not s: return JSONResponse({"authenticated": False}, status_code=401)
@@ -1892,8 +1890,7 @@ def v8_mission_progress(request: Request, mission_id: str):
         "error": result.get("error") if isinstance(result, dict) else None,
         "timing": timing,
     }
-
-def _selftest_missions_run():
+    def _selftest_missions_run():
     tests = []
     def add(name, status, detail):
         tests.append({"name": name, "status": status, "detail": detail})
@@ -2254,8 +2251,6 @@ def v8_cancel_mission(request: Request, mission_id: str):
 # ============================================================
 @app.post("/api/v8/conversations")
 async def v8_create_conversation(request: Request, payload: dict = None):
-    """Crea una conversacion nueva. Si no viene title, se genera a partir del primer mensaje
-    (pero como endpoint directo requiere title)."""
     s = get_session(request)
     if not s: return JSONResponse({"authenticated": False}, status_code=401)
     service = _persistence_service()
@@ -2337,7 +2332,6 @@ def v8_get_conversation(request: Request, conversation_id: str, include_messages
 
 @app.patch("/api/v8/conversations/{conversation_id}")
 def v8_update_conversation(request: Request, conversation_id: str, payload: dict):
-    """Renombra o cambia status de una conversacion. Solo el dueno puede."""
     s = get_session(request)
     if not s: return JSONResponse({"authenticated": False}, status_code=401)
     service = _persistence_service()
@@ -2377,7 +2371,6 @@ def v8_update_conversation(request: Request, conversation_id: str, payload: dict
 
 @app.delete("/api/v8/conversations/{conversation_id}")
 def v8_delete_conversation(request: Request, conversation_id: str):
-    """Soft delete: cambia status a 'deleted'. No borra los datos."""
     s = get_session(request)
     if not s: return JSONResponse({"authenticated": False}, status_code=401)
     service = _persistence_service()
@@ -2400,9 +2393,6 @@ def v8_delete_conversation(request: Request, conversation_id: str):
     return {"ok": True, "conversation": updated}
 
 def _ensure_conversation(service, conversation_id, first_message, actor):
-    """Si conversation_id viene, verifica que exista y sea del usuario.
-    Si no viene, crea una nueva con title = primeros caracteres del mensaje.
-    Devuelve (conversation, error_reason)."""
     if conversation_id:
         conv = service.get_conversation(conversation_id)
         if conv is None:
@@ -2598,8 +2588,6 @@ def _stream_call_gemini(keys, msg, recall_block=""):
 
 @app.post("/api/chat")
 async def chat(request: Request):
-    """Chat sincronico. Si hay sesion, guarda la conversacion automaticamente.
-    Devuelve conversation_id para que el frontend lo retenga."""
     try:
         data = await request.json()
         msg = data.get("message","")[:1500]
@@ -2686,7 +2674,6 @@ async def chat(request: Request):
 
 @app.post("/api/chat/stream")
 async def chat_stream(request: Request):
-    """Chat con streaming SSE. Guarda la conversacion al finalizar el stream si hay sesion."""
     try:
         data = await request.json()
         msg = data.get("message","")[:1500]
