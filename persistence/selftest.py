@@ -2,6 +2,10 @@
 
 - run_logic_tests: pruebas de comportamiento (validacion, idempotencia, versiones, privacidad, rollback, agentes+tareas).
 - run_restart_probe: prueba REAL de reinicio. Un proceso escribe una sonda; otro proceso distinto la relee.
+
+Fase 1.6 (2026-10-01): la limpieza de memorias de prueba ahora hace HARD DELETE (repo.delete),
+no archive_memory. Antes se acumulaban ~6 filas selftest por cada corrida del selftest,
+contaminando la tabla memories. Ahora no queda rastro.
 """
 from __future__ import annotations
 
@@ -303,13 +307,16 @@ def run_logic_tests(service, fresh_service_factory=None):
     results.append({"test": "TEST_RELATION_INTEGRITY", "status": "N/A",
                     "detail": "Experiencia/Learning/Knowledge enlazados: pendiente de pruebas cruzadas."})
 
-    # Limpieza: archivar memorias de prueba, borrar tasks de prueba, deshabilitar agente de prueba.
+    # Limpieza (Fase 1.6, 2026-10-01): BORRAR de verdad las memorias de prueba.
+    # Antes se hacía archive_memory (status->archived), pero la tabla memories cuenta
+    # los archivados igual, así que cada corrida del selftest dejaba ~6 filas basura
+    # acumulándose para siempre. Ahora se hace hard delete via repo.delete, igual que
+    # ya se hacía con agent_tasks. El selftest sigue corriendo completo, solo que ya
+    # no deja residuo.
     for mid in created_ids:
         try:
-            cur = service.get_memory(mid)
-            if cur and cur["status"] == "active":
-                service.archive_memory(mid, actor="selftest")
-        except PersistenceError:
+            service.repo.delete("memories", mid)
+        except Exception:
             pass
     for tid in created_task_ids:
         try:
