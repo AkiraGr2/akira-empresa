@@ -870,13 +870,15 @@ async def _on_startup():
         _seed_tools_and_agents()
     except Exception as e:
         print(f"[startup seed] error: {e}")
-    try:
+            try:
         _cleanup_orphan_missions(_persistence_service())
     except Exception as e:
         print(f"[startup cleanup] error: {e}")
+
 @app.get("/health")
 async def health():
     return {
+ 
         "status":"ok", "version":VERSION, "membrana":membrana.count(),
         "audit":audit_models_automatically(),
         "countermeasures":len(KIRA_LEARNING_DB["blocked_models"]),
