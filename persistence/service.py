@@ -268,6 +268,30 @@ class PersistenceService:
             except Exception as e: print(f"[auto-connect] learning fallo: {type(e).__name__}: {str(e)[:200]}")
         return {"outcome": "created" if created else "already_synced", "record": verified}
 
+    def update_learning(self, learning_id, changes, expected_version=None, actor="system"):
+        current = self.get_learning(learning_id)
+        if current is None:
+            raise NotFoundError(learning_id)
+        clean = validate_learning_event(changes, partial=True)
+        if not clean:
+            raise ValidationError("no hay cambios")
+        if expected_version is None:
+            expected_version = current["version"]
+        try:
+            with self.repo.transaction() as tx:
+                updated = tx.update("learning_events", learning_id, clean, expected_version)
+                tx.append_audit({"actor": actor, "action": "learning.update",
+                    "resource": "learning_events", "resource_id": learning_id, "status": "success",
+                    "detail": {"fields": sorted(clean), "new_version": updated["version"]}})
+        except PersistenceError:
+            raise
+        except Exception as e:
+            raise StorageError(type(e).__name__) from e
+        verified = self.repo.get("learning_events", learning_id)
+        if verified is None or verified["version"] != expected_version + 1:
+            raise VerificationError("learning update no confirmado")
+        return verified
+
     def update_learning_status(self, learning_id, status, expected_version=None, actor="system"):
         current = self.get_learning(learning_id)
         if current is None:
