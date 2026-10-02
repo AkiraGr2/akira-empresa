@@ -148,13 +148,13 @@ ENTITIES = {
         "table": "learning_events",
         "columns": (
             "id", "source", "event", "lesson", "knowledge_nodes", "relationships",
-            "confidence", "outcome", "status", "evidence", "verified_at", "verified_by", "reuse_count", "last_reused_at",
+            "confidence", "outcome", "status", "evidence", "verification_analysis", "verified_at", "verified_by", "reuse_count", "last_reused_at",
             "schema_version", "idempotency_key",
         ),
         "json_columns": ("knowledge_nodes", "relationships"),
         "mutable": (
             "source", "event", "lesson", "knowledge_nodes", "relationships",
-            "confidence", "outcome", "status", "evidence", "verified_at", "verified_by", "reuse_count", "last_reused_at",
+            "confidence", "outcome", "status", "evidence", "verification_analysis", "verified_at", "verified_by", "reuse_count", "last_reused_at",
         ),
         "filterable": ("id", "source", "outcome", "status", "idempotency_key"),
         "in_filterable": ("source", "outcome", "status"),
@@ -550,6 +550,11 @@ def validate_learning_event(data, partial: bool = False) -> dict:
         out["status"] = _choice("status", data.get("status", "candidate"), LEARNING_STATUSES)
     if "evidence" in data or not partial:
         out["evidence"] = _learning_evidence(data.get("evidence", []))
+    if "verification_analysis" in data:
+        analysis = data["verification_analysis"]
+        if not isinstance(analysis, dict):
+            raise ValidationError("verification_analysis debe ser un objeto")
+        out["verification_analysis"] = analysis
     if "verified_at" in data:
         out["verified_at"] = _str("verified_at", data["verified_at"], 64)
     if "verified_by" in data:
