@@ -1416,6 +1416,27 @@ def v8_learning_create(request: Request, payload: dict):
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
     return {"ok": True, "id": result["record"]["id"], "outcome": result["outcome"], "learning": result["record"]}
 
+@app.get("/api/v8/learning")
+def v8_learning_list(request: Request, status: str = None, source: str = None,
+                     outcome: str = None, limit: int = 50, offset: int = 0):
+    s = get_session(request)
+    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    service = _persistence_service()
+    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    filters = {}
+    if status: filters["status"] = status
+    if source: filters["source"] = source
+    if outcome: filters["outcome"] = outcome
+    try:
+        rows = service.search_learning(filters, limit=limit, offset=offset)
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+    return {"ok": True, "learning": rows, "count": len(rows), "filters": filters}
+
 @app.post("/api/v8/learning/teach")
 def v8_learning_teach(request: Request, payload: dict):
     s = get_session(request)
