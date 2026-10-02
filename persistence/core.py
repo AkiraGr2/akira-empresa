@@ -148,7 +148,7 @@ ENTITIES = {
         "table": "learning_events",
         "columns": (
             "id", "source", "event", "lesson", "knowledge_nodes", "relationships",
-            "confidence", "outcome", "reuse_count", "last_reused_at",
+            "confidence", "outcome", "status", "reuse_count", "last_reused_at",
             "schema_version", "idempotency_key",
         ),
         "json_columns": ("knowledge_nodes", "relationships"),
