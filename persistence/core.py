@@ -36,7 +36,8 @@ MEMORY_SCHEMA_VERSION = "memory.v1"
 SELF_MODEL_PRIMARY_ID = "akira_primary"
 SELF_MODEL_SCHEMA_VERSION = "self_model.v1"
 
-LEARNING_SCHEMA_VERSION = "learning.v1"
+LEARNING_SCHEMA_VERSION = "learning.v2"
+LEARNING_STATUSES = ("candidate", "verified", "consolidated", "conflicted", "obsolete", "discarded")
 GRAPH_NODE_SCHEMA_VERSION = "graph_node.v1"
 GRAPH_EDGE_SCHEMA_VERSION = "graph_edge.v1"
 
@@ -487,7 +488,7 @@ def validate_self_model(data, partial: bool = False) -> dict:
 
 _LEARNING_INPUT = {
     "source", "event", "lesson", "knowledge_nodes", "relationships",
-    "confidence", "outcome", "reuse_count", "last_reused_at",
+    "confidence", "outcome", "status", "reuse_count", "last_reused_at",
 }
 _LEARNING_UPDATABLE = {
     "source", "event", "lesson", "knowledge_nodes", "relationships",
@@ -523,6 +524,8 @@ def validate_learning_event(data, partial: bool = False) -> dict:
         out["confidence"] = _float_0_1("confidence", data.get("confidence", 0.5))
     if "outcome" in data or not partial:
         out["outcome"] = _choice("outcome", data.get("outcome", "unknown"), LEARNING_OUTCOMES)
+    if "status" in data or not partial:
+        out["status"] = _choice("status", data.get("status", "candidate"), LEARNING_STATUSES)
     if "reuse_count" in data:
         out["reuse_count"] = _non_negative_int("reuse_count", data["reuse_count"])
     if "last_reused_at" in data:
