@@ -154,10 +154,10 @@ ENTITIES = {
         "json_columns": ("knowledge_nodes", "relationships"),
         "mutable": (
             "source", "event", "lesson", "knowledge_nodes", "relationships",
-            "confidence", "outcome", "reuse_count", "last_reused_at",
+            "confidence", "outcome", "status", "reuse_count", "last_reused_at",
         ),
-        "filterable": ("id", "source", "outcome", "idempotency_key"),
-        "in_filterable": ("source", "outcome"),
+        "filterable": ("id", "source", "outcome", "status", "idempotency_key"),
+        "in_filterable": ("source", "outcome", "status"),
         "orderable": ("created_at", "updated_at", "reuse_count", "last_reused_at"),
         "idempotent": True,
     },
