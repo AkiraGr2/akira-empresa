@@ -50,6 +50,38 @@ _mission_cancelled_lock = threading.Lock()
 _mission_runtime_state = {}
 _mission_runtime_lock = threading.Lock()
 
+# Estado efimero de planificacion para diagnostico en tiempo real.
+_mission_planning_runtime = {}
+_mission_planning_runtime_lock = threading.Lock()
+
+def _set_mission_planning_runtime(mission_id, stage, **detail):
+    payload = {
+        "stage": stage,
+        "at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        **detail,
+    }
+    try:
+        with _mission_planning_runtime_lock:
+            _mission_planning_runtime[mission_id] = payload
+    except Exception:
+        pass
+    print(f"[mission-planning] {mission_id} stage={stage} detail={detail}")
+
+def _get_mission_planning_runtime(mission_id):
+    try:
+        with _mission_planning_runtime_lock:
+            value = _mission_planning_runtime.get(mission_id)
+            return dict(value) if isinstance(value, dict) else None
+    except Exception:
+        return None
+
+def _clear_mission_planning_runtime(mission_id):
+    try:
+        with _mission_planning_runtime_lock:
+            _mission_planning_runtime.pop(mission_id, None)
+    except Exception:
+        pass
+
 def _set_mission_runtime(mission_id, stage, **detail):
     payload = {
         "stage": stage,
@@ -545,7 +577,7 @@ def _validate_mission_plan(plan, service):
                 return False, f"step_{i}_receives_unknown:{receives}"
     return True, None
 
-def _groq_mission_plan(prompt):
+def _groq_mission_plan(prompt, deadline=None):
     """Dedicated Groq caller for mission planning; never uses the chat identity wrapper."""
     try:
         import requests
@@ -560,8 +592,12 @@ def _groq_mission_plan(prompt):
             "ni texto fuera del JSON."
         )
         for key in keys:
+            if deadline is not None and time.monotonic() >= deadline:
+                break
             headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
             for model_name in ["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"]:
+                if deadline is not None and time.monotonic() >= deadline:
+                    break
                 model, _ = validate_model_before_call(model_name, "groq")
                 try:
                     data = {
@@ -574,7 +610,10 @@ def _groq_mission_plan(prompt):
                         "temperature": 0.1,
                         "response_format": {"type": "json_object"},
                     }
-                    resp = requests.post(url, json=data, headers=headers, timeout=20)
+                    remaining = (deadline - time.monotonic()) if deadline is not None else 8
+                    if remaining <= 0:
+                        return None
+                    resp = requests.post(url, json=data, headers=headers, timeout=min(8, max(0.5, remaining)))
                     if resp.status_code == 200:
                         return resp.json()["choices"][0]["message"]["content"]
                     if resp.status_code == 429:
@@ -586,27 +625,78 @@ def _groq_mission_plan(prompt):
         pass
     return None
 
+def _gemini_mission_plan(prompt, deadline=None):
+    """Dedicated bounded Gemini caller for mission planning; never uses chat identity logic."""
+    try:
+        from google import genai
+        from google.genai import types
+        keys = _pick_gemini_keys()
+        if not keys:
+            return None
+        for key in keys:
+            if deadline is not None and time.monotonic() >= deadline:
+                break
+            client = None
+            try:
+                remaining = (deadline - time.monotonic()) if deadline is not None else 7
+                if remaining <= 0:
+                    return None
+                client = genai.Client(
+                    api_key=key,
+                    http_options=types.HttpOptions(timeout=max(1000, int(min(7000, remaining * 1000)))),
+                )
+                response = client.models.generate_content(
+                    model="gemini-3.8-flash",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.1,
+                        max_output_tokens=1600,
+                        response_mime_type="application/json",
+                    ),
+                )
+                answer = response.text if hasattr(response, "text") else str(response)
+                if answer:
+                    return answer
+            except Exception as e:
+                err_str = str(e).lower()
+                if "429" in err_str or "resource_exhausted" in err_str or "quota" in err_str:
+                    _mark_key_failed(key)
+                print(f"[mission] Gemini planner fallo: {type(e).__name__}: {str(e)[:160]}")
+            finally:
+                if client is not None:
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
+    except Exception as e:
+        print(f"[mission] Gemini planner init fallo: {type(e).__name__}: {str(e)[:160]}")
+    return None
+
 def _plan_mission_with_llm(objective, service, actor):
     prompt = _build_mission_plan_prompt(objective, service)
     answer = None
     model_used = "none"
-    gemini_keys = _pick_gemini_keys()
-    if gemini_keys:
-        try:
-            result = _chat_try_gemini(gemini_keys, "gemini-3.8-flash", prompt, "")
-            if result:
-                answer = result.get("response")
-                model_used = result.get("model") or "gemini"
-        except Exception as e:
-            print(f"[mission] Gemini fallo: {type(e).__name__}: {str(e)[:200]}")
+    deadline = time.monotonic() + MISSION_PLAN_TIMEOUT_S
+
+    # Groq dedicado va primero: JSON estricto y deadline global.
+    try:
+        g = _groq_mission_plan(prompt, deadline=deadline)
+        if g:
+            answer = g
+            model_used = "groq"
+    except Exception as e:
+        print(f"[mission] Groq planner fallo: {type(e).__name__}: {str(e)[:200]}")
+
+    # Gemini dedicado queda como fallback, tambien con timeout explicito.
     if not answer:
         try:
-            g = _groq_mission_plan(prompt)
+            g = _gemini_mission_plan(prompt, deadline=deadline)
             if g:
                 answer = g
-                model_used = "groq"
+                model_used = "gemini"
         except Exception as e:
-            print(f"[mission] Groq planner fallo: {type(e).__name__}: {str(e)[:200]}")
+            print(f"[mission] Gemini planner fallo: {type(e).__name__}: {str(e)[:200]}")
+
     if not answer:
         return None, model_used, "no_llm_response"
     plan, err = _parse_llm_plan(answer)
@@ -1788,8 +1878,10 @@ def v8_create_mission(request: Request, payload: dict):
 
     mission_id = created["record"]["id"]
     version = created["record"]["version"]
+    _set_mission_planning_runtime(mission_id, "mission_created")
 
     try:
+        _set_mission_planning_runtime(mission_id, "transitioning_to_planning")
         rec = service.update_mission_status(mission_id, "planning", version, actor=s["email"])
         version = rec["version"]
     except Exception as e:
@@ -1800,11 +1892,13 @@ def v8_create_mission(request: Request, payload: dict):
                              "error_type": type(e).__name__}, status_code=500)
 
     try:
+        _set_mission_planning_runtime(mission_id, "llm_planning_started")
         plan, model_used, err = _plan_mission_with_llm(objective, service, s["email"])
     except Exception as e:
         plan, model_used, err = None, "none", f"llm_exception:{type(e).__name__}"
 
     if err or not plan:
+        _set_mission_planning_runtime(mission_id, "planning_failed", reason=err or "unknown", model=model_used)
         try:
             service.fail_mission(mission_id, {"type": "plan_failed", "reason": err or "unknown", "model": model_used}, actor=s["email"])
         except Exception: pass
@@ -1812,6 +1906,7 @@ def v8_create_mission(request: Request, payload: dict):
                              "mission_id": mission_id, "model": model_used}, status_code=422)
 
     try:
+        _set_mission_planning_runtime(mission_id, "saving_plan", model=model_used)
         updated = service.update_mission_plan(mission_id, plan, version, actor=s["email"])
         version = updated["version"]
     except ConflictError:
@@ -1823,6 +1918,7 @@ def v8_create_mission(request: Request, payload: dict):
         return JSONResponse({"ok": False, "reason": "plan_save_failed", "mission_id": mission_id}, status_code=500)
 
     try:
+        _set_mission_planning_runtime(mission_id, "transitioning_to_waiting_approval")
         final = service.update_mission_status(mission_id, "waiting_approval", version, actor=s["email"])
     except Exception as e:
         try:
@@ -1831,6 +1927,8 @@ def v8_create_mission(request: Request, payload: dict):
         return JSONResponse({"ok": False, "reason": "approval_transition_failed",
                              "mission_id": mission_id}, status_code=500)
 
+    _set_mission_planning_runtime(mission_id, "planning_completed", model=model_used, steps_total=len(plan.get("steps") or []))
+    _clear_mission_planning_runtime(mission_id)
     return {"ok": True, "mission": final, "plan": plan, "model": model_used}
 
 @app.get("/api/v8/missions")
@@ -2165,6 +2263,26 @@ def v8_mission_diagnose(request: Request, mission_id: str):
                 "reason": mission_error.get("reason"),
                 "model": mission_error.get("model"),
                 "message": mission_error.get("message"),
+            })
+
+    planning_runtime = _get_mission_planning_runtime(mission_id)
+    planning_age_s = None
+    created_epoch = _to_epoch_seconds(m.get("created_at"))
+    if created_epoch is not None:
+        planning_age_s = max(0, int(time.time() - created_epoch))
+
+    if m.get("status") == "planning":
+        planning_stale = planning_age_s is not None and planning_age_s >= MISSION_PLAN_TIMEOUT_S
+        add("planning_runtime", not planning_stale, planning_runtime or {
+            "stage": "no_runtime_state",
+            "note": "No hay estado efimero de planificacion en el proceso actual; puede ser una mision anterior al despliegue o un proceso reiniciado.",
+            "age_s": planning_age_s,
+        })
+        if planning_stale:
+            add("planning_stale", False, {
+                "age_s": planning_age_s,
+                "limit_s": MISSION_PLAN_TIMEOUT_S,
+                "message": "La mision lleva mas tiempo del limite esperado en estado planning."
             })
 
     add("orchestrator_runtime", add_runtime, runtime or {
