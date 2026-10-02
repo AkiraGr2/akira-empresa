@@ -1489,6 +1489,55 @@ def v8_learning_list(request: Request, status: str = None, source: str = None,
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
     return {"ok": True, "learning": rows, "count": len(rows), "filters": filters}
 
+@app.post("/api/v8/learning/experience")
+def v8_learning_experience(request: Request, payload: dict):
+    s = get_session(request)
+    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    service = _persistence_service()
+    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    if not isinstance(payload, dict): return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
+    from persistence.core import ValidationError, PersistenceError
+
+    mission_id = str(payload.get("mission_id") or "").strip()[:128]
+    task = str(payload.get("task") or payload.get("objective") or "").strip()[:1000]
+    result = str(payload.get("result") or "").strip()[:2000]
+    lesson = str(payload.get("lesson") or "").strip()[:3000]
+    worked_raw = payload.get("worked")
+    worked = None if worked_raw is None else bool(worked_raw)
+    why = str(payload.get("why") or "").strip()[:2000]
+    if not task or not lesson:
+        return JSONResponse({"ok": False, "reason": "task_and_lesson_required"}, status_code=400)
+    outcome = "unknown"
+    if worked is True: outcome = "success"
+    elif worked is False: outcome = "failure"
+
+    event = f"experience_feedback:{mission_id or 'manual'}"
+    combined_lesson = f"Experiencia: {task}\nResultado: {result or 'no especificado'}\nFunciono: {str(worked) if worked is not None else 'desconocido'}\nPor que: {why or 'no especificado'}\nAprendizaje: {lesson}"
+    try:
+        lr = service.save_learning({
+            "source": "experience_feedback",
+            "event": event,
+            "lesson": combined_lesson,
+            "knowledge_nodes": [],
+            "relationships": [],
+            "confidence": float(payload.get("confidence", 0.6)),
+            "outcome": outcome,
+            "status": "candidate",
+        }, actor=s["email"], idempotency_key=payload.get("idempotency_key"))
+        return {
+            "ok": True,
+            "status": "candidate",
+            "learning": lr["record"],
+            "safe_for_recall": False,
+            "message": "Experiencia registrada como candidato; requiere evidencia/verificacion antes de entrar al recall."
+        }
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+
 @app.post("/api/v8/learning/teach")
 def v8_learning_teach(request: Request, payload: dict):
     s = get_session(request)
