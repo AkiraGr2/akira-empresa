@@ -3194,11 +3194,11 @@ def _extract_keywords(msg, max_words=3, min_len=4):
     return out
 
 _TEACH_INTENT_RE = re.compile(
-    r"^\\s*(?:akira[\\s,;:.-]*)?(?:"
+    r"^\s*(?:akira[\s,;:.-]*)?(?:"
     r"quiero enseñarte|quiero ensenarte|te voy a enseñar|te voy a ensenar|"
     r"quiero que aprendas|aprende esto|aprende lo siguiente|"
     r"guarda esto como conocimiento|esto es conocimiento para ti"
-    r")\\s*(?::|-)?\\s*(.*)$",
+    r")\s*(?::|-)?\s*(.*)$",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -3229,6 +3229,11 @@ def _create_teaching_candidate(service, lesson, actor, source="explicit_user_tea
         "outcome": "unknown",
         "status": "candidate",
     }, actor=actor, idempotency_key="teach_candidate_" + hashlib.sha256(lesson.encode("utf-8")).hexdigest()[:32])
+
+    existing_nodes = lr["record"].get("knowledge_nodes") or []
+    if existing_nodes:
+        node = service.get_node(existing_nodes[0])
+        return lr["record"], None, node
 
     mr = service.save_memory({
         "content": lesson,
