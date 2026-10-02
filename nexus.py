@@ -1423,6 +1423,7 @@ def v8_learning_list(request: Request, status: str = None, source: str = None,
     if not s: return JSONResponse({"authenticated": False}, status_code=401)
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    from persistence.core import PersistenceError, ValidationError
     filters = {}
     if status: filters["status"] = status
     if source: filters["source"] = source
