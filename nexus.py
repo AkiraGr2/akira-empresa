@@ -1047,7 +1047,22 @@ def _run_mission_sync(mission_id, actor):
                 service.complete_task(task_id, outputs=outputs or {},
                     duration_ms=duration_ms, actor="orchestrator")
             except Exception as e:
-                print(f"[mission] complete_task fallo: {type(e).__name__}: {str(e)[:200]}")
+                total_db_ms += int((time.time() - db_t2) * 1000)
+                _set_mission_runtime(
+                    mission_id, "task_completion_persist_failed",
+                    step=order, task_id=task_id,
+                    error_type=type(e).__name__, error=str(e)[:200],
+                )
+                _fail_running_tasks_of_mission(service, mission_id, "task_completion_persist_failed")
+                try:
+                    service.fail_mission(
+                        mission_id,
+                        {"type": "task_completion_persist_failed", "step": order,
+                         "task_id": task_id, "error": str(e)[:300]},
+                        actor="orchestrator")
+                except Exception:
+                    pass
+                return
             total_db_ms += int((time.time() - db_t2) * 1000)
 
             if order is not None:
@@ -1085,7 +1100,20 @@ def _run_mission_sync(mission_id, actor):
                 actor="orchestrator"
             )
         except Exception as e:
-            print(f"[mission] complete_mission fallo: {type(e).__name__}: {str(e)[:300]}")
+            _set_mission_runtime(
+                mission_id, "mission_completion_persist_failed",
+                steps_executed=len(step_reports),
+                error_type=type(e).__name__, error=str(e)[:300],
+            )
+            try:
+                service.fail_mission(
+                    mission_id,
+                    {"type": "mission_completion_persist_failed",
+                     "steps_executed": len(step_reports),
+                     "error": str(e)[:300]},
+                    actor="orchestrator")
+            except Exception:
+                pass
 
     except Exception as e:
         _set_mission_runtime(
