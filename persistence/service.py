@@ -297,6 +297,18 @@ class PersistenceService:
         if current is None:
             raise NotFoundError(learning_id)
         clean = validate_learning_event({"status": status}, partial=True)
+        next_status = clean["status"]
+        current_status = current.get("status") or "candidate"
+        transitions = {
+            "candidate": {"verified", "conflicted", "discarded"},
+            "verified": {"consolidated", "conflicted", "obsolete"},
+            "consolidated": {"conflicted", "obsolete"},
+            "conflicted": {"verified", "discarded"},
+            "obsolete": {"verified", "discarded"},
+            "discarded": set(),
+        }
+        if next_status != current_status and next_status not in transitions.get(current_status, set()):
+            raise ValidationError(f"transicion de learning no permitida: {current_status} -> {next_status}")
         if expected_version is None:
             expected_version = current["version"]
         if current.get("status") == clean["status"]:
