@@ -1416,6 +1416,106 @@ def v8_learning_create(request: Request, payload: dict):
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
     return {"ok": True, "id": result["record"]["id"], "outcome": result["outcome"], "learning": result["record"]}
 
+@app.post("/api/v8/learning/teach")
+def v8_learning_teach(request: Request, payload: dict):
+    s = get_session(request)
+    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    service = _persistence_service()
+    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    if not isinstance(payload, dict): return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
+
+    lesson = str(payload.get("lesson") or payload.get("content") or "").strip()
+    if not lesson: return JSONResponse({"ok": False, "reason": "lesson_required"}, status_code=400)
+
+    source = str(payload.get("source") or "user_teaching").strip()[:64]
+    event = str(payload.get("event") or "explicit_user_teaching").strip()[:500]
+    knowledge_kind = str(payload.get("knowledge_kind") or "concept").strip()[:64]
+    label = str(payload.get("label") or lesson[:120]).strip()[:200]
+    node_type = str(payload.get("node_type") or "concept").strip()
+    allowed_node_types = {"concept","person","project","tool","experience","document","skill","error","solution","mission"}
+    if node_type not in allowed_node_types:
+        return JSONResponse({"ok": False, "reason": "invalid_node_type"}, status_code=400)
+
+    try:
+        confidence = float(payload.get("confidence", 0.8))
+        importance = int(payload.get("importance", 7))
+        tags = payload.get("tags") or []
+        if not isinstance(tags, list):
+            raise ValidationError("tags debe ser una lista")
+
+        lr = service.save_learning({
+            "source": source, "event": event, "lesson": lesson,
+            "knowledge_nodes": [], "relationships": [],
+            "confidence": confidence, "outcome": "unknown", "status": "candidate"
+        }, actor=s["email"], idempotency_key=payload.get("idempotency_key"))
+
+        mr = service.save_memory({
+            "content": lesson, "memory_type": "semantic",
+            "importance": importance, "confidence": confidence,
+            "source": "learning_engine", "source_id": lr["record"]["id"],
+            "source_reference": source, "tags": tags, "privacy_level": "PRIVATE"
+        }, actor=s["email"], idempotency_key=f"teach_mem_{lr['record']['id']}")
+
+        nr = service.create_node({
+            "node_type": node_type, "label": label,
+            "description": lesson[:1000],
+            "node_metadata": {
+                "knowledge_kind": knowledge_kind,
+                "learning_id": lr["record"]["id"],
+                "memory_id": mr["record"]["id"],
+                "learning_status": "candidate"
+            },
+            "tags": tags, "weight": 1.0, "confidence": confidence,
+            "privacy_level": "PRIVATE"
+        }, actor=s["email"], idempotency_key=f"teach_node_{lr['record']['id']}")
+
+        updated_learning = service.update_learning(
+            lr["record"]["id"],
+            {"knowledge_nodes": [nr["record"]["id"]]},
+            expected_version=lr["record"]["version"],
+            actor=s["email"]
+        )
+        return {
+            "ok": True,
+            "status": "candidate",
+            "learning": updated_learning,
+            "memory": mr["record"],
+            "node": nr["record"]
+        }
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
+    except ConflictError:
+        return JSONResponse({"ok": False, "reason": "conflict"}, status_code=409)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+
+@app.patch("/api/v8/learning/{learning_id}/status")
+def v8_learning_status_update(request: Request, learning_id: str, payload: dict):
+    s = get_session(request)
+    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    if not s.get("is_owner"): return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
+    service = _persistence_service()
+    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    payload = payload if isinstance(payload, dict) else {}
+    status = str(payload.get("status") or "").strip()
+    try:
+        rec = service.update_learning_status(
+            learning_id, status, payload.get("expected_version"), actor=s["email"]
+        )
+    except NotFoundError:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    except ConflictError:
+        return JSONResponse({"ok": False, "reason": "conflict"}, status_code=409)
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+    return {"ok": True, "learning": rec}
+
 @app.get("/api/v8/learning/{learning_id}")
 def v8_learning_get(request: Request, learning_id: str):
     s = get_session(request)
