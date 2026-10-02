@@ -44,6 +44,33 @@ _mission_active_lock = threading.Lock()
 _mission_cancelled_ids = set()
 _mission_cancelled_lock = threading.Lock()
 
+# Estado efimero de ejecucion de misiones para diagnostico en tiempo real.
+# No sustituye la persistencia; sirve para saber hasta donde llego el orquestador
+# dentro del proceso actual.
+_mission_runtime_state = {}
+_mission_runtime_lock = threading.Lock()
+
+def _set_mission_runtime(mission_id, stage, **detail):
+    payload = {
+        "stage": stage,
+        "at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        **detail,
+    }
+    try:
+        with _mission_runtime_lock:
+            _mission_runtime_state[mission_id] = payload
+    except Exception:
+        pass
+    print(f"[mission-runtime] {mission_id} stage={stage} detail={detail}")
+
+def _get_mission_runtime(mission_id):
+    try:
+        with _mission_runtime_lock:
+            value = _mission_runtime_state.get(mission_id)
+            return dict(value) if isinstance(value, dict) else None
+    except Exception:
+        return None
+
 CONVERSATION_TITLE_MAX_CHARS = 50
 
 try:
@@ -717,12 +744,21 @@ def _fail_running_tasks_of_mission(service, mission_id, reason):
 
 def _run_mission_sync(mission_id, actor):
     global _mission_active_count
+    _set_mission_runtime(mission_id, "orchestrator_entered", actor=actor)
     try:
         service = _persistence_service()
-        if service is None: return
+        if service is None:
+            _set_mission_runtime(mission_id, "persistence_unavailable")
+            return
+        _set_mission_runtime(mission_id, "persistence_ready")
         m = service.get_mission(mission_id)
-        if m is None: return
-        if m.get("status") != "running": return
+        if m is None:
+            _set_mission_runtime(mission_id, "mission_not_found")
+            return
+        _set_mission_runtime(mission_id, "mission_loaded", status=m.get("status"))
+        if m.get("status") != "running":
+            _set_mission_runtime(mission_id, "stopped_before_run", status=m.get("status"))
+            return
 
         plan = m.get("plan") or {}
         steps = plan.get("steps") or []
@@ -738,6 +774,7 @@ def _run_mission_sync(mission_id, actor):
             o = _norm_order(s.get("order"))
             return o if o is not None else 999
         steps = sorted(steps, key=_order_key)
+        _set_mission_runtime(mission_id, "plan_loaded", steps_total=len(steps))
 
         outputs_by_order = {}
         step_reports = []
@@ -747,6 +784,13 @@ def _run_mission_sync(mission_id, actor):
         total_tool_ms = 0
 
         for step in steps:
+            order_preview = _norm_order(step.get("order"))
+            _set_mission_runtime(
+                mission_id, "step_started",
+                step=order_preview,
+                agent=str(step.get("agent") or "").strip(),
+                tool=str(step.get("tool") or "").strip(),
+            )
             if _is_mission_cancelled(mission_id):
                 try:
                     service.fail_mission(mission_id,
@@ -780,6 +824,10 @@ def _run_mission_sync(mission_id, actor):
                 return
 
             inputs = _build_tool_inputs(tool_name, step, outputs_by_order, mission_id)
+            _set_mission_runtime(
+                mission_id, "inputs_built",
+                step=order, tool=tool_name, inputs_ok=inputs is not None,
+            )
             if inputs is None:
                 try:
                     service.fail_mission(mission_id,
@@ -791,6 +839,7 @@ def _run_mission_sync(mission_id, actor):
                 return
 
             db_t0 = time.time()
+            _set_mission_runtime(mission_id, "creating_task", step=order, agent=agent_name, tool=tool_name)
             try:
                 create_result = service.create_task(
                     agent_name, tool_name, inputs=inputs,
@@ -798,6 +847,7 @@ def _run_mission_sync(mission_id, actor):
                 )
                 task_id = create_result["record"]["id"]
                 task_ids.append(task_id)
+                _set_mission_runtime(mission_id, "task_created", step=order, task_id=task_id)
             except Exception as e:
                 try:
                     service.fail_mission(mission_id,
@@ -807,8 +857,10 @@ def _run_mission_sync(mission_id, actor):
                 except Exception: pass
                 return
 
+            _set_mission_runtime(mission_id, "starting_task", step=order, task_id=task_id)
             try:
                 service.start_task(task_id, actor="orchestrator")
+                _set_mission_runtime(mission_id, "task_started", step=order, task_id=task_id)
             except Exception as e:
                 try:
                     service.fail_mission(mission_id,
@@ -819,6 +871,7 @@ def _run_mission_sync(mission_id, actor):
                 return
             db_ms = int((time.time() - db_t0) * 1000)
 
+            _set_mission_runtime(mission_id, "invoking_tool", step=order, task_id=task_id, tool=tool_name)
             tool_t0 = time.time()
             outputs, error = None, None
             try:
@@ -844,6 +897,11 @@ def _run_mission_sync(mission_id, actor):
                          "message": f"tool tardo {duration_ms}ms > {task_timeout_limit_s*1000}ms"}
 
             if error is not None:
+                _set_mission_runtime(
+                    mission_id, "step_failed",
+                    step=order, task_id=task_id, error=error,
+                    duration_ms=duration_ms,
+                )
                 db_t1 = time.time()
                 try:
                     service.fail_task(task_id, error, duration_ms=duration_ms, actor="orchestrator")
@@ -862,6 +920,10 @@ def _run_mission_sync(mission_id, actor):
                 except Exception: pass
                 return
 
+            _set_mission_runtime(
+                mission_id, "step_completed",
+                step=order, task_id=task_id, duration_ms=duration_ms,
+            )
             db_t2 = time.time()
             try:
                 service.complete_task(task_id, outputs=outputs or {},
@@ -887,6 +949,7 @@ def _run_mission_sync(mission_id, actor):
         total_elapsed_ms = int((time.time() - mission_start) * 1000)
         overhead_ms = total_elapsed_ms - total_db_ms - total_tool_ms
 
+        _set_mission_runtime(mission_id, "completing_mission", steps_executed=len(step_reports))
         try:
             service.complete_mission(
                 mission_id,
@@ -907,6 +970,10 @@ def _run_mission_sync(mission_id, actor):
             print(f"[mission] complete_mission fallo: {type(e).__name__}: {str(e)[:300]}")
 
     except Exception as e:
+        _set_mission_runtime(
+            mission_id, "orchestrator_fatal",
+            error_type=type(e).__name__, error=str(e)[:300],
+        )
         print(f"[mission] fatal: {type(e).__name__}: {str(e)[:300]}")
         try:
             service = _persistence_service()
@@ -916,6 +983,7 @@ def _run_mission_sync(mission_id, actor):
                     actor="orchestrator")
         except Exception: pass
     finally:
+        _set_mission_runtime(mission_id, "orchestrator_finished")
         _clear_mission_cancelled(mission_id)
         with _mission_active_lock:
             _mission_active_count -= 1
@@ -2073,6 +2141,8 @@ def v8_mission_diagnose(request: Request, mission_id: str):
         return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
 
     checks = []
+    runtime = _get_mission_runtime(mission_id)
+    add_runtime = runtime is not None
     def add(name, ok, detail):
         checks.append({"name": name, "status": "PASS" if ok else "FAIL", "detail": detail})
 
@@ -2096,6 +2166,11 @@ def v8_mission_diagnose(request: Request, mission_id: str):
                 "model": mission_error.get("model"),
                 "message": mission_error.get("message"),
             })
+
+    add("orchestrator_runtime", add_runtime, runtime or {
+        "stage": "no_runtime_state",
+        "note": "No hay estado efimero del proceso actual; puede ser una mision anterior al despliegue o un proceso reiniciado."
+    })
 
     by_status = {}
     for t in tasks:
@@ -2258,6 +2333,7 @@ async def v8_execute_mission(request: Request, mission_id: str):
                              "detail": "la mision no tiene plan con pasos"}, status_code=409)
 
     global _mission_active_count
+    _set_mission_runtime(mission_id, "execute_requested", actor=s["email"])
     with _mission_active_lock:
         if _mission_active_count >= MAX_MISSION_CONCURRENT:
             return JSONResponse({"ok": False, "reason": "too_many_running",
@@ -2265,7 +2341,22 @@ async def v8_execute_mission(request: Request, mission_id: str):
                                  "max": MAX_MISSION_CONCURRENT}, status_code=429)
         _mission_active_count += 1
 
-    asyncio.create_task(asyncio.to_thread(_run_mission_sync, mission_id, s["email"]))
+    try:
+        task = asyncio.create_task(asyncio.to_thread(_run_mission_sync, mission_id, s["email"]))
+        _set_mission_runtime(mission_id, "orchestrator_scheduled", active_count=_mission_active_count)
+        task.add_done_callback(
+            lambda t: _set_mission_runtime(
+                mission_id, "orchestrator_task_done",
+                task_exception=repr(t.exception()) if not t.cancelled() and t.exception() else None,
+            )
+        )
+    except Exception as e:
+        with _mission_active_lock:
+            _mission_active_count = max(0, _mission_active_count - 1)
+        _set_mission_runtime(mission_id, "orchestrator_schedule_failed",
+                              error_type=type(e).__name__, error=str(e)[:300])
+        return JSONResponse({"ok": False, "reason": "orchestrator_schedule_failed",
+                             "error_type": type(e).__name__}, status_code=500)
 
     return {"ok": True, "mission_id": mission_id, "status": "running",
             "steps_total": len(steps),
