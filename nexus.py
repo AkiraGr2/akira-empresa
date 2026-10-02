@@ -2866,6 +2866,55 @@ def _selftest_missions_run():
     }
     return {"summary": summary, "tests": tests}
 
+@app.get("/api/v8/learning/selftest")
+def v8_learning_selftest(request: Request):
+    s = get_session(request)
+    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    if not s.get("is_owner"): return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
+    service = _persistence_service()
+    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    tests = []
+    def add(name, ok, detail=None):
+        tests.append({"name": name, "status": "PASS" if ok else "FAIL", "detail": detail or {}})
+    import uuid
+    marker_id = "SELFTEST_LEARNING_" + uuid.uuid4().hex[:12]
+    try:
+        created = service.save_learning({
+            "source": "explicit_user_teaching",
+            "event": marker_id,
+            "lesson": "Dato sintetico de prueba del Learning Engine: el agua hierve a 100 C a nivel del mar.",
+            "knowledge_nodes": [],
+            "relationships": [],
+            "confidence": 0.5,
+            "outcome": "unknown",
+            "status": "candidate",
+            "evidence": [],
+        }, actor=s["email"], idempotency_key="learning_selftest:" + marker_id)
+        add("candidate_created", created.get("status") == "candidate", {"id": created.get("id")})
+        evidence = [{"type": "test", "title": "Fuente sintetica de selftest", "reference": "selftest://learning/" + marker_id, "note": "Evidencia controlada de prueba."}]
+        updated = service.add_learning_evidence(created["id"], evidence, expected_version=created["version"], actor=s["email"])
+        add("evidence_added", len(updated.get("evidence") or []) == 1, {"version": updated.get("version")})
+        verified = service.update_learning_status(created["id"], "verified", expected_version=updated["version"], actor=s["email"])
+        add("candidate_to_verified", verified.get("status") == "verified" and bool(verified.get("verified_at")), {"status": verified.get("status")})
+        consolidated = service.update_learning_status(created["id"], "consolidated", expected_version=verified["version"], actor=s["email"])
+        add("verified_to_consolidated", consolidated.get("status") == "consolidated", {"status": consolidated.get("status")})
+        fetched = service.get_learning(created["id"])
+        add("persisted_after_consolidation", fetched is not None and fetched.get("status") == "consolidated", {"id": created["id"]})
+        try:
+            service.update_learning_status(created["id"], "discarded", expected_version=fetched["version"], actor=s["email"])
+            add("illegal_transition_rejected", False, {"reason": "discarded_transition_should_fail"})
+        except Exception as e:
+            add("illegal_transition_rejected", True, {"error_type": type(e).__name__})
+        # Limpieza del artefacto sintético: no queda como conocimiento real.
+        try:
+            service.update_learning_status(created["id"], "obsolete", expected_version=fetched["version"], actor=s["email"])
+            add("selftest_cleanup", True, {"status": "obsolete"})
+        except Exception as e:
+            add("selftest_cleanup", False, {"error_type": type(e).__name__})
+    except Exception as e:
+        add("learning_e2e_contract", False, {"error_type": type(e).__name__, "message": str(e)[:200]})
+    return {"ok": all(t["status"] == "PASS" for t in tests), "tests": tests, "synthetic_only": True}
+
 @app.get("/api/v8/missions/selftest")
 def v8_missions_selftest(request: Request):
     s = get_session(request)
