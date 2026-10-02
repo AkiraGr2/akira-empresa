@@ -1032,6 +1032,40 @@ def _fail_running_tasks_of_mission(service, mission_id, reason):
             except Exception: pass
     except Exception: pass
 
+def _capture_autonomous_mission_learning(service, mission_id, actor, outcome, mission_result):
+    """Extract a supervised learning candidate from a real mission outcome."""
+    try:
+        prompt = (
+            "Analiza esta experiencia real de Akira y propone UNA sola lección reutilizable. "
+            "No inventes hechos, no afirmes que algo es universal y no propongas conocimiento externo. "
+            "Describe únicamente lo aprendido de esta ejecución. Responde en español, máximo 700 caracteres.\n\n"
+            f"MISIÓN: {mission_id}\nRESULTADO: {json.dumps(mission_result, ensure_ascii=False)[:7000]}\n"
+            f"RESULTADO GLOBAL: {outcome}\n\nLECCIÓN:"
+        )
+        lesson, model_used = _run_reason_stage(prompt, [])
+        lesson = str(lesson or "").strip()[:3000]
+        if not lesson:
+            return None
+        lr = service.save_learning({
+            "source": "autonomous_experience",
+            "event": f"mission_experience:{mission_id}",
+            "lesson": lesson,
+            "knowledge_nodes": [],
+            "relationships": [],
+            "confidence": 0.6 if outcome == "success" else 0.55,
+            "outcome": outcome,
+            "status": "candidate",
+        }, actor=actor, idempotency_key=f"autonomous_experience:{mission_id}:{outcome}")
+        return {
+            "learning_id": lr["record"]["id"],
+            "lesson": lesson,
+            "model_used": model_used,
+            "safe_for_recall": False,
+        }
+    except Exception as e:
+        print(f"[learning] autonomous mission extraction failed: {type(e).__name__}: {str(e)[:200]}")
+        return None
+
 def _run_mission_sync(mission_id, actor):
     global _mission_active_count
     _set_mission_runtime(mission_id, "orchestrator_entered", actor=actor)
@@ -1199,6 +1233,20 @@ def _run_mission_sync(mission_id, actor):
                 total_db_ms += int((time.time() - db_t1) * 1000)
                 _fail_running_tasks_of_mission(service, mission_id, "prior_step_failed")
                 try:
+                    autonomous_learning = _capture_autonomous_mission_learning(
+                        service, mission_id, actor, "failure",
+                        {
+                            "failed_step": order,
+                            "agent": agent_name,
+                            "tool": tool_name,
+                            "error": error,
+                            "completed_steps": step_reports,
+                        },
+                    )
+                    _set_mission_runtime(
+                        mission_id, "autonomous_learning_candidate",
+                        learning_id=(autonomous_learning or {}).get("learning_id"),
+                    )
                     service.fail_mission(mission_id,
                         {"type": "step_failed", "step": order,
                          "agent": agent_name, "tool": tool_name,
@@ -1270,6 +1318,24 @@ def _run_mission_sync(mission_id, actor):
                     },
                 },
                 actor="orchestrator"
+            )
+            autonomous_learning = _capture_autonomous_mission_learning(
+                service, mission_id, actor, "success",
+                {
+                    "steps_executed": len(step_reports),
+                    "steps": step_reports,
+                    "task_ids": task_ids,
+                    "timing": {
+                        "total_elapsed_ms": total_elapsed_ms,
+                        "total_db_ms": total_db_ms,
+                        "total_tool_ms": total_tool_ms,
+                        "overhead_ms": overhead_ms,
+                    },
+                },
+            )
+            _set_mission_runtime(
+                mission_id, "autonomous_learning_candidate",
+                learning_id=(autonomous_learning or {}).get("learning_id"),
             )
         except Exception as e:
             _set_mission_runtime(
