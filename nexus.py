@@ -1696,8 +1696,12 @@ EVIDENCIA:
             "evaluated_by": "gemini-3.8-flash",
             "evaluated_at": _now_iso(),
         }
+        try:
+            expected_version = int(payload.get("expected_version", current["version"]))
+        except Exception:
+            expected_version = current["version"]
         rec = service.update_learning(learning_id, {"verification_analysis": analysis},
-                                     expected_version=current["version"], actor=s["email"])
+                                     expected_version=expected_version, actor=s["email"])
         return {"ok": True, "learning": rec, "analysis": analysis,
                 "recommended_status": "verified" if verdict == "supported" else ("conflicted" if verdict == "contradicted" else "candidate")}
     except ConflictError:
