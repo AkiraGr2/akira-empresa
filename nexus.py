@@ -33,6 +33,7 @@ MISSION_LLM_DAILY_LIMIT = 50
 MAX_PLANNING_CONCURRENT = 2
 MAX_MISSION_CONCURRENT = 2
 MISSION_TASK_TIMEOUT_S = 60
+MISSION_COGNITIVE_TIMEOUT_S = 180
 MISSION_MAX_DURATION_S = 480
 
 _mission_rate_store = defaultdict(list)
@@ -788,10 +789,18 @@ def _run_mission_sync(mission_id, actor):
             total_db_ms += db_ms
             total_tool_ms += duration_ms
 
-            tool_timeout = (duration_ms > MISSION_TASK_TIMEOUT_S * 1000)
+            # cognitive_cycle puede tardar mas por la llamada LLM; el resto conserva
+            # el limite normal de 60s. El timeout se evalua al volver de la tool,
+            # por lo que evita marcar como fallida una ejecucion valida de ciclo cognitivo.
+            task_timeout_limit_s = (
+                MISSION_COGNITIVE_TIMEOUT_S
+                if tool_name == "cognitive_cycle"
+                else MISSION_TASK_TIMEOUT_S
+            )
+            tool_timeout = (duration_ms > task_timeout_limit_s * 1000)
             if error is None and tool_timeout:
                 error = {"type": "TaskTimeout",
-                         "message": f"tool tardo {duration_ms}ms > {MISSION_TASK_TIMEOUT_S*1000}ms"}
+                         "message": f"tool tardo {duration_ms}ms > {task_timeout_limit_s*1000}ms"}
 
             if error is not None:
                 db_t1 = time.time()
