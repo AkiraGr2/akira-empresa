@@ -762,3 +762,260 @@ Una tarea de Akira solo se considera cerrada cuando:
 - y queda documentado el resultado.
 
 Fin del handoff maestro.
+
+
+# 26. RECONCILIACIÓN CON HANDOFFS ENTREGADOS POR EL USUARIO — 2026-10-02
+
+Esta sección se añadió después de contrastar el Handoff Maestro del repositorio con los handoffs históricos entregados en esta conversación y con el estado real trabajado después de esos documentos.
+
+## 26.1 Handoffs fuente recibidos
+
+Se recibieron, entre otros:
+- HANDOFF_AKIRA_COMPLETO_ACTUAL_AUDITORIA_FRONTEND.md
+- HANDOFF_AKIRA_COMPLETO_ACTUALIZADO_2026-09-30.txt
+- HANDOFF_AKIRA_COMPLETO_ACTUALIZADO_AUDITORIA_FRONTEND.md
+- HANDOFF_AKIRA_COMPLETO_AUTOGUARDADO_2026-10-01.md
+- HANDOFF_AKIRA_COMPLETO_HASTA_B1_8_2026-10-01.md
+- HANDOFF_AKIRA_COMPLETO_SIN_REPETIDOS.md
+- HANDOFF_AKIRA_CONTINUIDAD_2026-10-01.md
+- HANDOFF_AKIRA_CONTINUIDAD_AUDITORIA_FRONTEND.md
+- HANDOFF_AKIRA_MAESTRO_COMPLETO_B1_10_OFFICE_2026-10-02.md
+- Cuarto.md
+
+Varios documentos son consolidaciones o copias sucesivas y contienen material repetido. No se deben interpretar como estados simultáneos independientes.
+
+## 26.2 Qué queda confirmado por los handoffs y coincide con el estado posterior
+
+Los documentos convergen en estas decisiones:
+
+1. Akira no debe reducirse a un chatbot.
+2. La UI debe representar honestamente capacidades reales.
+3. La decisión frontend es:
+   **CONSERVAR LÓGICA Y CONTRATOS ÚTILES + RECONSTRUIR PRESENTACIÓN.**
+4. Office y Membrane son parte de la identidad de Akira y deben conservarse.
+5. Office no debe fingir actividad: una representación visual debe corresponder a estado real.
+6. Membrane no debe inventar nodos, conexiones ni actividad cognitiva.
+7. Membrane y Office deben evolucionar como componentes de primera clase conectados al estado real.
+8. Chat comunica; Office representa actividad; Membrane representa relaciones/estado.
+9. La dirección conceptual B1.9 quedó como:
+   **AKIRA V1 = Cognitive Space + Command Space**
+   con Membrane como identidad cognitiva visual, Chat como interacción central, Contexto como puente y Office como espacio operativo.
+10. La implementación del nuevo frontend no debe comenzar a ciegas y debe conservar contratos funcionales existentes.
+
+Esto está explícitamente documentado en los handoffs de auditoría frontend y en el documento B1.10/Office. 
+
+## 26.3 Corrección de continuidad importante: el proyecto avanzó después del corte B1.10
+
+Los handoffs entregados contienen cortes históricos donde todavía se indicaba que el siguiente paso era B1.10 o diseño visual y que no se había iniciado el trabajo posterior.
+
+Ese estado ya no es el estado actual.
+
+Después de esos cortes se trabajó y verificó el backend de proveedores, contexto y fallback, y se avanzó en Misiones.
+
+Por tanto:
+
+**Los handoffs históricos son fuente de contexto histórico, no el estado final actual.**
+
+El repositorio, Git y esta sección posterior al corte representan el estado más reciente.
+
+## 26.4 Estado actual de proveedores — posterior a los handoffs
+
+Cadena normal actual:
+
+**Gemini → Groq → OpenRouter Free**
+
+Gemini:
+- se encontró un error real 400 por timeout manual de 8 s;
+- el SDK requería mínimo 10 s;
+- se corrigió a 10 s;
+- posteriormente se encontró 429 RESOURCE_EXHAUSTED por cuota;
+- se modificó el comportamiento para no reintentar 429 innecesariamente;
+- 429 avanza inmediatamente al fallback;
+- retries quedan limitados a 408, 500, 502, 503 y 504.
+
+Commits:
+- 1eb04da4911a90803b405febaf2e6c6e124d121c
+- 6d982b2b616b47811fe4b1002a11aceb4198d03e
+
+Cooldown:
+- Gemini y Groq tienen selección que excluye keys en cooldown;
+- el marcador de Groq usa provider explícito para evitar colisiones con Gemini.
+
+## 26.5 Contexto real de conversación — bug descubierto después
+
+Se descubrió que persistir mensajes no significaba que el historial se estuviera enviando al proveedor.
+
+Se agregó reconstrucción de contexto mediante:
+`_format_conversation_context(...)`
+
+Características:
+- historial real de la conversación;
+- últimos 20 mensajes;
+- evita duplicar el mensaje actual;
+- límites por mensaje y por bloque;
+- enviado a Gemini, Groq y OpenRouter.
+
+Esto hace que el contexto pertenezca a Akira y no a un proveedor concreto.
+
+Commit inicial:
+`e73d0fdbaab14f9badd5d1db44ddbbc86eb27698`
+
+Corrección posterior de bloque duplicado:
+`94dcf6dfe350e02f50544c975b10a052a0b59141`
+
+Prueba funcional real:
+- usuario estableció “Akira Contexto 2026”;
+- después preguntó el nombre;
+- Akira lo recuperó correctamente;
+- la respuesta llegó mediante Groq.
+
+Aprendizaje:
+**persistencia de historial y contexto enviado al LLM son dos cosas distintas y deben verificarse por separado.**
+
+## 26.6 OpenRouter Free — prueba real
+
+La key configurada en Render bajo:
+`OPENROUTER_API_KEY`
+
+es distinta de una key automática de onboarding que apareció posteriormente.
+
+La key manual del usuario se configuró sin pago y con límite personalizado 0.
+
+Se añadió temporalmente:
+`AKIRA_FORCE_OPENROUTER_TEST=1`
+
+El modo fue owner-only y se utilizó exclusivamente para una prueba controlada.
+
+Prueba:
+“Prueba de OpenRouter. Responde solamente: OPENROUTER OK”
+
+Resultado observado:
+**OPENROUTER OK (via openai/gpt-oss-120b)**
+
+Esto verificó que:
+- la key configurada en Render funciona;
+- `openrouter/free` puede responder;
+- un modelo gratuito fue seleccionado;
+- no fue necesario pagar ni agregar tarjeta.
+
+Después se retiró completamente el modo temporal.
+
+Commit de prueba:
+`4c30ef530e9fb96868cb248a760dbdbbc88edf92`
+
+Commit de limpieza:
+`95c9f3e7f1d79d2ac3adcdb0422839a12bb41cc7`
+
+Auditoría posterior:
+- `AKIRA_FORCE_OPENROUTER_TEST` ausente del código;
+- modo forzado ausente;
+- fallback normal de OpenRouter presente;
+- fallback normal de Groq presente;
+- rama Gemini presente.
+
+Render quedó Live después de la limpieza.
+
+## 26.7 Misiones — estado posterior al corte histórico
+
+La arquitectura de Misiones ya no debe considerarse solamente parcial.
+
+Se validó el camino real:
+
+**Crear → Aprobar → Ejecutar → Progreso → completed**
+
+Misión real probada:
+“Verificar el funcionamiento completo del sistema de misiones de Akira, desde la creación hasta la ejecución y finalización.”
+
+Resultado:
+- 6 tareas;
+- 100%;
+- completed.
+
+También se verificaron previamente:
+- approve válido → running;
+- approve duplicado → 409;
+- reject sin motivo → cancelled;
+- reject con motivo → motivo preservado;
+- reject duplicado → 409;
+- misión inexistente → 404.
+
+## 26.8 Bug pendiente de Misiones
+
+Queda identificado para la siguiente auditoría profunda:
+
+`receives_from` puede depender accidentalmente del orden en que el LLM entrega los steps.
+
+Si una dependencia válida apunta a un step que aparece posteriormente en el JSON/lista, el validador puede rechazarla aunque la relación sea semánticamente válida.
+
+Esto todavía no debe marcarse como corregido.
+
+Siguiente investigación:
+1. auditar `_validate_mission_plan`;
+2. confirmar exactamente cómo construye el conjunto de steps vistos;
+3. separar validación de existencia de steps de validación de orden;
+4. soportar dependencias no lineales cuando sean válidas;
+5. probar plan ordenado;
+6. probar plan desordenado;
+7. probar DAG válido;
+8. probar dependencia inexistente;
+9. probar dependencia circular si el contrato la prohíbe.
+
+## 26.9 Frontend — estado real después de los handoffs
+
+Los handoffs de frontend siguen siendo válidos como arquitectura y auditoría histórica.
+
+Importante:
+- `akira_admin.js` estable no debe tocarse sin necesidad;
+- `akira_missions_panel.js` está en cache V4;
+- se corrigieron acciones de misión;
+- se corrigió overlay/progreso que bloqueaba botones;
+- se añadió diagnóstico durante planning;
+- polling contempla planning y running.
+
+Bug real de UI encontrado:
+el botón Aprobar no era inicialmente un problema de handler; el overlay/progress box interfería con la interacción.
+
+Aprendizaje:
+**un fallo aparente de JavaScript puede ser una interferencia de CSS/stacking/overlay.**
+
+## 26.10 Documentos históricos vs fuente de verdad
+
+Jerarquía de continuidad:
+
+1. **Código actualmente desplegado / repositorio Git** = fuente de verdad técnica.
+2. **Commits** = historial verificable de cambios.
+3. **Handoff Maestro actualizado** = contexto, decisiones, aprendizaje y mapa del sistema.
+4. **Handoffs históricos** = contexto histórico, especialmente útil para entender por qué se tomaron decisiones y qué errores ocurrieron.
+
+Nunca resolver una contradicción suponiendo que el documento gana al código.
+
+## 26.11 Regla adicional de continuidad
+
+Cuando una sesión nueva retome Akira:
+
+**Leer handoff → identificar estado declarado → contrastar con repo/commit → auditar zona relevante → solo después modificar.**
+
+Nunca:
+- asumir que un handoff histórico sigue siendo el estado actual;
+- reactivar memoria porque un documento antiguo diga que estaba activa;
+- reconstruir frontend sin mapear contratos;
+- eliminar Office/Membrane;
+- interpretar mockups como capacidades reales;
+- repetir una corrección ya aplicada sin comprobar el código actual.
+
+## 26.12 Punto de continuación real al 2026-10-02
+
+El sistema acaba de cerrar una etapa de robustez de proveedores/fallback.
+
+Render está Live.
+
+La cadena de proveedores está verificada.
+
+OpenRouter Free fue probado y el modo de prueba temporal fue retirado.
+
+El siguiente trabajo técnico recomendado es volver a **Misiones** y auditar profundamente el validador de planes, empezando por `_validate_mission_plan` y el tratamiento de `receives_from`.
+
+La regla sigue siendo:
+
+**Analizar → auditar → modificar → volver a auditar → verificar → probar → cerrar.**
+
