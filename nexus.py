@@ -3193,6 +3193,77 @@ def _extract_keywords(msg, max_words=3, min_len=4):
         if len(out) >= max_words: break
     return out
 
+_TEACH_INTENT_RE = re.compile(
+    r"^\\s*(?:akira[\\s,;:.-]*)?(?:"
+    r"quiero enseñarte|quiero ensenarte|te voy a enseñar|te voy a ensenar|"
+    r"quiero que aprendas|aprende esto|aprende lo siguiente|"
+    r"guarda esto como conocimiento|esto es conocimiento para ti"
+    r")\\s*(?::|-)?\\s*(.*)$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+def _extract_teaching_lesson(message):
+    text = str(message or "").strip()
+    m = _TEACH_INTENT_RE.match(text)
+    if not m:
+        return None, False
+    lesson = (m.group(1) or "").strip()
+    # Una frase de activación sin contenido entra en modo enseñanza,
+    # pero no crea un registro vacío.
+    if len(lesson) < 8:
+        return None, True
+    return lesson[:5000], True
+
+def _create_teaching_candidate(service, lesson, actor, source="explicit_user_teaching"):
+    if service is None:
+        raise PersistenceError("persistence_not_ready")
+    from persistence.core import ValidationError
+    confidence = 0.8
+    lr = service.save_learning({
+        "source": source,
+        "event": "explicit_user_teaching",
+        "lesson": lesson,
+        "knowledge_nodes": [],
+        "relationships": [],
+        "confidence": confidence,
+        "outcome": "unknown",
+        "status": "candidate",
+    }, actor=actor, idempotency_key="teach_candidate_" + hashlib.sha256(lesson.encode("utf-8")).hexdigest()[:32])
+
+    mr = service.save_memory({
+        "content": lesson,
+        "memory_type": "semantic",
+        "importance": 7,
+        "confidence": confidence,
+        "source": "learning_candidate",
+        "source_id": lr["record"]["id"],
+        "source_reference": source,
+        "tags": ["learning_candidate"],
+        "privacy_level": "PRIVATE",
+    }, actor=actor, idempotency_key=f"teach_mem_{lr['record']['id']}")
+
+    nr = service.create_node({
+        "node_type": "concept",
+        "label": lesson[:120],
+        "description": lesson[:1000],
+        "node_metadata": {
+            "knowledge_kind": "explicit_user_teaching",
+            "learning_id": lr["record"]["id"],
+            "memory_id": mr["record"]["id"],
+            "learning_status": "candidate",
+        },
+        "tags": ["learning_candidate"],
+        "weight": 1.0,
+        "confidence": confidence,
+        "privacy_level": "PRIVATE",
+    }, actor=actor, idempotency_key=f"teach_node_{lr['record']['id']}")
+    return service.update_learning(
+        lr["record"]["id"],
+        {"knowledge_nodes": [nr["record"]["id"]]},
+        expected_version=lr["record"]["version"],
+        actor=actor,
+    ), mr["record"], nr["record"]
+
 def _recall_memories(service, msg, limit=5):
     if service is None: return []
     keywords = _extract_keywords(msg)
@@ -3204,8 +3275,21 @@ def _recall_memories(service, msg, limit=5):
         except Exception:
             continue
         for r in rows:
+            # El conocimiento explícitamente enseñado no se usa como verdad
+            # hasta que su learning_event llegue al menos a verified.
+            if r.get("source") == "learning_candidate":
+                learning_id = r.get("source_id")
+                if not learning_id:
+                    continue
+                try:
+                    learning = service.get_learning(learning_id)
+                except Exception:
+                    learning = None
+                if not learning or learning.get("status") not in ("verified", "consolidated"):
+                    continue
             rid = r.get("id")
-            if rid and rid not in found: found[rid] = r
+            if rid and rid not in found:
+                found[rid] = r
         if len(found) >= limit: break
     rows = list(found.values())
     rows.sort(key=lambda r: (r.get("created_at") or "", r.get("importance") or 0), reverse=True)
@@ -3476,6 +3560,66 @@ async def chat(request: Request):
                 service.add_message(conversation_id, "user", msg, actor=session["email"])
             except Exception as e:
                 print(f"[chat] add_message user fallo: {type(e).__name__}: {str(e)[:200]}")
+
+        teaching_lesson, teaching_mode = _extract_teaching_lesson(msg)
+        if teaching_mode:
+            if not teaching_lesson:
+                teaching_response = "Claro. ¿Qué quieres enseñarme? Explícamelo con tus palabras y lo registraré como conocimiento candidato para después verificarlo."
+            elif not persist:
+                teaching_response = "Puedo recibir la enseñanza, pero no puedo registrarla de forma persistente en este momento."
+            else:
+                try:
+                    learning_rec, memory_rec, node_rec = await asyncio.to_thread(
+                        _create_teaching_candidate, service, teaching_lesson, session["email"]
+                    )
+                    teaching_response = (
+                        "🧠 Recibido. Lo registré como conocimiento candidato. "
+                        "Todavía no lo trataré como un hecho verificado; primero debe pasar por revisión/validación. "
+                        f"ID de aprendizaje: {learning_rec['id']}."
+                    )
+                except Exception as e:
+                    teaching_response = f"No pude registrar la enseñanza: {type(e).__name__}."
+            if persist and teaching_response:
+                try:
+                    service.add_message(conversation_id, "assistant", teaching_response,
+                                        model="learning_engine", memories_used=[],
+                                        duration_ms=0, actor=session["email"])
+                except Exception as e:
+                    print(f"[chat] add_message teaching response fallo: {type(e).__name__}")
+            return {"response": teaching_response, "model": "learning_engine", "conversation_id": conversation_id}
+
+        teaching_lesson, teaching_mode = _extract_teaching_lesson(msg)
+        if teaching_mode:
+            if not teaching_lesson:
+                teaching_response = "Claro. ¿Qué quieres enseñarme? Explícamelo con tus palabras y lo registraré como conocimiento candidato para después verificarlo."
+            elif not persist:
+                teaching_response = "Puedo recibir la enseñanza, pero no puedo registrarla de forma persistente en este momento."
+            else:
+                try:
+                    learning_rec, memory_rec, node_rec = await asyncio.to_thread(
+                        _create_teaching_candidate, service, teaching_lesson, session["email"]
+                    )
+                    teaching_response = (
+                        "🧠 Recibido. Lo registré como conocimiento candidato. "
+                        "Todavía no lo trataré como un hecho verificado; primero debe pasar por revisión/validación. "
+                        f"ID de aprendizaje: {learning_rec['id']}."
+                    )
+                except Exception as e:
+                    teaching_response = f"No pude registrar la enseñanza: {type(e).__name__}."
+            async def teaching_generate():
+                for w in teaching_response.split(" "):
+                    yield f'data: {json_lib.dumps({"text": w + " "})}\n\n'
+                    await asyncio.sleep(0.02)
+                yield f'data: {json_lib.dumps({"done": True, "conversation_id": conversation_id})}\n\n'
+                if persist:
+                    try:
+                        await asyncio.to_thread(
+                            service.add_message, conversation_id, "assistant", teaching_response,
+                            "learning_engine", [], 0, None, session["email"]
+                        )
+                    except Exception as e:
+                        print(f"[chat/stream] add_message teaching response fallo: {type(e).__name__}")
+            return StreamingResponse(teaching_generate(), media_type="text/event-stream")
 
         memories = await asyncio.to_thread(_recall_memories, service, msg)
         recall_block = _format_recall_block(memories)
