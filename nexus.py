@@ -2210,7 +2210,7 @@ def _selftest_missions_run():
     }
     _ordered_plan = {"steps": [_valid_step(1), _valid_step(2, 1)]}
     _shuffled_plan = {"steps": [_valid_step(2, 1), _valid_step(1)]}
-    _missing_dependency_plan = {"steps": [_valid_step(1), _valid_step(2, 3)]}
+    _missing_dependency_plan = {"steps": [_valid_step(1), _valid_step(2, 0)]}
     _gap_plan = {"steps": [_valid_step(1), _valid_step(3)]}
     try:
         ok, reason = _validate_mission_plan(_ordered_plan, _validator_stub)
