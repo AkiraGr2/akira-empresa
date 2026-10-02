@@ -795,27 +795,49 @@ def _norm_order(x):
     try: return int(x)
     except (TypeError, ValueError): return None
 
+def _dependency_output_text(step, outputs_by_order, max_chars=3000):
+    receives = step.get("receives_from")
+    if receives is None:
+        return ""
+    try:
+        receives = int(receives)
+    except Exception:
+        return ""
+    output = outputs_by_order.get(receives)
+    if output is None:
+        return ""
+    try:
+        raw = json.dumps(output, ensure_ascii=False, default=str)
+    except Exception:
+        raw = str(output)
+    return raw[:max_chars]
+
 def _build_tool_inputs(tool_name, step, outputs_by_order, mission_id):
     task = str(step.get("task") or "").strip()
     expected = str(step.get("expected_output") or "").strip()
+    dependency = _dependency_output_text(step, outputs_by_order)
+    context = f"\n\n[RESULTADO DEL PASO {step.get('receives_from')}]\n{dependency}" if dependency else ""
+
     if tool_name == "web_search":
         if not task: return None
-        return {"query": task[:200]}
+        return {"query": (task + context)[:200]}
     if tool_name == "memory_search":
         if not task: return None
-        return {"query": task[:200]}
+        return {"query": (task + context)[:200]}
     if tool_name == "memory_save":
         content = task
+        if dependency:
+            content += f"\nResultado previo: {dependency}"
         if expected:
-            content = f"{task} → {expected}"
+            content += f" → {expected}"
         if not content: return None
         return {"content": content[:5000], "memory_type": "episodic"}
     if tool_name == "learning_save":
         if not task: return None
         return {
             "source": f"mission_{mission_id[:12]}",
-            "event": task[:500],
-            "lesson": (expected or task)[:2000],
+            "event": (task + context)[:500],
+            "lesson": (expected + (f"\nResultado previo: {dependency}" if dependency else ""))[:2000],
             "outcome": "success",
             "confidence": 0.5,
         }
@@ -823,13 +845,25 @@ def _build_tool_inputs(tool_name, step, outputs_by_order, mission_id):
         return {}
     if tool_name == "graph_create_node":
         if not task: return None
-        return {"node_type": "concept", "label": task[:200]}
+        label = task + (f" | previo: {dependency}" if dependency else "")
+        return {"node_type": "concept", "label": label[:200]}
+    if tool_name == "graph_related":
+        if not dependency:
+            return None
+        try:
+            prior = json.loads(dependency)
+            node_id = prior.get("id") if isinstance(prior, dict) else None
+        except Exception:
+            node_id = None
+        if not node_id:
+            return None
+        return {"node_id": str(node_id)}
     if tool_name == "image_generate":
         if not task: return None
-        return {"prompt": task[:500]}
+        return {"prompt": (task + context)[:500]}
     if tool_name == "cognitive_cycle":
         if not task: return None
-        return {"message": task[:1500]}
+        return {"message": (task + context)[:1500]}
     return None
 
 def _mark_mission_cancelled(mission_id):
@@ -2262,6 +2296,21 @@ def _selftest_missions_run():
             {"reason": reason})
     except Exception as e:
         add("plan_validation_order_gap", "FAIL", {"error": str(e)[:200]})
+
+    try:
+        dep = {1: {"id": "node_test_1", "result": "dato previo"}}
+        built = _build_tool_inputs("graph_related", {"task": "consultar", "receives_from": 1}, dep, "mission_test")
+        add("dependency_output_injection", "PASS" if built == {"node_id": "node_test_1"} else "FAIL",
+            {"built": built})
+    except Exception as e:
+        add("dependency_output_injection", "FAIL", {"error": str(e)[:200]})
+
+    try:
+        built = _build_tool_inputs("memory_save", {"task": "guardar dato", "receives_from": 1}, dep, "mission_test")
+        add("dependency_text_propagation", "PASS" if "node_test_1" in str(built) else "FAIL",
+            {"built": built})
+    except Exception as e:
+        add("dependency_text_propagation", "FAIL", {"error": str(e)[:200]})
 
     try:
         ok = _check_progress_coherent(8, {"completed": 8}, 8)
