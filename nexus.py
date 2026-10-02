@@ -3066,27 +3066,7 @@ async def chat(request: Request):
         model_used = "fallback"
         error_meta = None
 
-        # Diagnóstico temporal: permite probar exclusivamente OpenRouter Free sin
-        # tocar las claves ni alterar el fallback normal. Solo el owner puede activarlo.
-        force_openrouter_test = (
-            str(os.getenv("AKIRA_FORCE_OPENROUTER_TEST") or "").strip() == "1"
-            and is_owner
-        )
-        if force_openrouter_test:
-            o = await asyncio.to_thread(
-                get_openrouter_fallback, msg, conversation_context, recall_block
-            )
-            if o:
-                final_response = o.get("response")
-                model_used = o.get("model") or "openrouter/free"
-            else:
-                final_response = "OpenRouter test failed"
-                model_used = "openrouter_test_failed"
-                error_meta = {
-                    "type": "openrouter_test_failed",
-                    "message": "OpenRouter Free no devolvio respuesta"
-                }
-        elif not gemini_keys:
+        if not gemini_keys:
             g = await asyncio.to_thread(get_groq_fallback, msg, "")
             g = enforce_akira_identity_global(g) if g else None
             final_response = g or "No hay keys"
