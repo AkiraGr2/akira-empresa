@@ -492,7 +492,7 @@ _LEARNING_INPUT = {
 }
 _LEARNING_UPDATABLE = {
     "source", "event", "lesson", "knowledge_nodes", "relationships",
-    "confidence", "outcome", "reuse_count", "last_reused_at",
+    "confidence", "outcome", "status", "reuse_count", "last_reused_at",
 }
 
 def validate_learning_event(data, partial: bool = False) -> dict:
