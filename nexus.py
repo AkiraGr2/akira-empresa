@@ -489,7 +489,9 @@ def _build_mission_plan_prompt(objective, service):
         f"2. Maximo {MAX_MISSION_STEPS} pasos.\n"
         "3. Cada paso debe usar un agente y una tool EXISTENTES (los listo abajo).\n"
         "4. Cada paso debe tener: order (entero 1..N), task (texto), agent (nombre), tool (nombre), "
-        "expected_output (texto 5-500 chars) y receives_from. Para tools normales, receives_from es null o un order anterior. "\n        "Para graph_create_edge, receives_from DEBE ser una lista de exactamente dos orders anteriores de pasos graph_create_node: "\n        "el primero sera from_node y el segundo sera to_node. relation_type es opcional para graph_create_edge.\n"
+        "expected_output (texto 5-500 chars) y receives_from. Para tools normales, receives_from es null o un order anterior. "
+        "Para graph_create_edge, receives_from DEBE ser una lista de exactamente dos orders anteriores de pasos graph_create_node: "
+        "el primero sera from_node y el segundo sera to_node. relation_type es opcional para graph_create_edge.\n"
         '5. Si el objetivo NO es viable con las tools disponibles, responde con: {"error": "not_viable", "reason": "explicacion breve"}.\n\n'
         "AGENTES DISPONIBLES:\n"
         f"{agents_list}\n\n"
