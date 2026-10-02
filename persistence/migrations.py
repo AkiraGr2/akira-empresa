@@ -396,4 +396,13 @@ MIGRATIONS = [
         CREATE INDEX learning_events_status_idx ON learning_events (status, created_at DESC)
         """,
     ),
+    (
+        "014_learning_evidence",
+        """
+        ALTER TABLE learning_events ADD COLUMN evidence JSONB NOT NULL DEFAULT '[]'::jsonb;
+        ALTER TABLE learning_events ADD COLUMN verified_at TIMESTAMPTZ;
+        ALTER TABLE learning_events ADD COLUMN verified_by TEXT;
+        CREATE INDEX learning_events_verified_idx ON learning_events (verified_at DESC)
+        """,
+    ),
 ]
