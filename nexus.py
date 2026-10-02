@@ -1397,15 +1397,13 @@ def _run_mission_sync(mission_id, actor):
                 steps_executed=len(step_reports),
                 error_type=type(e).__name__, error=str(e)[:300],
             )
-            try:
-                service.fail_mission(
-                    mission_id,
-                    {"type": "mission_completion_persist_failed",
-                     "steps_executed": len(step_reports),
-                     "error": str(e)[:300]},
-                    actor="orchestrator")
-            except Exception:
-                pass
+            _fail_mission_with_autonomous_learning(
+                service, mission_id, actor,
+                {"type": "mission_completion_persist_failed",
+                 "steps_executed": len(step_reports),
+                 "error": str(e)[:300],
+                 "completed_steps": step_reports},
+            )
 
     except Exception as e:
         _set_mission_runtime(
@@ -1416,9 +1414,10 @@ def _run_mission_sync(mission_id, actor):
         try:
             service = _persistence_service()
             if service:
-                service.fail_mission(mission_id,
+                _fail_mission_with_autonomous_learning(
+                    service, mission_id, actor,
                     {"type": "orchestrator_fatal", "error": str(e)[:300]},
-                    actor="orchestrator")
+                )
         except Exception: pass
     finally:
         _set_mission_runtime(mission_id, "orchestrator_finished")
