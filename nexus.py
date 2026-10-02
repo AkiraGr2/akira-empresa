@@ -1423,6 +1423,7 @@ def v8_learning_teach(request: Request, payload: dict):
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     if not isinstance(payload, dict): return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
+    from persistence.core import ConflictError, PersistenceError, ValidationError
 
     lesson = str(payload.get("lesson") or payload.get("content") or "").strip()
     if not lesson: return JSONResponse({"ok": False, "reason": "lesson_required"}, status_code=400)
@@ -1498,6 +1499,7 @@ def v8_learning_status_update(request: Request, learning_id: str, payload: dict)
     if not s.get("is_owner"): return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    from persistence.core import ConflictError, NotFoundError, PersistenceError, ValidationError
     payload = payload if isinstance(payload, dict) else {}
     status = str(payload.get("status") or "").strip()
     try:
