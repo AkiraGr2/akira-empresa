@@ -292,6 +292,21 @@ class PersistenceService:
             raise VerificationError("learning update no confirmado")
         return verified
 
+    def add_learning_evidence(self, learning_id, evidence, expected_version=None, actor="system"):
+        current = self.get_learning(learning_id)
+        if current is None:
+            raise NotFoundError(learning_id)
+        clean = validate_learning_event({"evidence": evidence}, partial=True)
+        incoming = clean["evidence"]
+        existing = list(current.get("evidence") or [])
+        merged = existing + [item for item in incoming if item not in existing]
+        if not incoming:
+            raise ValidationError("evidence requerida")
+        if expected_version is None:
+            expected_version = current["version"]
+        return self.update_learning(learning_id, {"evidence": merged},
+                                     expected_version=expected_version, actor=actor)
+
     def update_learning_status(self, learning_id, status, expected_version=None, actor="system"):
         current = self.get_learning(learning_id)
         if current is None:
@@ -309,6 +324,8 @@ class PersistenceService:
         }
         if next_status != current_status and next_status not in transitions.get(current_status, set()):
             raise ValidationError(f"transicion de learning no permitida: {current_status} -> {next_status}")
+        if next_status in ("verified", "consolidated") and not (current.get("evidence") or []):
+            raise ValidationError("no se puede verificar/consolidar un aprendizaje sin evidencia")
         if expected_version is None:
             expected_version = current["version"]
         if current.get("status") == clean["status"]:
