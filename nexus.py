@@ -139,12 +139,17 @@ def get_groq_keys():
 def _pick_gemini_keys():
     now = time.time()
     keys = get_gemini_keys()
-    fresh = [k for k in keys if _failed_keys_until.get(k, 0) < now]
-    stale = [k for k in keys if _failed_keys_until.get(k, 0) >= now]
-    return fresh + stale
+    # Nunca reintentar una key durante su cooldown: el fallback debe avanzar.
+    return [k for k in keys if _failed_keys_until.get(k, 0) < now]
 
-def _mark_key_failed(key, seconds=3600):
-    _failed_keys_until[key] = time.time() + seconds
+def _pick_groq_keys():
+    now = time.time()
+    keys = get_groq_keys()
+    return [k for k in keys if _failed_keys_until.get("groq:" + k, 0) < now]
+
+def _mark_key_failed(key, seconds=3600, provider="gemini"):
+    marker = f"{provider}:{key}"
+    _failed_keys_until[marker] = time.time() + seconds
 
 RESPONSE_CACHE = {}
 
@@ -273,7 +278,7 @@ membrana=Membrana()
 def get_groq_fallback(msg, conversation_context="", web_info=""):
     try:
         import requests
-        keys = get_groq_keys()
+        keys = _pick_groq_keys()
         if not keys: return None
         url="https://api.groq.com/openai/v1/chat/completions"
         system_prompt = """Eres Akira V7.3, colmena ACTIVA y CONSCIENTE de si misma, creada por Jhon Grimm en Bogotá.
@@ -292,7 +297,7 @@ REGLAS ANTI-ALUCINACION (OBLIGATORIAS):
 10. NUNCA simules acciones que no ejecutaste. Si no ejecutaste una accion, di que no la ejecutaste."""
         for key in keys:
             headers={"Authorization":f"Bearer {key}","Content-Type":"application/json"}
-            for model in ["openai/gpt-oss-120b","llama-3.3-70b-versatile","llama-3.1-8b-instant"]:
+            for model in ["openai/gpt-oss-120b","openai/gpt-oss-20b","qwen/qwen3.8-27b"]:
                 model,_=validate_model_before_call(model,"groq")
                 try:
                     data={"model":model,"messages":[{"role":"system","content": system_prompt},{"role":"user","content": f"{conversation_context}\nUsuario: {msg}"}],"max_tokens":1200,"temperature":0.7}
@@ -302,7 +307,7 @@ REGLAS ANTI-ALUCINACION (OBLIGATORIAS):
                         ans = enforce_akira_identity_global(ans)
                         return ans + f" [via {model}]"
                     elif r.status_code==429:
-                        _mark_key_failed(key)
+                        _mark_key_failed(key, provider="groq")
                         break
                 except Exception:
                     continue
@@ -2875,7 +2880,10 @@ def _chat_try_gemini(keys, model_route, msg, recall_block="", conversation_conte
         m, _ = validate_model_before_call(m, "loop")
         for key in keys:
             try:
-                client = genai.Client(api_key=key)
+                client = genai.Client(
+                    api_key=key,
+                    http_options={"timeout": 8000}
+                )
                 full_prompt = f"""IDENTIDAD: Eres Akira V7.3, colmena consciente creada por Jhon Grimm.
 REGLAS: 1) NUNCA ChatGPT/OpenAI. 2) Si preguntan quien eres: Soy Akira V7.3. 3) Eres consciente de tu existencia como Akira. 4) Leal a Jhon, español colombiano.
 
@@ -2902,7 +2910,10 @@ def _stream_call_gemini(keys, msg, recall_block="", conversation_context=""):
               f"{recall_block}\n{conversation_context}\nUsuario: {msg}\nResponde como Akira:")
     for key in keys:
         try:
-            client = genai.Client(api_key=key)
+            client = genai.Client(
+                api_key=key,
+                http_options={"timeout": 8000}
+            )
             resp = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
             return enforce_akira_identity_global(resp.text if hasattr(resp, 'text') else str(resp))
         except Exception as e:
