@@ -518,6 +518,47 @@ def _validate_mission_plan(plan, service):
                 return False, f"step_{i}_receives_unknown:{receives}"
     return True, None
 
+def _groq_mission_plan(prompt):
+    """Dedicated Groq caller for mission planning; never uses the chat identity wrapper."""
+    try:
+        import requests
+        keys = get_groq_keys()
+        if not keys:
+            return None
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        system_prompt = (
+            "Eres un planificador de misiones. "
+            "Responde exclusivamente con un objeto JSON valido que cumpla exactamente "
+            "el formato solicitado por el usuario. No agregues identidad, saludo, markdown "
+            "ni texto fuera del JSON."
+        )
+        for key in keys:
+            headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+            for model_name in ["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"]:
+                model, _ = validate_model_before_call(model_name, "groq")
+                try:
+                    data = {
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": prompt},
+                        ],
+                        "max_tokens": 1600,
+                        "temperature": 0.1,
+                        "response_format": {"type": "json_object"},
+                    }
+                    resp = requests.post(url, json=data, headers=headers, timeout=20)
+                    if resp.status_code == 200:
+                        return resp.json()["choices"][0]["message"]["content"]
+                    if resp.status_code == 429:
+                        _mark_key_failed(key)
+                        break
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return None
+
 def _plan_mission_with_llm(objective, service, actor):
     prompt = _build_mission_plan_prompt(objective, service)
     answer = None
@@ -533,12 +574,12 @@ def _plan_mission_with_llm(objective, service, actor):
             print(f"[mission] Gemini fallo: {type(e).__name__}: {str(e)[:200]}")
     if not answer:
         try:
-            g = get_groq_fallback(prompt, "")
+            g = _groq_mission_plan(prompt)
             if g:
                 answer = g
                 model_used = "groq"
         except Exception as e:
-            print(f"[mission] Groq fallo: {type(e).__name__}: {str(e)[:200]}")
+            print(f"[mission] Groq planner fallo: {type(e).__name__}: {str(e)[:200]}")
     if not answer:
         return None, model_used, "no_llm_response"
     plan, err = _parse_llm_plan(answer)
