@@ -148,7 +148,7 @@ ENTITIES = {
         "table": "learning_events",
         "columns": (
             "id", "source", "event", "lesson", "knowledge_nodes", "relationships",
-            "confidence", "outcome", "status", "reuse_count", "last_reused_at",
+            "confidence", "outcome", "status", "evidence", "verified_at", "verified_by", "reuse_count", "last_reused_at",
             "schema_version", "idempotency_key",
         ),
         "json_columns": ("knowledge_nodes", "relationships"),
@@ -488,12 +488,34 @@ def validate_self_model(data, partial: bool = False) -> dict:
 
 _LEARNING_INPUT = {
     "source", "event", "lesson", "knowledge_nodes", "relationships",
-    "confidence", "outcome", "status", "reuse_count", "last_reused_at",
+    "confidence", "outcome", "status", "evidence", "verified_at", "verified_by", "reuse_count", "last_reused_at",
 }
 _LEARNING_UPDATABLE = {
     "source", "event", "lesson", "knowledge_nodes", "relationships",
-    "confidence", "outcome", "status", "reuse_count", "last_reused_at",
+    "confidence", "outcome", "status", "evidence", "verified_at", "verified_by", "reuse_count", "last_reused_at",
 }
+
+def _learning_evidence(value):
+    if not isinstance(value, list):
+        raise ValidationError("evidence debe ser una lista")
+    if len(value) > 20:
+        raise ValidationError("evidence admite maximo 20 elementos")
+    out = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValidationError("cada evidencia debe ser un objeto")
+        allowed = {"type", "title", "reference", "note"}
+        extra = sorted(set(item) - allowed)
+        if extra:
+            raise ValidationError(f"campos de evidencia no permitidos: {extra}")
+        typ = _str("evidence.type", item.get("type", "unknown"), 32)
+        title = _str("evidence.title", item.get("title", ""), 200)
+        reference = _str("evidence.reference", item.get("reference", ""), 500)
+        note = _str("evidence.note", item.get("note", ""), 1000)
+        if not title or not reference:
+            raise ValidationError("cada evidencia requiere title y reference")
+        out.append({"type": typ, "title": title, "reference": reference, "note": note})
+    return out
 
 def validate_learning_event(data, partial: bool = False) -> dict:
     if not isinstance(data, dict):
@@ -526,6 +548,12 @@ def validate_learning_event(data, partial: bool = False) -> dict:
         out["outcome"] = _choice("outcome", data.get("outcome", "unknown"), LEARNING_OUTCOMES)
     if "status" in data or not partial:
         out["status"] = _choice("status", data.get("status", "candidate"), LEARNING_STATUSES)
+    if "evidence" in data or not partial:
+        out["evidence"] = _learning_evidence(data.get("evidence", []))
+    if "verified_at" in data:
+        out["verified_at"] = _str("verified_at", data["verified_at"], 64)
+    if "verified_by" in data:
+        out["verified_by"] = _str("verified_by", data["verified_by"], 256)
     if "reuse_count" in data:
         out["reuse_count"] = _non_negative_int("reuse_count", data["reuse_count"])
     if "last_reused_at" in data:
