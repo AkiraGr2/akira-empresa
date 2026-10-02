@@ -1503,7 +1503,20 @@ def v8_learning_experience(request: Request, payload: dict):
     result = str(payload.get("result") or "").strip()[:2000]
     lesson = str(payload.get("lesson") or "").strip()[:3000]
     worked_raw = payload.get("worked")
-    worked = None if worked_raw is None else bool(worked_raw)
+    if isinstance(worked_raw, bool) or worked_raw is None:
+        worked = worked_raw
+    elif isinstance(worked_raw, str):
+        normalized_worked = worked_raw.strip().lower()
+        if normalized_worked in ("si", "sí", "yes", "true", "1"):
+            worked = True
+        elif normalized_worked in ("no", "false", "0"):
+            worked = False
+        elif normalized_worked in ("desconocido", "unknown", ""):
+            worked = None
+        else:
+            return JSONResponse({"ok": False, "reason": "invalid_worked"}, status_code=400)
+    else:
+        return JSONResponse({"ok": False, "reason": "invalid_worked"}, status_code=400)
     why = str(payload.get("why") or "").strip()[:2000]
     if not task or not lesson:
         return JSONResponse({"ok": False, "reason": "task_and_lesson_required"}, status_code=400)
