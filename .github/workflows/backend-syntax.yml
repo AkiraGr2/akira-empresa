@@ -1,0 +1,27 @@
+name: Backend syntax verification
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  python-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile backend Python
+        run: |
+          python -m py_compile nexus.py persistence/core.py persistence/service.py persistence/migrations.py
+
+      - name: Compile all Python modules
+        run: |
+          python -m compileall -q .
