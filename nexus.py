@@ -2404,12 +2404,13 @@ def _selftest_missions_run():
             return [{
                 "name": "graph_builder",
                 "status": "idle",
-                "allowed_tools": ["graph_create_node", "graph_create_edge"],
+                "allowed_tools": ["graph_create_node", "graph_create_edge", "graph_related"],
             }]
         def list_tools(self, limit=200):
             return [
                 {"name": "graph_create_node", "status": "available"},
                 {"name": "graph_create_edge", "status": "available"},
+                {"name": "graph_related", "status": "available"},
             ]
 
     _edge_validator_stub = _GraphEdgeValidationStub()
