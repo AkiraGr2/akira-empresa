@@ -2874,6 +2874,30 @@ def _format_conversation_context(service, conversation_id, current_msg, limit=20
     return "[HISTORIAL REAL DE ESTA CONVERSACION]\n" + "\n".join(parts) + "\n[FIN HISTORIAL]\n"
 
 
+def _gemini_error_code(error):
+    """Extrae el codigo HTTP/API sin exponer la key en logs."""
+    code = getattr(error, "code", None)
+    if code is None:
+        response = getattr(error, "response", None)
+        code = getattr(response, "status_code", None) if response is not None else None
+    try:
+        return int(code) if code is not None else None
+    except Exception:
+        return None
+
+
+def _log_gemini_error(context, model, key, error):
+    """Diagnostico seguro: nunca imprime la API key."""
+    code = _gemini_error_code(error)
+    err_type = type(error).__name__
+    msg = str(error).replace("\n", " ")[:300]
+    print(f"[gemini] fallo context={context} model={model} type={err_type} code={code} detail={msg}")
+    # 401/402/403/429 indican problemas de credencial/cuota/autorizacion y no conviene
+    # martillar la misma key durante cada intento de modelo.
+    if code in (401, 402, 403, 429):
+        _mark_key_failed(key)
+
+
 def _chat_try_gemini(keys, model_route, msg, recall_block="", conversation_context=""):
     from google import genai
     for m in [model_route, "gemini-3.8-flash", "gemini-flash-latest"]:
@@ -2897,9 +2921,7 @@ Responde como Akira:"""
                 if ans and len(ans) > 5:
                     return {"response": ans, "model": m, "membrana": membrana.count()}
             except Exception as e:
-                err_str = str(e).lower()
-                if "429" in err_str or "resource_exhausted" in err_str or "quota" in err_str:
-                    _mark_key_failed(key)
+                _log_gemini_error("chat", m, key, e)
                 continue
     return None
 
@@ -2917,9 +2939,7 @@ def _stream_call_gemini(keys, msg, recall_block="", conversation_context=""):
             resp = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
             return enforce_akira_identity_global(resp.text if hasattr(resp, 'text') else str(resp))
         except Exception as e:
-            err_str = str(e).lower()
-            if "429" in err_str or "resource_exhausted" in err_str or "quota" in err_str:
-                _mark_key_failed(key)
+            _log_gemini_error("stream", "gemini-3.8-flash", key, e)
             continue
     raise RuntimeError("Todas las keys Gemini agotadas")
 
