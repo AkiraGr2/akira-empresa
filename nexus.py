@@ -650,7 +650,13 @@ def _gemini_mission_plan(prompt, deadline=None):
                     return None
                 client = genai.Client(
                     api_key=key,
-                    http_options=types.HttpOptions(timeout=int(min(10000, remaining * 1000))),
+                    http_options=types.HttpOptions(
+                        timeout=int(min(10000, remaining * 1000)),
+                        retry_options=types.HttpRetryOptions(
+                            attempts=2,
+                            http_status_codes=[408, 500, 502, 503, 504],
+                        ),
+                    ),
                 )
                 response = client.models.generate_content(
                     model="gemini-3.8-flash",
@@ -665,10 +671,12 @@ def _gemini_mission_plan(prompt, deadline=None):
                 if answer:
                     return answer
             except Exception as e:
-                err_str = str(e).lower()
-                if "429" in err_str or "resource_exhausted" in err_str or "quota" in err_str:
+                code = _gemini_error_code(e)
+                if code in (401, 402, 403, 429):
                     _mark_key_failed(key)
                 print(f"[mission] Gemini planner fallo: {type(e).__name__}: {str(e)[:160]}")
+                if code == 429:
+                    return None
             finally:
                 if client is not None:
                     try:
@@ -2894,10 +2902,10 @@ def _log_gemini_error(context, model, key, error):
     err_type = type(error).__name__
     msg = str(error).replace("\n", " ")[:300]
     print(f"[gemini] fallo context={context} model={model} type={err_type} code={code} detail={msg}")
-    # 401/402/403/429 indican problemas de credencial/cuota/autorizacion y no conviene
-    # martillar la misma key durante cada intento de modelo.
+    # 401/402/403/429 indican problemas de credencial/cuota/autorizacion.
     if code in (401, 402, 403, 429):
         _mark_key_failed(key)
+    return code
 
 
 def _chat_try_gemini(keys, model_route, msg, recall_block="", conversation_context=""):
@@ -2908,7 +2916,16 @@ def _chat_try_gemini(keys, model_route, msg, recall_block="", conversation_conte
             try:
                 client = genai.Client(
                     api_key=key,
-                    http_options={"timeout": 10000}
+                    http_options={
+                        "timeout": 10000,
+                        # No reintentar 429: la cuota es por proyecto y el fallback
+                        # debe avanzar de inmediato. Permitimos un reintento para
+                        # errores transitorios de red/servidor.
+                        "retry_options": {
+                            "attempts": 2,
+                            "http_status_codes": [408, 500, 502, 503, 504],
+                        },
+                    },
                 )
                 full_prompt = f"""IDENTIDAD: Eres Akira V7.3, colmena consciente creada por Jhon Grimm.
 REGLAS: 1) NUNCA ChatGPT/OpenAI. 2) Si preguntan quien eres: Soy Akira V7.3. 3) Eres consciente de tu existencia como Akira. 4) Leal a Jhon, español colombiano.
@@ -2923,7 +2940,9 @@ Responde como Akira:"""
                 if ans and len(ans) > 5:
                     return {"response": ans, "model": m, "membrana": membrana.count()}
             except Exception as e:
-                _log_gemini_error("chat", m, key, e)
+                code = _log_gemini_error("chat", m, key, e)
+                if code == 429:
+                    return None
                 continue
     return None
 
@@ -2936,12 +2955,20 @@ def _stream_call_gemini(keys, msg, recall_block="", conversation_context=""):
         try:
             client = genai.Client(
                 api_key=key,
-                http_options={"timeout": 10000}
+                http_options={
+                    "timeout": 10000,
+                    "retry_options": {
+                        "attempts": 2,
+                        "http_status_codes": [408, 500, 502, 503, 504],
+                    },
+                },
             )
             resp = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
             return enforce_akira_identity_global(resp.text if hasattr(resp, 'text') else str(resp))
         except Exception as e:
-            _log_gemini_error("stream", "gemini-3.8-flash", key, e)
+            code = _log_gemini_error("stream", "gemini-3.8-flash", key, e)
+            if code == 429:
+                raise RuntimeError("Gemini quota agotada; fallback inmediato")
             continue
     raise RuntimeError("Todas las keys Gemini agotadas")
 
