@@ -405,4 +405,11 @@ MIGRATIONS = [
         CREATE INDEX learning_events_verified_idx ON learning_events (verified_at DESC)
         """,
     ),
+    (
+        "015_learning_verification_analysis",
+        """
+        ALTER TABLE learning_events ADD COLUMN verification_analysis JSONB NOT NULL DEFAULT '{}'::jsonb;
+        CREATE INDEX learning_events_verification_analysis_idx ON learning_events ((verification_analysis->>'verdict'))
+        """,
+    ),
 ]
