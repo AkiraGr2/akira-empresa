@@ -1032,6 +1032,37 @@ def _fail_running_tasks_of_mission(service, mission_id, reason):
             except Exception: pass
     except Exception: pass
 
+def _autonomous_learning_sanitize(value, depth=0):
+    """Remove common secret-bearing fields before mission outputs reach the learning model."""
+    if depth > 5:
+        return "[TRUNCATED]"
+    if isinstance(value, dict):
+        sensitive = {"token", "access_token", "refresh_token", "api_key", "apikey",
+                     "secret", "password", "authorization", "cookie", "set-cookie"}
+        out = {}
+        for key, val in value.items():
+            key_low = str(key).strip().lower().replace("-", "_")
+            if key_low in sensitive or any(part in key_low for part in ("api_key", "access_token", "refresh_token")):
+                out[str(key)] = "[REDACTED]"
+            else:
+                out[str(key)] = _autonomous_learning_sanitize(val, depth + 1)
+        return out
+    if isinstance(value, list):
+        return [_autonomous_learning_sanitize(item, depth + 1) for item in value[:50]]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
+def _autonomous_learning_output_excerpt(outputs, max_chars=1800):
+    try:
+        clean = _autonomous_learning_sanitize(outputs)
+        raw = json.dumps(clean, ensure_ascii=False, default=str)
+        return raw[:max(200, int(max_chars))]
+    except Exception:
+        return "[output_unavailable]"
+
+
 def _capture_autonomous_mission_learning(service, mission_id, actor, outcome, mission_result):
     """Extract a supervised learning candidate from a real mission outcome."""
     try:
@@ -1254,7 +1285,11 @@ def _run_mission_sync(mission_id, actor):
                      "db_ms": db_ms,
                      "total_db_ms": total_db_ms,
                      "total_tool_ms": total_tool_ms,
-                     "completed_steps": step_reports},
+                     "completed_steps": step_reports,
+                     "step_output_excerpts": {
+                         str(k): _autonomous_learning_output_excerpt(v)
+                         for k, v in outputs_by_order.items()
+                     }},
                 )
                 return
 
@@ -1321,6 +1356,10 @@ def _run_mission_sync(mission_id, actor):
                 {
                     "steps_executed": len(step_reports),
                     "steps": step_reports,
+                    "step_output_excerpts": {
+                        str(k): _autonomous_learning_output_excerpt(v)
+                        for k, v in outputs_by_order.items()
+                    },
                     "task_ids": task_ids,
                     "timing": {
                         "total_elapsed_ms": total_elapsed_ms,
