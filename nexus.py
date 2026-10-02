@@ -2334,6 +2334,35 @@ def _selftest_missions_run():
     except Exception as e:
         add("coherent_detects_missing", "FAIL", {"error": str(e)[:200]})
 
+    class _OrphanCleanupStub:
+        def __init__(self):
+            self.failed = []
+        def list_missions(self, status=None, limit=100, **kwargs):
+            if status == "running":
+                return [{"id": "mission_orphan_test"}]
+            return []
+        def cancel_mission(self, *args, **kwargs):
+            raise AssertionError("cancel_mission no debe usarse para running")
+        def fail_mission(self, mission_id, error, actor=None):
+            self.failed.append({"id": mission_id, "error": error, "actor": actor})
+
+    try:
+        orphan_stub = _OrphanCleanupStub()
+        _cleanup_orphan_missions(orphan_stub)
+        cleaned = [
+            item for item in orphan_stub.failed
+            if item["id"] == "mission_orphan_test"
+            and isinstance(item.get("error"), dict)
+            and item["error"].get("type") == "backend_restart_orphan"
+        ]
+        add(
+            "startup_running_orphan_cleanup",
+            "PASS" if len(cleaned) == 1 else "FAIL",
+            {"failed_records": orphan_stub.failed},
+        )
+    except Exception as e:
+        add("startup_running_orphan_cleanup", "FAIL", {"error": str(e)[:200]})
+
     service = _persistence_service()
     if service is None:
         add("db_passive_read", "N/A", {"reason": "persistence_not_ready"})
