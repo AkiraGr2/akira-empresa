@@ -2475,6 +2475,28 @@ def v8_graph_overview(request: Request, limit_nodes: int = 500, limit_edges: int
     try:
         nodes = service.list_graph_nodes(limit=limit_nodes)
         edges = service.list_graph_edges(limit=limit_edges)
+
+        # The Brain is centered on Akira. The normal edge list is weight-sorted
+        # and capped, so low-weight but real core links can fall outside the
+        # top-N window. Fetch the active edges touching the core separately and
+        # merge them into the response without inventing any relationship.
+        core_node = next(
+            (n for n in nodes if str(n.get("label") or "").strip().lower() == "akira"),
+            None,
+        )
+        if core_node:
+            core_edges = service.related_nodes(
+                core_node.get("id"),
+                direction="both",
+                limit=5000,
+            )
+            seen_edge_ids = {str(e.get("id")) for e in edges if e.get("id") is not None}
+            for e in core_edges:
+                eid = e.get("id")
+                if eid is None or str(eid) not in seen_edge_ids:
+                    edges.append(e)
+                    if eid is not None:
+                        seen_edge_ids.add(str(eid))
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
     compact_nodes = []
