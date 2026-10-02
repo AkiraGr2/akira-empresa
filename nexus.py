@@ -41,6 +41,8 @@ _mission_llm_daily_count = {"date": None, "count": 0}
 
 _mission_active_count = 0
 _mission_active_lock = threading.Lock()
+# Evita que dos requests ejecuten la misma mision en paralelo dentro del proceso.
+_mission_execution_ids = set()
 _mission_cancelled_ids = set()
 _mission_cancelled_lock = threading.Lock()
 
@@ -569,11 +571,22 @@ def _validate_mission_plan(plan, service):
         expected = step.get("expected_output")
         if not isinstance(expected, str) or not (5 <= len(expected.strip()) <= 500):
             return False, f"step_{i}_bad_expected_output"
+
+    expected_orders = set(range(1, len(steps) + 1))
+    if orders_seen != expected_orders:
+        return False, f"orders_must_be_1_to_N:{sorted(orders_seen)}"
+
+    # Las dependencias se validan contra TODO el plan, no contra el orden
+    # accidental de la lista JSON. El ejecutor las corre en orden numerico.
+    for i, step in enumerate(steps):
+        order = step["order"]
         receives = step.get("receives_from")
         if receives is not None:
             if isinstance(receives, str):
-                try: receives = int(receives)
-                except Exception: return False, f"step_{i}_receives_not_int"
+                try:
+                    receives = int(receives)
+                except Exception:
+                    return False, f"step_{i}_receives_not_int"
             if isinstance(receives, bool) or not isinstance(receives, int):
                 return False, f"step_{i}_receives_not_int"
             if receives >= order:
@@ -1091,7 +1104,8 @@ def _run_mission_sync(mission_id, actor):
         _set_mission_runtime(mission_id, "orchestrator_finished")
         _clear_mission_cancelled(mission_id)
         with _mission_active_lock:
-            _mission_active_count -= 1
+            _mission_execution_ids.discard(mission_id)
+            _mission_active_count = max(0, _mission_active_count - 1)
 
 @app.on_event("startup")
 async def _on_startup():
@@ -2182,6 +2196,45 @@ def _selftest_missions_run():
     except Exception as e:
         add("percent_partial", "FAIL", {"error": str(e)[:200]})
 
+    class _MissionValidationStub:
+        def list_agents(self, limit=200):
+            return [{"name": "researcher", "status": "idle", "allowed_tools": ["web_search"]}]
+        def list_tools(self, limit=200):
+            return [{"name": "web_search", "status": "available"}]
+
+    _validator_stub = _MissionValidationStub()
+    _valid_step = lambda order, receives=None: {
+        "order": order, "task": f"tarea de prueba {order}",
+        "agent": "researcher", "tool": "web_search",
+        "expected_output": "resultado esperado valido", "receives_from": receives,
+    }
+    _ordered_plan = {"steps": [_valid_step(1), _valid_step(2, 1)]}
+    _shuffled_plan = {"steps": [_valid_step(2, 1), _valid_step(1)]}
+    _missing_dependency_plan = {"steps": [_valid_step(1), _valid_step(2, 3)]}
+    _gap_plan = {"steps": [_valid_step(1), _valid_step(3)]}
+    try:
+        ok, reason = _validate_mission_plan(_ordered_plan, _validator_stub)
+        add("plan_validation_ordered", "PASS" if ok else "FAIL", {"reason": reason})
+    except Exception as e:
+        add("plan_validation_ordered", "FAIL", {"error": str(e)[:200]})
+    try:
+        ok, reason = _validate_mission_plan(_shuffled_plan, _validator_stub)
+        add("plan_validation_shuffled_dependency", "PASS" if ok else "FAIL", {"reason": reason})
+    except Exception as e:
+        add("plan_validation_shuffled_dependency", "FAIL", {"error": str(e)[:200]})
+    try:
+        ok, reason = _validate_mission_plan(_missing_dependency_plan, _validator_stub)
+        add("plan_validation_missing_dependency", "PASS" if (not ok and "receives_unknown" in str(reason)) else "FAIL",
+            {"reason": reason})
+    except Exception as e:
+        add("plan_validation_missing_dependency", "FAIL", {"error": str(e)[:200]})
+    try:
+        ok, reason = _validate_mission_plan(_gap_plan, _validator_stub)
+        add("plan_validation_order_gap", "PASS" if (not ok and "orders_must_be_1_to_N" in str(reason)) else "FAIL",
+            {"reason": reason})
+    except Exception as e:
+        add("plan_validation_order_gap", "FAIL", {"error": str(e)[:200]})
+
     try:
         ok = _check_progress_coherent(8, {"completed": 8}, 8)
         add("coherent_all_completed", "PASS" if ok else "FAIL", {})
@@ -2468,10 +2521,14 @@ async def v8_execute_mission(request: Request, mission_id: str):
     global _mission_active_count
     _set_mission_runtime(mission_id, "execute_requested", actor=s["email"])
     with _mission_active_lock:
+        if mission_id in _mission_execution_ids:
+            return JSONResponse({"ok": False, "reason": "mission_already_running",
+                                 "mission_id": mission_id}, status_code=409)
         if _mission_active_count >= MAX_MISSION_CONCURRENT:
             return JSONResponse({"ok": False, "reason": "too_many_running",
                                  "current": _mission_active_count,
                                  "max": MAX_MISSION_CONCURRENT}, status_code=429)
+        _mission_execution_ids.add(mission_id)
         _mission_active_count += 1
 
     try:
@@ -2485,6 +2542,7 @@ async def v8_execute_mission(request: Request, mission_id: str):
         )
     except Exception as e:
         with _mission_active_lock:
+            _mission_execution_ids.discard(mission_id)
             _mission_active_count = max(0, _mission_active_count - 1)
         _set_mission_runtime(mission_id, "orchestrator_schedule_failed",
                               error_type=type(e).__name__, error=str(e)[:300])
