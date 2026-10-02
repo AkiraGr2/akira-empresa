@@ -1514,6 +1514,34 @@ def v8_learning_teach(request: Request, payload: dict):
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
 
+@app.post("/api/v8/learning/{learning_id}/evidence")
+def v8_learning_evidence_add(request: Request, learning_id: str, payload: dict):
+    s = get_session(request)
+    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    if not s.get("is_owner"): return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
+    service = _persistence_service()
+    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    from persistence.core import ConflictError, NotFoundError, PersistenceError, ValidationError
+    payload = payload if isinstance(payload, dict) else {}
+    evidence = payload.get("evidence")
+    if isinstance(evidence, dict):
+        evidence = [evidence]
+    try:
+        rec = service.add_learning_evidence(
+            learning_id, evidence, payload.get("expected_version"), actor=s["email"]
+        )
+    except NotFoundError:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    except ConflictError:
+        return JSONResponse({"ok": False, "reason": "conflict"}, status_code=409)
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+    return {"ok": True, "learning": rec}
+
 @app.patch("/api/v8/learning/{learning_id}/status")
 def v8_learning_status_update(request: Request, learning_id: str, payload: dict):
     s = get_session(request)
