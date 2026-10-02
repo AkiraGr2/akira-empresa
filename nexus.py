@@ -2035,6 +2035,27 @@ def v8_mission_diagnose(request: Request, mission_id: str):
     def add(name, ok, detail):
         checks.append({"name": name, "status": "PASS" if ok else "FAIL", "detail": detail})
 
+    # Preserve the original failure cause for missions that failed before a plan/tasks existed.
+    # The generic consistency checks below cannot explain planning failures by themselves.
+    mission_result = m.get("result") if isinstance(m.get("result"), dict) else {}
+    mission_error = mission_result.get("error") if isinstance(mission_result, dict) else None
+    if m.get("status") == "failed" and isinstance(mission_error, dict):
+        error_type = mission_error.get("type")
+        if error_type == "plan_failed":
+            add("planning_failure", False, {
+                "type": error_type,
+                "reason": mission_error.get("reason"),
+                "model": mission_error.get("model"),
+                "message": mission_error.get("message"),
+            })
+        else:
+            add("failure_recorded", True, {
+                "type": error_type,
+                "reason": mission_error.get("reason"),
+                "model": mission_error.get("model"),
+                "message": mission_error.get("message"),
+            })
+
     by_status = {}
     for t in tasks:
         st = t.get("status") or "unknown"
