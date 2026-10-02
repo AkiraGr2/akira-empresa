@@ -12,7 +12,7 @@ from __future__ import annotations
 import uuid
 
 from .core import (ConflictError, PersistenceError, ValidationError, new_id,
-                   validate_memory)
+                   validate_memory, validate_learning_event)
 
 PROBE_KEY = "selftest:restart-probe:v1"
 PROBE_CONTENT = "AKIRA selftest restart probe v1: si puedes leer esto tras un reinicio, la persistencia funciona."
@@ -289,6 +289,29 @@ def run_logic_tests(service, fresh_service_factory=None):
         ok = a2.get("status") == "idle" and a2.get("current_task_id") is None
         return _res(name, ok, "idle -> busy -> idle correcto" if ok else f"estado final: {a2.get('status')}")
 
+    def t_learning_state_contract():
+        name = "TEST_LEARNING_STATE_CONTRACT"
+        valid = validate_learning_event({
+            "source": "selftest",
+            "event": "explicit teaching",
+            "lesson": "learning state contract",
+            "status": "candidate",
+            "confidence": 0.9,
+            "outcome": "unknown",
+        })
+        invalid = False
+        try:
+            validate_learning_event({
+                "source": "selftest",
+                "event": "bad",
+                "lesson": "bad",
+                "status": "not_a_learning_state",
+            })
+        except ValidationError:
+            invalid = True
+        ok = valid["status"] == "candidate" and invalid
+        return _res(name, ok, "candidate valido y estados desconocidos rechazados" if ok else "fallo del contrato de estados")
+
     for name, fn in (
         ("TEST_MEMORY_PERSISTENCE (reinicio suave)", t_memory_persistence),
         ("TEST_IDEMPOTENT_SYNC", t_idempotent),
@@ -301,6 +324,7 @@ def run_logic_tests(service, fresh_service_factory=None):
         ("TEST_AGENT_TASK_VALIDATION", t_agent_task_validation),
         ("TEST_AGENT_TASK_MISSION_FILTER", t_agent_task_mission_filter),
         ("TEST_AGENT_STATE_TRANSITION", t_agent_state_transition),
+        ("TEST_LEARNING_STATE_CONTRACT", t_learning_state_contract),
     ):
         results.append(_guard(name, fn))
 
