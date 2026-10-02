@@ -330,12 +330,19 @@ class PersistenceService:
             expected_version = current["version"]
         if current.get("status") == clean["status"]:
             return current
+        status_changes = dict(clean)
+        if next_status in ("verified", "consolidated"):
+            status_changes["verified_at"] = _now_iso()
+            status_changes["verified_by"] = actor
+        elif next_status in ("conflicted", "obsolete", "discarded"):
+            status_changes["verified_at"] = None
+            status_changes["verified_by"] = None
         try:
             with self.repo.transaction() as tx:
-                updated = tx.update("learning_events", learning_id, clean, expected_version)
+                updated = tx.update("learning_events", learning_id, status_changes, expected_version)
                 tx.append_audit({"actor": actor, "action": "learning.status.update",
                     "resource": "learning_events", "resource_id": learning_id, "status": "success",
-                    "detail": {"status": clean["status"], "new_version": updated["version"]}})
+                    "detail": {"status": status_changes["status"], "new_version": updated["version"]}})
         except PersistenceError:
             raise
         except Exception as e:
