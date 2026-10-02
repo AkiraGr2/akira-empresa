@@ -3042,6 +3042,75 @@ def v8_learning_selftest(request: Request):
             add("selftest_cleanup", False, {"error_type": type(e).__name__})
     except Exception as e:
         add("learning_e2e_contract", False, {"error_type": type(e).__name__, "message": str(e)[:200]})
+    # Contrato autónomo: una experiencia propia nace como candidate y no genera
+    # memoria semántica recuperable hasta que pase por evidencia/verificación.
+    auto_marker = "SELFTEST_AUTONOMOUS_" + uuid.uuid4().hex[:12]
+    auto_id = None
+    try:
+        auto_created = service.save_learning({
+            "source": "autonomous_experience",
+            "event": auto_marker,
+            "lesson": "SELFTEST: experiencia autónoma sintetizada; no debe tratarse como verdad todavía.",
+            "knowledge_nodes": [],
+            "relationships": [],
+            "confidence": 0.55,
+            "outcome": "failure",
+            "status": "candidate",
+            "evidence": [],
+        }, actor=s["email"], idempotency_key="learning_selftest:auto:" + auto_marker)
+        auto_id = auto_created["record"]["id"]
+        add(
+            "autonomous_candidate_created",
+            auto_created.get("record", {}).get("status") == "candidate"
+            and auto_created.get("record", {}).get("source") == "autonomous_experience",
+            {"id": auto_id},
+        )
+        auto_mem = service.search_memory({
+            "source": "learning_candidate",
+            "source_id": auto_id,
+        }, limit=10)
+        add(
+            "autonomous_candidate_has_no_memory",
+            len(auto_mem) == 0,
+            {"memory_count": len(auto_mem)},
+        )
+        recalled = _recall_memories(
+            service,
+            "SELFTEST experiencia autónoma sintetizada " + auto_marker,
+            limit=5,
+        )
+        add(
+            "autonomous_candidate_not_recalled",
+            len(recalled) == 0,
+            {"recalled_count": len(recalled)},
+        )
+        cleaned = service.update_learning_status(
+            auto_id, "discarded",
+            expected_version=auto_created["record"]["version"],
+            actor=s["email"],
+        )
+        add(
+            "autonomous_candidate_cleanup",
+            cleaned.get("status") == "discarded",
+            {"status": cleaned.get("status")},
+        )
+    except Exception as e:
+        add("autonomous_learning_contract", False, {
+            "error_type": type(e).__name__,
+            "message": str(e)[:200],
+        })
+        if auto_id:
+            try:
+                current_auto = service.get_learning(auto_id)
+                if current_auto and current_auto.get("status") == "candidate":
+                    service.update_learning_status(
+                        auto_id, "discarded",
+                        expected_version=current_auto["version"],
+                        actor=s["email"],
+                    )
+            except Exception:
+                pass
+
     return {"ok": all(t["status"] == "PASS" for t in tests), "tests": tests, "synthetic_only": True}
 
 @app.get("/api/v8/missions/selftest")
