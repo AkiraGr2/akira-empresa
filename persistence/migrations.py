@@ -389,4 +389,11 @@ MIGRATIONS = [
         CREATE INDEX conversation_messages_role_idx ON conversation_messages (conversation_id, role, created_at ASC)
         """,
     ),
+    (
+        "013_learning_status",
+        """
+        ALTER TABLE learning_events ADD COLUMN status TEXT NOT NULL DEFAULT 'candidate' CHECK (status IN ('candidate','verified','consolidated','conflicted','obsolete','discarded'));
+        CREATE INDEX learning_events_status_idx ON learning_events (status, created_at DESC)
+        """,
+    ),
 ]
