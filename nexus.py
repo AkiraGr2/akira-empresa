@@ -773,20 +773,24 @@ def _cleanup_orphan_missions(service):
                 service.cancel_mission(m["id"], reason=f"backend_restart_orphan_{status}", actor="system")
             except Exception as e:
                 print(f"[mission-cleanup] {m.get('id')}: {type(e).__name__}: {str(e)[:120]}")
+    # Las misiones "running" dependen de un orquestador en memoria del proceso.
+    # Tras un restart/deploy ese hilo no existe en el nuevo proceso, por lo que
+    # dejar la mision en "running" seria un estado falso. Al arrancar, toda
+    # mision que siga "running" se marca como huerfana inmediatamente.
     try:
         running = service.list_missions(status="running", limit=100)
     except Exception:
         return
     for m in running:
-        started = m.get("started_at") or m.get("created_at")
-        if not started or started > cutoff_iso:
-            continue
         try:
             service.fail_mission(
                 m["id"],
-                {"type": "backend_restart_orphan",
-                 "message": f"mision running > {MISSION_ORPHAN_MAX_AGE_S}s sin actualizar"},
+                {
+                    "type": "backend_restart_orphan",
+                    "message": "mision running interrumpida por reinicio del backend; el orquestador anterior ya no existe",
+                },
                 actor="system")
+            print(f"[mission-cleanup-running] {m.get('id')}: marcada como fallida por reinicio del backend")
         except Exception as e:
             print(f"[mission-cleanup-running] {m.get('id')}: {type(e).__name__}: {str(e)[:120]}")
 
