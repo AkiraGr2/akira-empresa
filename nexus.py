@@ -3216,8 +3216,7 @@ def _extract_teaching_lesson(message):
 
 def _create_teaching_candidate(service, lesson, actor, source="explicit_user_teaching"):
     if service is None:
-        raise PersistenceError("persistence_not_ready")
-    from persistence.core import ValidationError
+        raise RuntimeError("persistence_not_ready")
     confidence = 0.8
     lr = service.save_learning({
         "source": source,
