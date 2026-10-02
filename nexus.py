@@ -1638,6 +1638,77 @@ def v8_learning_investigate(request: Request, learning_id: str, payload: dict):
         "requires_human_review": True
     }
 
+@app.post("/api/v8/learning/{learning_id}/evaluate")
+def v8_learning_evaluate(request: Request, learning_id: str, payload: dict):
+    s = get_session(request)
+    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    if not s.get("is_owner"): return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
+    service = _persistence_service()
+    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    from persistence.core import ConflictError, NotFoundError, PersistenceError, ValidationError
+    current = service.get_learning(learning_id)
+    if current is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    evidence = current.get("evidence") or []
+    if not evidence: return JSONResponse({"ok": False, "reason": "evidence_required"}, status_code=400)
+    prompt = """Evalua un candidato de conocimiento de Akira de forma estrictamente factual.
+Devuelve SOLO JSON valido con estas claves:
+{"verdict":"supported|mixed|contradicted|insufficient","confidence":0.0,
+"summary":"...","supporting_evidence":[0],"contradicting_evidence":[0],
+"gaps":["..."]}
+No inventes hechos ni fuentes. Los indices de evidence empiezan en 0.
+No conviertas una fuente debil en certeza. Si hay contradiccion o evidencia insuficiente, indicalo.
+
+CONOCIMIENTO ENSEÑADO:
+""" + str(current.get("lesson") or "") + """
+
+EVIDENCIA:
+""" + json.dumps(evidence, ensure_ascii=False) + """
+"""
+    try:
+        keys = _pick_gemini_keys()
+        if not keys: return JSONResponse({"ok": False, "reason": "gemini_unavailable"}, status_code=503)
+        from google import genai
+        result = None
+        for key in keys:
+            try:
+                client = genai.Client(api_key=key, http_options={"timeout": 15000})
+                resp = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
+                raw = getattr(resp, "text", "") or ""
+                start, end = raw.find("{"), raw.rfind("}")
+                if start >= 0 and end > start:
+                    result = json.loads(raw[start:end + 1])
+                    break
+            except Exception:
+                continue
+        if not isinstance(result, dict):
+            return JSONResponse({"ok": False, "reason": "evaluation_failed"}, status_code=503)
+        verdict = str(result.get("verdict") or "insufficient").strip().lower()
+        if verdict not in ("supported", "mixed", "contradicted", "insufficient"):
+            verdict = "insufficient"
+        try: confidence = max(0.0, min(1.0, float(result.get("confidence", 0.0))))
+        except Exception: confidence = 0.0
+        analysis = {
+            "verdict": verdict, "confidence": confidence,
+            "summary": str(result.get("summary") or "")[:2000],
+            "supporting_evidence": result.get("supporting_evidence") or [],
+            "contradicting_evidence": result.get("contradicting_evidence") or [],
+            "gaps": result.get("gaps") or [],
+            "evaluated_by": "gemini-3.8-flash",
+            "evaluated_at": _now_iso(),
+        }
+        rec = service.update_learning(learning_id, {"verification_analysis": analysis},
+                                     expected_version=current["version"], actor=s["email"])
+        return {"ok": True, "learning": rec, "analysis": analysis,
+                "recommended_status": "verified" if verdict == "supported" else ("conflicted" if verdict == "contradicted" else "candidate")}
+    except ConflictError:
+        return JSONResponse({"ok": False, "reason": "conflict"}, status_code=409)
+    except (ValidationError, NotFoundError) as e:
+        return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+
 @app.patch("/api/v8/learning/{learning_id}/status")
 def v8_learning_status_update(request: Request, learning_id: str, payload: dict):
     s = get_session(request)
