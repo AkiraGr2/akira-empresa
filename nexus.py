@@ -1066,6 +1066,27 @@ def _capture_autonomous_mission_learning(service, mission_id, actor, outcome, mi
         print(f"[learning] autonomous mission extraction failed: {type(e).__name__}: {str(e)[:200]}")
         return None
 
+
+def _fail_mission_with_autonomous_learning(service, mission_id, actor, failure_result):
+    """Persist a terminal mission failure, then extract one supervised learning candidate."""
+    persisted = False
+    try:
+        service.fail_mission(mission_id, failure_result, actor="orchestrator")
+        persisted = True
+    except Exception as e:
+        print(f"[learning] mission failure persistence failed: {type(e).__name__}: {str(e)[:200]}")
+    if not persisted:
+        return None
+    autonomous_learning = _capture_autonomous_mission_learning(
+        service, mission_id, actor, "failure", failure_result
+    )
+    _set_mission_runtime(
+        mission_id, "autonomous_learning_candidate",
+        learning_id=(autonomous_learning or {}).get("learning_id"),
+        outcome="failure",
+    )
+    return autonomous_learning
+
 def _run_mission_sync(mission_id, actor):
     global _mission_active_count
     _set_mission_runtime(mission_id, "orchestrator_entered", actor=actor)
@@ -1087,11 +1108,10 @@ def _run_mission_sync(mission_id, actor):
         plan = m.get("plan") or {}
         steps = plan.get("steps") or []
         if not isinstance(steps, list) or not steps:
-            try:
-                service.fail_mission(mission_id,
-                    {"type": "no_steps", "message": "plan sin pasos"},
-                    actor="orchestrator")
-            except Exception: pass
+            _fail_mission_with_autonomous_learning(
+                service, mission_id, actor,
+                {"type": "no_steps", "message": "plan sin pasos"},
+            )
             return
 
         def _order_key(s):
@@ -1116,22 +1136,20 @@ def _run_mission_sync(mission_id, actor):
                 tool=str(step.get("tool") or "").strip(),
             )
             if _is_mission_cancelled(mission_id):
-                try:
-                    service.fail_mission(mission_id,
-                        {"type": "cancelled_during_run", "message": "cancelada por usuario"},
-                        actor="orchestrator")
-                except Exception: pass
+                _fail_mission_with_autonomous_learning(
+                    service, mission_id, actor,
+                    {"type": "cancelled_during_run", "message": "cancelada por usuario"},
+                )
                 return
 
             elapsed_s = time.time() - mission_start
             if elapsed_s > MISSION_MAX_DURATION_S:
                 _fail_running_tasks_of_mission(service, mission_id, "mission_timeout")
-                try:
-                    service.fail_mission(mission_id,
-                        {"type": "mission_timeout", "elapsed_s": int(elapsed_s),
-                         "limit_s": MISSION_MAX_DURATION_S},
-                        actor="orchestrator")
-                except Exception: pass
+                _fail_mission_with_autonomous_learning(
+                    service, mission_id, actor,
+                    {"type": "mission_timeout", "elapsed_s": int(elapsed_s),
+                     "limit_s": MISSION_MAX_DURATION_S},
+                )
                 return
 
             order = _norm_order(step.get("order"))
@@ -1139,12 +1157,11 @@ def _run_mission_sync(mission_id, actor):
             tool_name = str(step.get("tool") or "").strip()
 
             if not agent_name or not tool_name:
-                try:
-                    service.fail_mission(mission_id,
-                        {"type": "bad_step", "step": order,
-                         "message": "agent o tool vacios"},
-                        actor="orchestrator")
-                except Exception: pass
+                _fail_mission_with_autonomous_learning(
+                    service, mission_id, actor,
+                    {"type": "bad_step", "step": order,
+                     "message": "agent o tool vacios"},
+                )
                 return
 
             inputs = _build_tool_inputs(tool_name, step, outputs_by_order, mission_id)
@@ -1153,13 +1170,12 @@ def _run_mission_sync(mission_id, actor):
                 step=order, tool=tool_name, inputs_ok=inputs is not None,
             )
             if inputs is None:
-                try:
-                    service.fail_mission(mission_id,
-                        {"type": "unsupported_tool_inputs", "step": order,
-                         "tool": tool_name,
-                         "message": "no se pueden derivar inputs para esta tool en 10.5"},
-                        actor="orchestrator")
-                except Exception: pass
+                _fail_mission_with_autonomous_learning(
+                    service, mission_id, actor,
+                    {"type": "unsupported_tool_inputs", "step": order,
+                     "tool": tool_name,
+                     "message": "no se pueden derivar inputs para esta tool en 10.5"},
+                )
                 return
 
             db_t0 = time.time()
@@ -1173,12 +1189,11 @@ def _run_mission_sync(mission_id, actor):
                 task_ids.append(task_id)
                 _set_mission_runtime(mission_id, "task_created", step=order, task_id=task_id)
             except Exception as e:
-                try:
-                    service.fail_mission(mission_id,
-                        {"type": "task_create_failed", "step": order,
-                         "error": str(e)[:300]},
-                        actor="orchestrator")
-                except Exception: pass
+                _fail_mission_with_autonomous_learning(
+                    service, mission_id, actor,
+                    {"type": "task_create_failed", "step": order,
+                     "error": str(e)[:300]},
+                )
                 return
 
             _set_mission_runtime(mission_id, "starting_task", step=order, task_id=task_id)
@@ -1186,12 +1201,11 @@ def _run_mission_sync(mission_id, actor):
                 service.start_task(task_id, actor="orchestrator")
                 _set_mission_runtime(mission_id, "task_started", step=order, task_id=task_id)
             except Exception as e:
-                try:
-                    service.fail_mission(mission_id,
-                        {"type": "task_start_failed", "step": order,
-                         "error": str(e)[:300]},
-                        actor="orchestrator")
-                except Exception: pass
+                _fail_mission_with_autonomous_learning(
+                    service, mission_id, actor,
+                    {"type": "task_start_failed", "step": order,
+                     "error": str(e)[:300]},
+                )
                 return
             db_ms = int((time.time() - db_t0) * 1000)
 
@@ -1232,30 +1246,16 @@ def _run_mission_sync(mission_id, actor):
                 except Exception: pass
                 total_db_ms += int((time.time() - db_t1) * 1000)
                 _fail_running_tasks_of_mission(service, mission_id, "prior_step_failed")
-                try:
-                    autonomous_learning = _capture_autonomous_mission_learning(
-                        service, mission_id, actor, "failure",
-                        {
-                            "failed_step": order,
-                            "agent": agent_name,
-                            "tool": tool_name,
-                            "error": error,
-                            "completed_steps": step_reports,
-                        },
-                    )
-                    _set_mission_runtime(
-                        mission_id, "autonomous_learning_candidate",
-                        learning_id=(autonomous_learning or {}).get("learning_id"),
-                    )
-                    service.fail_mission(mission_id,
-                        {"type": "step_failed", "step": order,
-                         "agent": agent_name, "tool": tool_name,
-                         "error": error, "duration_ms": duration_ms,
-                         "db_ms": db_ms,
-                         "total_db_ms": total_db_ms,
-                         "total_tool_ms": total_tool_ms},
-                        actor="orchestrator")
-                except Exception: pass
+                _fail_mission_with_autonomous_learning(
+                    service, mission_id, actor,
+                    {"type": "step_failed", "step": order,
+                     "agent": agent_name, "tool": tool_name,
+                     "error": error, "duration_ms": duration_ms,
+                     "db_ms": db_ms,
+                     "total_db_ms": total_db_ms,
+                     "total_tool_ms": total_tool_ms,
+                     "completed_steps": step_reports},
+                )
                 return
 
             _set_mission_runtime(
@@ -1274,14 +1274,11 @@ def _run_mission_sync(mission_id, actor):
                     error_type=type(e).__name__, error=str(e)[:200],
                 )
                 _fail_running_tasks_of_mission(service, mission_id, "task_completion_persist_failed")
-                try:
-                    service.fail_mission(
-                        mission_id,
-                        {"type": "task_completion_persist_failed", "step": order,
-                         "task_id": task_id, "error": str(e)[:300]},
-                        actor="orchestrator")
-                except Exception:
-                    pass
+                _fail_mission_with_autonomous_learning(
+                    service, mission_id, actor,
+                    {"type": "task_completion_persist_failed", "step": order,
+                     "task_id": task_id, "error": str(e)[:300]},
+                )
                 return
             total_db_ms += int((time.time() - db_t2) * 1000)
 
