@@ -586,7 +586,7 @@ def _groq_mission_plan(prompt, deadline=None):
     """Dedicated Groq caller for mission planning; never uses the chat identity wrapper."""
     try:
         import requests
-        keys = get_groq_keys()
+        keys = _pick_groq_keys()
         if not keys:
             return None
         url = "https://api.groq.com/openai/v1/chat/completions"
@@ -600,7 +600,7 @@ def _groq_mission_plan(prompt, deadline=None):
             if deadline is not None and time.monotonic() >= deadline:
                 break
             headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-            for model_name in ["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"]:
+            for model_name in ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"]:
                 if deadline is not None and time.monotonic() >= deadline:
                     break
                 model, _ = validate_model_before_call(model_name, "groq")
@@ -622,7 +622,7 @@ def _groq_mission_plan(prompt, deadline=None):
                     if resp.status_code == 200:
                         return resp.json()["choices"][0]["message"]["content"]
                     if resp.status_code == 429:
-                        _mark_key_failed(key)
+                        _mark_key_failed(key, provider="groq")
                         break
                 except Exception:
                     continue
