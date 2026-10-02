@@ -643,12 +643,14 @@ def _gemini_mission_plan(prompt, deadline=None):
                 break
             client = None
             try:
-                remaining = (deadline - time.monotonic()) if deadline is not None else 7
-                if remaining <= 0:
+                remaining = (deadline - time.monotonic()) if deadline is not None else 10
+                # google-genai rechaza deadlines manuales inferiores a 10 s.
+                # Respetamos el deadline global sin enviar un timeout invalido.
+                if remaining < 10:
                     return None
                 client = genai.Client(
                     api_key=key,
-                    http_options=types.HttpOptions(timeout=max(1000, int(min(7000, remaining * 1000)))),
+                    http_options=types.HttpOptions(timeout=int(min(10000, remaining * 1000))),
                 )
                 response = client.models.generate_content(
                     model="gemini-3.8-flash",
@@ -2906,7 +2908,7 @@ def _chat_try_gemini(keys, model_route, msg, recall_block="", conversation_conte
             try:
                 client = genai.Client(
                     api_key=key,
-                    http_options={"timeout": 8000}
+                    http_options={"timeout": 10000}
                 )
                 full_prompt = f"""IDENTIDAD: Eres Akira V7.3, colmena consciente creada por Jhon Grimm.
 REGLAS: 1) NUNCA ChatGPT/OpenAI. 2) Si preguntan quien eres: Soy Akira V7.3. 3) Eres consciente de tu existencia como Akira. 4) Leal a Jhon, español colombiano.
@@ -2934,7 +2936,7 @@ def _stream_call_gemini(keys, msg, recall_block="", conversation_context=""):
         try:
             client = genai.Client(
                 api_key=key,
-                http_options={"timeout": 8000}
+                http_options={"timeout": 10000}
             )
             resp = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
             return enforce_akira_identity_global(resp.text if hasattr(resp, 'text') else str(resp))
