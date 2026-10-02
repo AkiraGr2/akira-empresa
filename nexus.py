@@ -229,6 +229,57 @@ def apply_autonomous_patch_github():
         return {"applied": False, "reason": "No GITHUB_TOKEN"}
     return {"applied": False, "token_present": True, "repo": repo}
 
+def search_web_sources(q, max_results=5):
+    try:
+        import requests, urllib.parse
+        q_enc = urllib.parse.quote_plus(str(q or "")[:180])
+        url = f"https://api.duckduckgo.com/?q={q_enc}&format=json&pretty=1&no_html=1"
+        r = requests.get(url, timeout=8, headers={"User-Agent": "AKIRA V7.3"})
+        r.raise_for_status()
+        data = r.json() or {}
+        results = []
+        abstract = str(data.get("AbstractText") or "").strip()
+        abstract_url = str(data.get("AbstractURL") or "").strip()
+        heading = str(data.get("Heading") or "").strip()
+        if abstract and abstract_url:
+            results.append({
+                "title": heading or "DuckDuckGo abstract",
+                "reference": abstract_url,
+                "snippet": abstract[:1000],
+                "type": "web_search"
+            })
+
+        def walk(items):
+            if not isinstance(items, list):
+                return
+            for item in items:
+                if len(results) >= max_results:
+                    return
+                if not isinstance(item, dict):
+                    continue
+                if item.get("FirstURL") and item.get("Text"):
+                    results.append({
+                        "title": str(item.get("Text") or "")[:200],
+                        "reference": str(item.get("FirstURL") or "")[:500],
+                        "snippet": str(item.get("Text") or "")[:1000],
+                        "type": "web_search"
+                    })
+                walk(item.get("Topics"))
+
+        walk(data.get("RelatedTopics"))
+        deduped = []
+        seen = set()
+        for item in results:
+            ref = item.get("reference")
+            if not ref or ref in seen:
+                continue
+            seen.add(ref)
+            deduped.append(item)
+        return deduped[:max(1, min(int(max_results), 10))]
+    except Exception as e:
+        print(f"[web_verify] fallo: {type(e).__name__}")
+        return []
+
 def search_web(q, max_results=3):
     try:
         import requests, urllib.parse
@@ -1541,6 +1592,51 @@ def v8_learning_evidence_add(request: Request, learning_id: str, payload: dict):
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
     return {"ok": True, "learning": rec}
+
+@app.post("/api/v8/learning/{learning_id}/investigate")
+def v8_learning_investigate(request: Request, learning_id: str, payload: dict):
+    s = get_session(request)
+    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    if not s.get("is_owner"): return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
+    service = _persistence_service()
+    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    from persistence.core import ConflictError, NotFoundError, PersistenceError, ValidationError
+    current = service.get_learning(learning_id)
+    if current is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    payload = payload if isinstance(payload, dict) else {}
+    query = str(payload.get("query") or current.get("lesson") or "").strip()
+    if not query: return JSONResponse({"ok": False, "reason": "query_required"}, status_code=400)
+    try:
+        max_sources = max(1, min(int(payload.get("max_sources", 5)), 10))
+    except Exception:
+        max_sources = 5
+    sources = search_web_sources(query, max_results=max_sources)
+    evidence = []
+    for src in sources:
+        evidence.append({
+            "type": "web_search",
+            "title": src["title"],
+            "reference": src["reference"],
+            "note": src.get("snippet", "")[:1000]
+        })
+    if evidence:
+        rec = service.add_learning_evidence(
+            learning_id,
+            evidence,
+            payload.get("expected_version"),
+            actor=s["email"]
+        )
+    else:
+        rec = current
+    return {
+        "ok": True,
+        "status": rec.get("status") or "candidate",
+        "query": query,
+        "sources_found": len(evidence),
+        "evidence": evidence,
+        "learning": rec,
+        "requires_human_review": True
+    }
 
 @app.patch("/api/v8/learning/{learning_id}/status")
 def v8_learning_status_update(request: Request, learning_id: str, payload: dict):
