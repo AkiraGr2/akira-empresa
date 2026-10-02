@@ -818,12 +818,19 @@ def _build_tool_inputs(tool_name, step, outputs_by_order, mission_id):
     dependency = _dependency_output_text(step, outputs_by_order)
     context = f"\n\n[RESULTADO DEL PASO {step.get('receives_from')}]\n{dependency}" if dependency else ""
 
+    def with_dependency(max_chars, base_text):
+        if not dependency:
+            return base_text[:max_chars]
+        base = base_text[:max_chars // 2]
+        remaining = max_chars - len(base)
+        return (base + context[:remaining])[:max_chars]
+
     if tool_name == "web_search":
         if not task: return None
-        return {"query": (task + context)[:200]}
+        return {"query": with_dependency(200, task)}
     if tool_name == "memory_search":
         if not task: return None
-        return {"query": (task + context)[:200]}
+        return {"query": with_dependency(200, task)}
     if tool_name == "memory_save":
         content = task
         if dependency:
@@ -831,13 +838,13 @@ def _build_tool_inputs(tool_name, step, outputs_by_order, mission_id):
         if expected:
             content += f" → {expected}"
         if not content: return None
-        return {"content": content[:5000], "memory_type": "episodic"}
+        return {"content": with_dependency(5000, content), "memory_type": "episodic"}
     if tool_name == "learning_save":
         if not task: return None
         return {
             "source": f"mission_{mission_id[:12]}",
-            "event": (task + context)[:500],
-            "lesson": (expected + (f"\nResultado previo: {dependency}" if dependency else ""))[:2000],
+            "event": with_dependency(500, task),
+            "lesson": with_dependency(2000, expected or task),
             "outcome": "success",
             "confidence": 0.5,
         }
@@ -845,8 +852,7 @@ def _build_tool_inputs(tool_name, step, outputs_by_order, mission_id):
         return {}
     if tool_name == "graph_create_node":
         if not task: return None
-        label = task + (f" | previo: {dependency}" if dependency else "")
-        return {"node_type": "concept", "label": label[:200]}
+        return {"node_type": "concept", "label": with_dependency(200, task)}
     if tool_name == "graph_related":
         if not dependency:
             return None
@@ -860,10 +866,10 @@ def _build_tool_inputs(tool_name, step, outputs_by_order, mission_id):
         return {"node_id": str(node_id)}
     if tool_name == "image_generate":
         if not task: return None
-        return {"prompt": (task + context)[:500]}
+        return {"prompt": with_dependency(500, task)}
     if tool_name == "cognitive_cycle":
         if not task: return None
-        return {"message": (task + context)[:1500]}
+        return {"message": with_dependency(1500, task)}
     return None
 
 def _mark_mission_cancelled(mission_id):
