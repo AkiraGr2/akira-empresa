@@ -1076,7 +1076,25 @@ def _capture_autonomous_mission_learning(service, mission_id, actor, outcome, mi
         lesson, model_used = _run_reason_stage(prompt, [])
         lesson = str(lesson or "").strip()[:3000]
         if not lesson:
-            return None
+            # No dependemos de que el LLM este disponible para registrar el hecho
+            # observado. Sigue siendo candidate y no entra al recall automaticamente.
+            if outcome == "success":
+                steps_executed = int((mission_result or {}).get("steps_executed") or 0)
+                lesson = (
+                    f"Experiencia observada: la misión {mission_id} terminó correctamente "
+                    f"después de {steps_executed} paso(s). Requiere revisión antes de "
+                    f"generalizar una lección reutilizable."
+                )[:3000]
+            else:
+                failure_type = str((mission_result or {}).get("type") or "mission_failure")
+                failed_step = (mission_result or {}).get("failed_step")
+                where = f" en el paso {failed_step}" if failed_step is not None else ""
+                lesson = (
+                    f"Experiencia observada: la misión {mission_id} terminó con "
+                    f"{failure_type}{where}. Requiere análisis y evidencia antes de "
+                    f"convertir esta observación en conocimiento reutilizable."
+                )[:3000]
+            model_used = "deterministic_fallback"
         lr = service.save_learning({
             "source": "autonomous_experience",
             "event": f"mission_experience:{mission_id}",
