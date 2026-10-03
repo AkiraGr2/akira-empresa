@@ -154,7 +154,9 @@ class PersistenceService:
             if verified.get(f) != expected.get(f, verified.get(f)):
                 raise VerificationError(f"campo {f} no coincide al releer")
         result = {"outcome": "created" if created else "already_synced", "record": verified}
-        if created:
+        if created and str(verified.get("source") or "") not in {
+            "learning_candidate", "learning_engine", "learning_promoted"
+        }:
             try: self.auto_connect_memory_tags(verified["id"], actor=actor)
             except Exception as e: print(f"[auto-connect] memory_tags fallo: {type(e).__name__}: {str(e)[:200]}")
         return result
@@ -445,6 +447,7 @@ class PersistenceService:
                     "memory_id": memory.get("id"),
                     "learning_status": status,
                     "learning_source": source,
+                    "suppress_tag_auto_connect": True,
                 },
                 "tags": tags,
                 "weight": 1.0,
@@ -503,7 +506,11 @@ class PersistenceService:
                     "node_type": "mission",
                     "label": f"mission:{mission_id}"[:200],
                     "description": "Misión de la que se obtuvo este aprendizaje.",
-                    "node_metadata": {"mission_id": mission_id, "learning_context": True},
+                    "node_metadata": {
+                        "mission_id": mission_id,
+                        "learning_context": True,
+                        "suppress_tag_auto_connect": True,
+                    },
                     "tags": ["mission", "learning_source"],
                     "weight": 1.0,
                     "confidence": 0.5,
@@ -734,8 +741,10 @@ class PersistenceService:
         verified = self.repo.get("graph_nodes", stored["id"])
         if verified is None: raise VerificationError("nodo no confirmado")
         if created:
-            try: self.auto_connect_node_tags(verified["id"], actor=actor)
-            except Exception as e: print(f"[auto-connect] node_tags fallo: {type(e).__name__}: {str(e)[:200]}")
+            metadata = verified.get("node_metadata") if isinstance(verified.get("node_metadata"), dict) else {}
+            if not metadata.get("suppress_tag_auto_connect"):
+                try: self.auto_connect_node_tags(verified["id"], actor=actor)
+                except Exception as e: print(f"[auto-connect] node_tags fallo: {type(e).__name__}: {str(e)[:200]}")
             if str(verified.get("label", "")).strip() != _CORE_NODE_LABEL:
                 try: self.connect_to_core(verified["id"], actor=actor, weight=0.25)
                 except Exception as e: print(f"[core] connect fallo: {type(e).__name__}: {str(e)[:200]}")
