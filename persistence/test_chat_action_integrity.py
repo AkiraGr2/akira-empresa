@@ -21,5 +21,23 @@ class ChatActionIntegrityGuardTests(unittest.TestCase):
         self.assertIn("no inventes\nIDs, estados ni resultados de persistencia.", text)
 
 
+    def test_history_marks_unverified_operational_claims(self):
+        from persistence.chat_context import sanitize_historical_assistant_message
+
+        false_claim = sanitize_historical_assistant_message(
+            "assistant",
+            "groq",
+            "He recibido la corrección y la he registrado como un nuevo conocimiento candidato. ID de aprendizaje: learn_fake."
+        )
+        self.assertIn("RESPUESTA HISTORICA NO VERIFICABLE", false_claim)
+        self.assertNotIn("learn_fake", false_claim)
+
+        real_claim = sanitize_historical_assistant_message(
+            "assistant",
+            "learning_engine",
+            "Lo registré como conocimiento candidato. ID de aprendizaje: learn_real."
+        )
+        self.assertIn("learn_real", real_claim)
+
 if __name__ == "__main__":
     unittest.main()
