@@ -255,6 +255,11 @@ class PostgresRepository(PersistenceRepository):
             )
             return [_out(row) for row in cur.fetchall()]
 
+    def delete_memory_embedding(self, memory_id):
+        with self._cursor() as cur:
+            cur.execute("DELETE FROM memory_embeddings WHERE memory_id = %s", (memory_id,))
+            return cur.rowcount > 0
+
     # -- auditoria
     def append_audit(self, entry):
         with self._cursor() as cur:
