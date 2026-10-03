@@ -2053,6 +2053,18 @@ def v8_learning_selftest(request: Request):
         # materializar memoria/nodo/aristas de forma idempotente.
         core = service.ensure_core_node(actor=s["email"])
         if core:
+            active_cores = service.repo.search(
+                "graph_nodes",
+                {"status": "active", "label": "Akira"},
+                limit=20,
+                order_by="created_at",
+                descending=False,
+            )
+            add(
+                "single_active_core",
+                len(active_cores) == 1 and active_cores[0].get("id") == core.get("id"),
+                {"count": len(active_cores), "core_id": core.get("id")},
+            )
             current_before = service.get_learning(created_id)
             context = {"node_type": "concept", "label": "SELFTEST Learning", "knowledge_node_ids": [core["id"]]}
             promoted_learning = service.update_learning(
