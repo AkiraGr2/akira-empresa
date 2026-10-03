@@ -1695,12 +1695,7 @@ def v8_learning_teach(request: Request, payload: dict):
 
     source = str(payload.get("source") or "user_teaching").strip()[:64]
     event = str(payload.get("event") or "explicit_user_teaching").strip()[:500]
-    knowledge_kind = str(payload.get("knowledge_kind") or "concept").strip()[:64]
-    label = str(payload.get("label") or lesson[:120]).strip()[:200]
-    node_type = str(payload.get("node_type") or "concept").strip()
-    allowed_node_types = {"concept","person","project","tool","experience","document","skill","error","solution","mission"}
-    if node_type not in allowed_node_types:
-        return JSONResponse({"ok": False, "reason": "invalid_node_type"}, status_code=400)
+   
 
     try:
         confidence = float(payload.get("confidence", 0.8))
@@ -3778,10 +3773,12 @@ def _extract_teaching_lesson(message):
         return None, True
     return lesson[:5000], True
 
-def _create_teaching_candidate(service, lesson, actor, source="explicit_user_teaching"):
+def _create_teaching_candidate(service, lesson, actor, source="explicit_user_teaching", context=None):
+    """Registra una enseñanza como candidate; no materializa memoria/grafo hasta verificar."""
     if service is None:
         raise RuntimeError("persistence_not_ready")
     confidence = 0.8
+    learning_context = dict(context) if isinstance(context, dict) else {}
     lr = service.save_learning({
         "source": source,
         "event": "explicit_user_teaching",
@@ -3791,61 +3788,24 @@ def _create_teaching_candidate(service, lesson, actor, source="explicit_user_tea
         "confidence": confidence,
         "outcome": "unknown",
         "status": "candidate",
+        "evidence": [],
+        "learning_context": learning_context,
     }, actor=actor, idempotency_key="teach_candidate_" + hashlib.sha256(lesson.encode("utf-8")).hexdigest()[:32])
-
-    existing_nodes = lr["record"].get("knowledge_nodes") or []
-    if existing_nodes:
-        node = service.get_node(existing_nodes[0])
-        return lr["record"], None, node
-
-    mr = service.save_memory({
-        "content": lesson,
-        "memory_type": "semantic",
-        "importance": 7,
-        "confidence": confidence,
-        "source": "learning_candidate",
-        "source_id": lr["record"]["id"],
-        "source_reference": source,
-        "tags": ["learning_candidate"],
-        "privacy_level": "PRIVATE",
-    }, actor=actor, idempotency_key=f"teach_mem_{lr['record']['id']}")
-
-    nr = service.create_node({
-        "node_type": "concept",
-        "label": lesson[:120],
-        "description": lesson[:1000],
-        "node_metadata": {
-            "knowledge_kind": "explicit_user_teaching",
-            "learning_id": lr["record"]["id"],
-            "memory_id": mr["record"]["id"],
-            "learning_status": "candidate",
-        },
-        "tags": ["learning_candidate"],
-        "weight": 1.0,
-        "confidence": confidence,
-        "privacy_level": "PRIVATE",
-    }, actor=actor, idempotency_key=f"teach_node_{lr['record']['id']}")
-    return service.update_learning(
-        lr["record"]["id"],
-        {"knowledge_nodes": [nr["record"]["id"]]},
-        expected_version=lr["record"]["version"],
-        actor=actor,
-    ), mr["record"], nr["record"]
+    return lr["record"], None, None
 
 def _recall_memories(service, msg, limit=5):
     if service is None: return []
     keywords = _extract_keywords(msg)
     if not keywords: return []
     found = {}
+    protected_sources = {"learning_candidate", "learning_engine", "learning_promoted"}
     for kw in keywords:
         try:
             rows = service.search_memory({"text_contains": kw}, limit=limit)
         except Exception:
             continue
         for r in rows:
-            # El conocimiento explícitamente enseñado no se usa como verdad
-            # hasta que su learning_event llegue al menos a verified.
-            if r.get("source") == "learning_candidate":
+            if r.get("source") in protected_sources:
                 learning_id = r.get("source_id")
                 if not learning_id:
                     continue
