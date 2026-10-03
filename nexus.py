@@ -2999,7 +2999,7 @@ def _selftest_missions_run():
             {"order": 2, "task": "crear nodo destino", "agent": "graph_builder", "tool": "graph_create_node",
              "expected_output": "id del nodo destino", "receives_from": None},
             {"order": 3, "task": "relacionar los dos nodos", "agent": "graph_builder", "tool": "graph_create_edge",
-             "expected_output": "id de la arista creada", "receives_from": [1, 2], "relation_type": "supports"},
+             "expected_output": "id de la arista creada", "receives_from": [1, 2], "relation_type": "related_to"},
         ]
     }
     try:
@@ -3040,7 +3040,7 @@ def _selftest_missions_run():
         edge_dep = {1: {"id": "node_A", "outcome": "created"}, 2: {"id": "node_B", "outcome": "created"}}
         built = _build_tool_inputs(
             "graph_create_edge",
-            {"task": "crear relacion", "receives_from": [1, 2], "relation_type": "supports"},
+            {"task": "crear relacion", "receives_from": [1, 2], "relation_type": "related_to"},
             edge_dep,
             "mission_test",
         )
