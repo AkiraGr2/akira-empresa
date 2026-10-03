@@ -495,10 +495,10 @@ def _detect_github_read_request(msg):
             queries.extend([
                 "cyMembrane.on",
                 '"tap"',
-                "brainContext",
                 "_updateMembraneContextPanel",
                 "brain-select",
                 '"dbltap"',
+                'id="brainContext"',
             ])
         else:
             queries.extend(["onNodeClick", "click", "node", "zoom", "camera", "brain"])
