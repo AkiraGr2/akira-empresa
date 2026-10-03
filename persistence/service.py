@@ -1484,12 +1484,26 @@ class PersistenceService:
                 "connected_to_core": connected_to_core, "core_id": core_id}
 
     def ensure_core_node(self, actor="system"):
+        # Exact lookup: the core must not disappear just because the graph has
+        # grown beyond the arbitrary default page size.
         try:
-            rows = self.repo.search("graph_nodes", {"status": "active"}, limit=500)
+            rows = self.repo.search(
+                "graph_nodes",
+                {"status": "active", "label": _CORE_NODE_LABEL},
+                limit=20,
+                order_by="created_at",
+                descending=False,
+            )
         except Exception:
             return None
         for n in rows:
-            if str(n.get("label", "")).strip() == _CORE_NODE_LABEL:
+            metadata = n.get("node_metadata") if isinstance(n.get("node_metadata"), dict) else {}
+            tags = set(str(t).strip().lower() for t in (n.get("tags") or []))
+            if (
+                str(n.get("label", "")).strip() == _CORE_NODE_LABEL
+                and not metadata.get("learning_id")
+                and {"core", "akira", "nucleo"}.issubset(tags)
+            ):
                 return n
         try:
             r = self.create_node({
