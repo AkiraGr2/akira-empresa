@@ -542,7 +542,8 @@ def _build_mission_plan_prompt(objective, service):
         "4. Cada paso debe tener: order (entero 1..N), task (texto), agent (nombre), tool (nombre), "
         "expected_output (texto 5-500 chars) y receives_from. Para tools normales, receives_from es null o un order anterior. "
         "Para graph_create_edge, receives_from DEBE ser una lista de exactamente dos orders anteriores de pasos graph_create_node: "
-        "el primero sera from_node y el segundo sera to_node. relation_type es opcional para graph_create_edge.\n"
+        "el primero sera from_node y el segundo sera to_node. relation_type es opcional para graph_create_edge y, si aparece, DEBE ser uno de: "
+        "uses, used_by, related_to, causes, caused_by, improves, improved_by, contains, part_of, precedes, follows, solves, solved_by, learned_from.\n"
         '5. Si el objetivo NO es viable con las tools disponibles, responde con: {"error": "not_viable", "reason": "explicacion breve"}.\n\n'
         "AGENTES DISPONIBLES:\n"
         f"{agents_list}\n\n"
@@ -663,6 +664,12 @@ def _validate_mission_plan(plan, service):
             if relation_type is not None:
                 if not isinstance(relation_type, str) or not (1 <= len(relation_type.strip()) <= 64):
                     return False, f"step_{i}_bad_relation_type"
+                if relation_type.strip() not in (
+                    "uses", "used_by", "related_to", "causes", "caused_by",
+                    "improves", "improved_by", "contains", "part_of",
+                    "precedes", "follows", "solves", "solved_by", "learned_from",
+                ):
+                    return False, f"step_{i}_invalid_relation_type:{relation_type.strip()}"
         else:
             if isinstance(receives, list):
                 return False, f"step_{i}_receives_list_not_allowed"
@@ -989,12 +996,16 @@ def _build_tool_inputs(tool_name, step, outputs_by_order, mission_id):
                 return None
             node_ids.append(str(node_id))
         relation_type = str(step.get("relation_type") or "related_to").strip()
-        if not relation_type:
+        if relation_type not in (
+            "uses", "used_by", "related_to", "causes", "caused_by",
+            "improves", "improved_by", "contains", "part_of",
+            "precedes", "follows", "solves", "solved_by", "learned_from",
+        ):
             return None
         return {
             "from_node": node_ids[0],
             "to_node": node_ids[1],
-            "relation_type": relation_type[:64],
+            "relation_type": relation_type,
         }
     if tool_name == "image_generate":
         if not task: return None
