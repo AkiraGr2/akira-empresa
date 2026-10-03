@@ -21,6 +21,7 @@ load_dotenv()
 
 from persistence.absorption import (
     AbsorptionContractError,
+    build_autonomous_candidate,
     validate_absorption_decision,
     validate_absorption_target,
 )
@@ -4974,42 +4975,15 @@ async def _run_absorption_candidate(
             )
             return decision
 
-        lesson = str(decision.get("value") or "").strip()
-        source_id = str(decision.get("source_id") or "").strip()
-        if not lesson or not source_id:
-            print("[absorption-candidate] skipped: missing lesson/source_id", flush=True)
-            return decision
-
-        context = {
-            "mode": "candidate",
-            "decision": decision.get("decision"),
-            "knowledge_kind": decision.get("knowledge_kind"),
-            "confidence": decision.get("confidence"),
-            "novelty": decision.get("novelty"),
-            "reusability": decision.get("reusability"),
-            "source_id": source_id,
-        }
-        if conversation_id:
-            context["conversation_id"] = str(conversation_id)[:128]
-
+        candidate = build_autonomous_candidate(
+            decision,
+            conversation_id=conversation_id,
+        )
         rec = await asyncio.to_thread(
             service.save_learning,
-            {
-                "source": "autonomous_absorption",
-                "event": "chat_absorption_candidate",
-                "lesson": lesson,
-                "knowledge_nodes": [],
-                "relationships": [],
-                "confidence": float(decision.get("confidence") or 0.0),
-                "outcome": "unknown",
-                "status": "candidate",
-                "evidence": [],
-                "learning_context": context,
-            },
+            candidate["learning"],
             actor,
-            "absorption_candidate_" + hashlib.sha256(
-                source_id.encode("utf-8")
-            ).hexdigest()[:32],
+            candidate["idempotency_key"],
         )
         record = rec.get("record") if isinstance(rec, dict) else None
         print(
@@ -5027,7 +5001,6 @@ async def _run_absorption_candidate(
             flush=True,
         )
         return None
-
 
 MEMORY_EMBEDDING_MODEL = "gemini-embedding-2"
 MEMORY_EMBEDDING_DIMENSIONS = 768
