@@ -2298,9 +2298,35 @@ def _invoke_tool(service, tool_name, inputs, actor):
         content = str(inputs.get("content") or "").strip()
         if not content: return None, {"type": "ValidationError", "message": "content requerido"}
         mtype = str(inputs.get("memory_type") or "episodic")
-        r = service.save_memory({"content": content, "memory_type": mtype, "source": "tool_registry",
-                                 "privacy_level": "PRIVATE"}, actor=actor)
-        return {"id": r["record"]["id"], "outcome": r["outcome"]}, None
+        gate = _memory_gate_decide(
+            service, content, mtype, 5,
+            ["mission_memory", str(mission_id)[:64]],
+            actor, "owner",
+        )
+        if not gate.get("allowed"):
+            return {
+                "stored": False,
+                "gate": gate,
+                "outcome": "not_saved",
+            }, None
+        r = service.save_memory({
+            "content": content,
+            "memory_type": mtype,
+            "importance": 5,
+            "confidence": 0.5,
+            "source": "tool_registry",
+            "source_id": mission_id[:256],
+            "source_reference": f"mission:{mission_id}"[:256],
+            "privacy_level": "PRIVATE",
+            "tags": ["mission_memory", str(mission_id)[:64]],
+        }, actor=actor)
+        _index_memory_embedding(service, r["record"], actor=actor)
+        return {
+            "stored": True,
+            "id": r["record"]["id"],
+            "outcome": r["outcome"],
+            "semantic_indexed": bool(service.get_memory_embedding(r["record"]["id"])),
+        }, None
     if tool_name == "memory_search":
         q = str(inputs.get("query") or "").strip()
         if not q: return None, {"type": "ValidationError", "message": "query requerida"}
@@ -3869,7 +3895,7 @@ _INGEST_TYPE_MAP = {
     "user_context": "user_context", "contexto": "user_context", "system": "system", "sistema": "system",
 }
 
-def _memory_gate_decide(service, content, memory_type, importance, tags, actor):
+def _memory_gate_decide(service, content, memory_type, importance, tags, actor, owner_scope="owner"):
     """Gate minimo de ingreso de memoria: clasifica, valida, deduplica y exige procedencia."""
     text = str(content or "").strip()
     reasons = []
@@ -3889,7 +3915,7 @@ def _memory_gate_decide(service, content, memory_type, importance, tags, actor):
             candidates = service.search_memory({"text_contains": text[:200]}, limit=20)
             for row in candidates:
                 if str(row.get("content") or "").strip() == text:
-                    if str(row.get("owner_scope") or "owner") == str(actor):
+                    if str(row.get("owner_scope") or "owner") == str(owner_scope):
                         duplicate = row
                         break
         except Exception:
@@ -3937,7 +3963,7 @@ def memory_ingest(request: Request, payload: dict):
     if tipo_raw and tipo_raw not in tags: tags.append(tipo_raw[:64])
     actor = (s.get("email") or "browser")[:64]
     owner_scope = (s.get("owner_scope") or "owner")[:64]
-    gate = _memory_gate_decide(service, texto, memory_type, importancia, tags, owner_scope)
+    gate = _memory_gate_decide(service, texto, memory_type, importancia, tags, actor, owner_scope)
     if not gate.get("allowed"):
         return {
             "ok": True,
