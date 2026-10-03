@@ -435,4 +435,59 @@ MIGRATIONS = [
         CREATE INDEX memory_embeddings_hnsw_idx ON memory_embeddings USING hnsw (embedding vector_cosine_ops)
         """,
     ),
+    (
+        "018_graph_integrity_hardening",
+        """
+        CREATE TEMP TABLE _graph_edge_dedup AS
+        SELECT id,
+               row_number() OVER (
+                   PARTITION BY from_node,to_node,relation_type
+                   ORDER BY created_at ASC,id ASC
+               ) AS rn,
+               sum(coalesce(frequency,1)) OVER (
+                   PARTITION BY from_node,to_node,relation_type
+               ) AS total_frequency,
+               max(weight) OVER (
+                   PARTITION BY from_node,to_node,relation_type
+               ) AS max_weight,
+               max(confidence) OVER (
+                   PARTITION BY from_node,to_node,relation_type
+               ) AS max_confidence,
+               sum(coalesce(success_count,0)) OVER (
+                   PARTITION BY from_node,to_node,relation_type
+               ) AS total_success,
+               sum(coalesce(failure_count,0)) OVER (
+                   PARTITION BY from_node,to_node,relation_type
+               ) AS total_failure,
+               max(last_used_at) OVER (
+                   PARTITION BY from_node,to_node,relation_type
+               ) AS max_last_used
+        FROM graph_edges
+        WHERE status='active';
+        UPDATE graph_edges e
+        SET frequency=d.total_frequency,
+            weight=d.max_weight,
+            confidence=d.max_confidence,
+            success_count=d.total_success,
+            failure_count=d.total_failure,
+            last_used_at=d.max_last_used,
+            updated_at=now(),
+            version=e.version+1
+        FROM _graph_edge_dedup d
+        WHERE e.id=d.id AND d.rn=1;
+        UPDATE graph_edges e
+        SET status='archived',
+            updated_at=now(),
+            version=e.version+1
+        FROM _graph_edge_dedup d
+        WHERE e.id=d.id AND d.rn>1;
+        DROP TABLE _graph_edge_dedup;
+        CREATE UNIQUE INDEX IF NOT EXISTS graph_edges_active_unique_relation_uq
+            ON graph_edges (from_node,to_node,relation_type)
+            WHERE status='active';
+        CREATE UNIQUE INDEX IF NOT EXISTS graph_nodes_single_active_akira_uq
+            ON graph_nodes ((lower(label)))
+            WHERE status='active' AND lower(label)='akira';
+        """,
+    ),
 ]
