@@ -1317,15 +1317,43 @@ class PersistenceService:
 
     def _find_or_create_node(self, node_type, label, tags=None, actor="auto-connect"):
         label = str(label).strip()[:200]
-        if not label: return None
-        rows = self.repo.search("graph_nodes", {"node_type": node_type, "status": "active"}, limit=200)
+        if not label:
+            return None
+        try:
+            rows = self.repo.search(
+                "graph_nodes",
+                {"node_type": node_type, "status": "active", "label": label},
+                limit=20,
+                order_by="created_at",
+                descending=False,
+            )
+        except Exception:
+            rows = []
         for r in rows:
             if str(r.get("label", "")).strip().lower() == label.lower():
                 return r
+
         try:
-            result = self.create_node({"node_type": node_type, "label": label, "tags": tags or []}, actor=actor)
+            result = self.create_node(
+                {"node_type": node_type, "label": label, "tags": tags or []},
+                actor=actor,
+            )
             return result["record"]
         except Exception:
+            # A concurrent creator may have won the active-node unique guard.
+            try:
+                rows = self.repo.search(
+                    "graph_nodes",
+                    {"node_type": node_type, "status": "active", "label": label},
+                    limit=20,
+                    order_by="created_at",
+                    descending=False,
+                )
+                for existing in rows:
+                    if str(existing.get("label", "")).strip().lower() == label.lower():
+                        return existing
+            except Exception:
+                pass
             return None
 
     def _edge_exists(self, from_node, to_node, relation_type):
