@@ -814,6 +814,29 @@ class PersistenceService:
             raise VerificationError("graph node update no confirmado")
         return verified
 
+    def archive_edge(self, edge_id, expected_version=None, actor="system"):
+        current = self.get_edge(edge_id)
+        if current is None:
+            raise NotFoundError(edge_id)
+        if expected_version is None:
+            expected_version = current["version"]
+        if current.get("status") != "active":
+            return current
+        with self.repo.transaction() as tx:
+            updated = tx.update("graph_edges", edge_id, {"status": "archived"}, expected_version)
+            tx.append_audit({
+                "actor": actor,
+                "action": "graph.edge.archive",
+                "resource": "graph_edges",
+                "resource_id": edge_id,
+                "status": "success",
+                "detail": {"new_version": updated["version"]},
+            })
+        verified = self.get_edge(edge_id)
+        if verified is None or verified.get("status") != "archived":
+            raise VerificationError("archive edge no confirmado")
+        return verified
+
     def create_edge(self, data, actor="system", idempotency_key=None):
         fields = validate_graph_edge(data)
         from_node = fields.get("from_node"); to_node = fields.get("to_node")
