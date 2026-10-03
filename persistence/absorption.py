@@ -147,7 +147,12 @@ def validate_absorption_decision(payload: Mapping[str, Any]) -> dict[str, Any]:
             f"knowledge_kind inválido: {kind!r}"
         )
 
-    value = _text("value", payload.get("value", ""), MAX_VALUE_LENGTH)
+    value = _text(
+        "value",
+        payload.get("value", ""),
+        MAX_VALUE_LENGTH,
+        allow_empty=(decision == "IGNORE"),
+    )
     reason = _text("reason", payload.get("reason", ""), MAX_REASON_LENGTH)
     confidence = _confidence(payload.get("confidence", 0.0))
     novelty = _score("novelty", payload.get("novelty", 0.0))
