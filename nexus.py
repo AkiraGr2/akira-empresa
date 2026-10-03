@@ -2231,6 +2231,11 @@ EVIDENCIA:
     except PersistenceError as e:
         return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
     except Exception as e:
+        print(
+            f"[learning-evaluate] endpoint_failure type={type(e).__name__} "
+            f"detail={str(e)[:300].replace(chr(10), ' ')}",
+            flush=True,
+        )
         return JSONResponse({"ok": False, "reason": "evaluation_failed", "error_type": type(e).__name__}, status_code=503)
 
 @app.patch("/api/v8/learning/{learning_id}/status")
