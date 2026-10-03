@@ -1972,6 +1972,12 @@ def v8_learning_status_update(request: Request, learning_id: str, payload: dict)
             return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
         except Exception as e:
             return JSONResponse({"ok": False, "reason": "graph_promotion_failed", "error_type": type(e).__name__}, status_code=500)
+    if graph and graph.get("memory"):
+        _index_memory_embedding(service, graph["memory"], actor=s["email"])
+        try:
+            graph["semantic_indexed"] = bool(service.get_memory_embedding(graph["memory"]["id"]))
+        except Exception:
+            graph["semantic_indexed"] = False
     return {"ok": True, "learning": rec, "graph": graph}
 
 @app.get("/api/v8/learning/{learning_id}")
@@ -3953,7 +3959,8 @@ def memory_ingest(request: Request, payload: dict):
         return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
-    return {"ok": True, "id": result["record"]["id"], "outcome": result["outcome"]}
+    _index_memory_embedding(service, result["record"], actor="browser_sync")
+    return {"ok": True, "stored": True, "id": result["record"]["id"], "outcome": result["outcome"], "semantic_indexed": bool(service.get_memory_embedding(result["record"]["id"]))}
 
 _STOPWORDS_ES = {"que","de","la","el","en","y","a","los","del","se","las","por","un","para","con","no","una","su","al","lo","como","mas","pero","sus","le","ya","o","este","si","porque","esta","entre","cuando","muy","sin","sobre","tambien","me","hasta","hay","donde","quien","desde","todo","nos","durante","todos","uno","les","ni","contra","otros","ese","eso","ante","ellos","e","esto","mi","antes","algunos","unos","yo","otro","otras","otra","tanto","esa","estos","mucho","quienes","nada","muchos","cual","poco","ella","estar","estas","algunas","algo","nosotros","mis","tu","te","ti","tus","ellas","nosotras","vosotros","vosotras","os","mio","mia","mios","mias","tuyo","tuya","tuyos","tuyas","suyo","suya","suyos","suyas","nuestro","nuestra","nuestros","nuestras","vuestro","vuestra","vuestros","vuestras","esos","esas","estoy","estamos","estais","estan","hacer","tener","poder","decir","ver","dar","saber","querer","llegar","pasar","deber","poner","parecer","quedar","creer","hablar","llevar","dejar","seguir","encontrar","llamar","venir","pensar","salir","volver","tomar","conocer","vivir","sentir","tratar","mirar","contar","empezar","esperar","buscar","existir","entrar","trabajar","escribir","perder","producir","ocurrir","entender","pedir","recibir","recordar","recorda","recuerda","recuerdas","probamos","probe","dime","digo","hola","buenas","gracias"}
 
@@ -4010,38 +4017,184 @@ def _create_teaching_candidate(service, lesson, actor, source="explicit_user_tea
     }, actor=actor, idempotency_key="teach_candidate_" + hashlib.sha256(lesson.encode("utf-8")).hexdigest()[:32])
     return lr["record"], None, None
 
+MEMORY_EMBEDDING_MODEL = "gemini-embedding-2"
+MEMORY_EMBEDDING_DIMENSIONS = 768
+
+def _generate_memory_embedding(text):
+    text = str(text or "").strip()
+    if not text:
+        return None
+    try:
+        from google import genai
+        from google.genai import types
+    except Exception:
+        return None
+    for key in _pick_gemini_keys():
+        client = None
+        try:
+            client = genai.Client(
+                api_key=key,
+                http_options=types.HttpOptions(timeout=12000),
+            )
+            result = client.models.embed_content(
+                model=MEMORY_EMBEDDING_MODEL,
+                contents=text[:8000],
+                config=types.EmbedContentConfig(
+                    output_dimensionality=MEMORY_EMBEDDING_DIMENSIONS,
+                ),
+            )
+            embeddings = getattr(result, "embeddings", None) or []
+            if not embeddings:
+                continue
+            values = getattr(embeddings[0], "values", None)
+            values = list(values or [])
+            if len(values) != MEMORY_EMBEDDING_DIMENSIONS:
+                continue
+            return values
+        except Exception as e:
+            code = _gemini_error_code(e)
+            if code == 429:
+                _mark_key_failed(key, provider="gemini")
+            continue
+        finally:
+            if client is not None:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+    return None
+
+def _index_memory_embedding(service, memory, actor="semantic-index"):
+    if not isinstance(memory, dict):
+        return False
+    memory_id = str(memory.get("id") or "").strip()
+    content = str(memory.get("content") or "").strip()
+    if not memory_id or not content or memory.get("status") != "active":
+        return False
+    source_hash = hashlib.sha256(
+        (MEMORY_EMBEDDING_MODEL + "\n" + content).encode("utf-8")
+    ).hexdigest()
+    try:
+        existing = service.get_memory_embedding(memory_id)
+        if existing and existing.get("model") == MEMORY_EMBEDDING_MODEL and existing.get("source_hash") == source_hash:
+            return True
+    except Exception:
+        pass
+    embedding = _generate_memory_embedding(content)
+    if not embedding:
+        return False
+    try:
+        service.upsert_memory_embedding(
+            memory_id,
+            MEMORY_EMBEDDING_MODEL,
+            embedding,
+            source_hash,
+        )
+        return True
+    except Exception as e:
+        print(f"[semantic-index] {memory_id} fallo: {type(e).__name__}: {str(e)[:160]}")
+        return False
+
+def _memory_recency_score(created_at):
+    try:
+        raw = str(created_at or "").replace("Z", "+00:00")
+        dt = datetime.datetime.fromisoformat(raw)
+        now = datetime.datetime.now(datetime.timezone.utc)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        age_days = max(0.0, (now - dt.astimezone(datetime.timezone.utc)).total_seconds() / 86400.0)
+        return 1.0 / (1.0 + age_days / 30.0)
+    except Exception:
+        return 0.0
+
 def _recall_memories(service, msg, limit=5):
-    if service is None: return []
-    keywords = _extract_keywords(msg)
-    if not keywords: return []
-    found = {}
+    if service is None:
+        return []
+    query = str(msg or "").strip()
+    if not query:
+        return []
+    keywords = _extract_keywords(query)
     protected_sources = {"learning_candidate", "learning_engine", "learning_promoted"}
+    scored = {}
+
+    def accept(memory, semantic_score=0.0):
+        if not isinstance(memory, dict):
+            return
+        memory_id = memory.get("id")
+        if not memory_id or memory.get("status") != "active":
+            return
+        source = memory.get("source")
+        if source in protected_sources:
+            learning_id = memory.get("source_id")
+            if not learning_id:
+                return
+            try:
+                learning = service.get_learning(learning_id)
+            except Exception:
+                learning = None
+            context = learning.get("learning_context") if isinstance(learning, dict) and isinstance(learning.get("learning_context"), dict) else {}
+            if not learning or learning.get("status") not in ("verified", "consolidated") or not context.get("promoted"):
+                return
+
+        content = str(memory.get("content") or "").lower()
+        query_low = query.lower()
+        exact = 1.0 if query_low and query_low in content else 0.0
+        matched = sum(1 for kw in keywords if kw in content)
+        keyword_score = (matched / len(keywords)) if keywords else 0.0
+        lexical_score = min(1.0, 0.65 * exact + 0.35 * keyword_score)
+        confidence = max(0.0, min(1.0, float(memory.get("confidence") or 0.0)))
+        importance = max(0.0, min(1.0, float(memory.get("importance") or 0.0) / 10.0))
+        recency = _memory_recency_score(memory.get("created_at"))
+        semantic_score = max(0.0, min(1.0, float(semantic_score or 0.0)))
+        total = (
+            0.55 * semantic_score
+            + 0.25 * lexical_score
+            + 0.10 * confidence
+            + 0.05 * importance
+            + 0.05 * recency
+        )
+        previous = scored.get(memory_id)
+        if previous is None or total > previous["score"]:
+            scored[memory_id] = {"memory": memory, "score": total}
+
+    # Lexical branch remains active even if embeddings are unavailable.
+    lexical_rows = []
     for kw in keywords:
         try:
-            rows = service.search_memory({"text_contains": kw}, limit=limit)
+            lexical_rows.extend(service.search_memory({"text_contains": kw}, limit=max(10, limit * 4)))
         except Exception:
             continue
-        for r in rows:
-            if r.get("source") in protected_sources:
-                learning_id = r.get("source_id")
-                if not learning_id:
-                    continue
-                try:
-                    learning = service.get_learning(learning_id)
-                except Exception:
-                    learning = None
-                if not learning or learning.get("status") not in ("verified", "consolidated"):
-                    continue
-                context = learning.get("learning_context") if isinstance(learning.get("learning_context"), dict) else {}
-                if not context.get("promoted"):
-                    continue
-            rid = r.get("id")
-            if rid and rid not in found:
-                found[rid] = r
-        if len(found) >= limit: break
-    rows = list(found.values())
-    rows.sort(key=lambda r: (r.get("created_at") or "", r.get("importance") or 0), reverse=True)
-    result = rows[:limit]
+    if query:
+        try:
+            lexical_rows.extend(service.search_memory({"text_contains": query[:200]}, limit=max(10, limit * 4)))
+        except Exception:
+            pass
+    for memory in lexical_rows:
+        accept(memory, 0.0)
+
+    # Semantic branch: Gemini Embedding 2 (768d) + pgvector cosine search.
+    query_embedding = _generate_memory_embedding(query)
+    if query_embedding:
+        try:
+            semantic_rows = service.search_memory_semantic(
+                query_embedding,
+                MEMORY_EMBEDDING_MODEL,
+                limit=max(20, limit * 6),
+            )
+            for row in semantic_rows:
+                memory = service.get_memory(row.get("memory_id"))
+                accept(memory, row.get("semantic_score") or 0.0)
+        except Exception as e:
+            print(f"[semantic-recall] fallo: {type(e).__name__}: {str(e)[:160]}")
+
+    ranked = sorted(
+        scored.values(),
+        key=lambda x: (x["score"], x["memory"].get("created_at") or ""),
+        reverse=True,
+    )
+    result = [x["memory"] for x in ranked[:max(1, min(int(limit), 20))]]
+
+    # Record actual reuse only for knowledge promoted through the gate.
     seen_learning = set()
     for memory in result:
         source = memory.get("source")
@@ -4051,7 +4204,9 @@ def _recall_memories(service, msg, limit=5):
             try:
                 learning = service.get_learning(learning_id)
                 if learning and learning.get("status") in ("verified", "consolidated"):
-                    service.record_reuse(learning_id, actor="recall")
+                    context = learning.get("learning_context") if isinstance(learning.get("learning_context"), dict) else {}
+                    if context.get("promoted"):
+                        service.record_reuse(learning_id, actor="recall")
             except Exception:
                 pass
     return result
