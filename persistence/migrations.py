@@ -488,9 +488,14 @@ MIGRATIONS = [
         CREATE UNIQUE INDEX IF NOT EXISTS graph_nodes_single_active_akira_uq
             ON graph_nodes ((lower(label)))
             WHERE status='active' AND lower(label)='akira';
+        """,
+    ),
+    (
+        "019_graph_node_uniqueness",
+        """
         CREATE UNIQUE INDEX IF NOT EXISTS graph_nodes_active_type_label_uq
             ON graph_nodes (node_type, lower(label))
-            WHERE status='active';
+            WHERE status='active'
         """,
     ),
 ]
