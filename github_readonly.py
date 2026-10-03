@@ -158,6 +158,9 @@ def _search_oversized_file(
                 matches.append({
                     "query": query,
                     "start_char": idx,
+                    "line_start": source.count("\n", 0, idx) + 1,
+                    "line_end": source.count("\n", 0, min(len(source), right)) + 1,
+                    "evidence_kind": "direct_code_match",
                     "snippet": snippet,
                 })
     payload = {
