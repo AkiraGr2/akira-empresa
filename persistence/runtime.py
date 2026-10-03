@@ -86,7 +86,7 @@ def boot(backend_factory=None, attempts=3, wait_seconds=(5, 10), sleep=time.slee
             service.health()
             STATE.update(service=service, connected=True, state="ok", error_type=None)
             break
-        except Exception as e:  # Neon puede estar despertando: se reintenta
+        except Exception as e:  # PostgreSQL gestionado puede tardar en aceptar conexiones: se reintenta
             last = e
             STATE.update(state="starting" if i < attempts - 1 else "error", error_type=type(e).__name__)
             print(f"[persistence] intento {i + 1}/{attempts} fallo: {type(e).__name__}: {str(e)[:200]}", flush=True)
