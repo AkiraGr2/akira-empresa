@@ -174,7 +174,7 @@ ENTITIES = {
             "reuse_count", "privacy_level", "status", "last_used_at",
         ),
         "filterable": (
-            "id", "node_type", "owner_scope", "privacy_level", "status", "idempotency_key",
+            "id", "node_type", "label", "owner_scope", "privacy_level", "status", "idempotency_key",
         ),
         "in_filterable": ("node_type", "owner_scope", "privacy_level", "status"),
         "orderable": ("created_at", "updated_at", "weight", "reuse_count", "last_used_at"),
