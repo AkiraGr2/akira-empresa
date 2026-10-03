@@ -3055,6 +3055,7 @@ def v8_github_read(request: Request, payload: dict):
         "repo": payload.get("repo"),
         "path": payload.get("path"),
         "paths": payload.get("paths"),
+        "queries": payload.get("queries"),
         "max_files": payload.get("max_files", 8),
     }
     outputs, error = _invoke_tool(service, "github_repo_read", inputs, actor=s["email"])
