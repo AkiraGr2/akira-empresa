@@ -1918,7 +1918,18 @@ def v8_learning_status_update(request: Request, learning_id: str, payload: dict)
         return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
-    return {"ok": True, "learning": rec}
+    graph = None
+    if status in ("verified", "consolidated"):
+        try:
+            graph = service.promote_learning_to_graph(learning_id, actor=s["email"])
+            rec = graph.get("learning") or rec
+        except (ValidationError, NotFoundError) as e:
+            return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
+        except PersistenceError as e:
+            return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+        except Exception as e:
+            return JSONResponse({"ok": False, "reason": "graph_promotion_failed", "error_type": type(e).__name__}, status_code=500)
+    return {"ok": True, "learning": rec, "graph": graph}
 
 @app.get("/api/v8/learning/{learning_id}")
 def v8_learning_get(request: Request, learning_id: str):
