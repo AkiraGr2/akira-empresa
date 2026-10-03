@@ -40,6 +40,8 @@ class ChatActionIntegrityGuardTests(unittest.TestCase):
         self.assertIn("learn_real", real_claim)
 
     def test_2d_brain_inspection_uses_only_direct_renderer_evidence(self):
+        # Regression: keep the assertion scoped to the 2D branch so generic
+        # fallback behavior for unrelated inspection requests remains valid.
         with open("nexus.py", "r", encoding="utf-8") as handle:
             text = handle.read()
 
