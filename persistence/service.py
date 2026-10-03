@@ -352,6 +352,106 @@ class PersistenceService:
             raise VerificationError("learning status no confirmado")
         return verified
 
+    def promote_learning_to_graph(self, learning_id, actor="learning-promotion"):
+        """Materializa un aprendizaje verificado/consolidado en memoria + grafo de forma idempotente."""
+        learning = self.get_learning(learning_id)
+        if learning is None:
+            raise NotFoundError(learning_id)
+
+        status = learning.get("status") or "candidate"
+        if status not in ("verified", "consolidated"):
+            return {"promoted": False, "reason": "status_not_eligible", "status": status}
+        if not (learning.get("evidence") or []):
+            return {"promoted": False, "reason": "evidence_required", "status": status}
+
+        source = str(learning.get("source") or "learning").strip()[:64]
+        outcome = str(learning.get("outcome") or "unknown").strip()[:32]
+        lesson = str(learning.get("lesson") or "").strip()
+        if not lesson:
+            raise ValidationError("learning sin lesson")
+
+        memories = self.repo.search(
+            "memories",
+            {"source_id": learning_id, "status": "active"},
+            limit=5,
+            order_by="created_at",
+            descending=True,
+        )
+        memory = memories[0] if memories else None
+        if memory is None:
+            memory_result = self.save_memory({
+                "content": lesson,
+                "memory_type": "semantic",
+                "importance": 7,
+                "confidence": float(learning.get("confidence") or 0.5),
+                "source": "learning_promoted",
+                "source_id": learning_id,
+                "source_reference": source,
+                "tags": ["learning", source, outcome],
+                "privacy_level": "PRIVATE",
+            }, actor=actor, idempotency_key=f"learning_promoted_mem:{learning_id}")
+            memory = memory_result["record"]
+
+        node = None
+        knowledge_nodes = [str(x) for x in (learning.get("knowledge_nodes") or []) if str(x).strip()]
+        for node_id in knowledge_nodes:
+            candidate = self.get_node(node_id)
+            if candidate and candidate.get("status") == "active":
+                node = candidate
+                break
+
+        if node is None:
+            node_type = "experience" if source in ("experience_feedback", "autonomous_experience", "cognitive_cycle") else "concept"
+            label = lesson.splitlines()[-1].strip()[:120] or lesson[:120]
+            node_result = self.create_node({
+                "node_type": node_type,
+                "label": label,
+                "description": lesson[:1000],
+                "node_metadata": {
+                    "knowledge_kind": "verified_learning",
+                    "learning_id": learning_id,
+                    "memory_id": memory.get("id"),
+                    "learning_status": status,
+                    "learning_source": source,
+                },
+                "tags": ["learning", source, outcome],
+                "weight": 1.0,
+                "confidence": float(learning.get("confidence") or 0.5),
+                "privacy_level": "PRIVATE",
+            }, actor=actor, idempotency_key=f"learning_graph_node:{learning_id}")
+            node = node_result["record"]
+
+        if node.get("id") not in knowledge_nodes:
+            knowledge_nodes.append(node["id"])
+            learning = self.update_learning(
+                learning_id,
+                {"knowledge_nodes": knowledge_nodes},
+                expected_version=learning["version"],
+                actor=actor,
+            )
+        else:
+            learning = self.get_learning(learning_id) or learning
+
+        try:
+            self.record_audit(
+                actor,
+                "learning.graph.promote",
+                "learning_events",
+                learning_id,
+                "success",
+                {"status": status, "node_id": node.get("id"), "memory_id": memory.get("id")},
+            )
+        except Exception:
+            pass
+
+        return {
+            "promoted": True,
+            "status": status,
+            "learning": learning,
+            "node": node,
+            "memory": memory,
+        }
+
     def get_learning(self, learning_id):
         """Fix Neon+pooler: WHERE id a veces falla. Fallback a search sin filtro."""
         rec = self.repo.get("learning_events", learning_id)
