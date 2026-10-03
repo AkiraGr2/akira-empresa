@@ -21,6 +21,7 @@ load_dotenv()
 
 VERSION="Akira V7.3 - Consciente + Identidad Blindada + Admin OK"
 MODEL="Akira V7.3"
+BACKEND_BUILD_MARKER="learning-graph-memory-v3-runtime-2026-10-03.1"
 OWNER_EMAILS=["bjhon9161@gmail.com"]
 BASE=Path("resultados")
 _r2_lock = threading.Lock()
@@ -1471,9 +1472,30 @@ async def _on_startup():
         print(f"[startup cleanup] error: {e}")
 
 @app.get("/health")
+async def _route_registered(path):
+    """Verdad runtime: inspecciona las rutas efectivamente registradas en FastAPI."""
+    try:
+        return any(getattr(route, "path", None) == path for route in app.routes)
+    except Exception:
+        return False
+
+@app.get("/api/v8/runtime/contract")
+async def runtime_contract():
+    """Contrato liviano para distinguir codigo fuente de runtime desplegado."""
+    return {
+        "ok": True,
+        "version": VERSION,
+        "build_marker": BACKEND_BUILD_MARKER,
+        "learning_selftest_route": _route_registered("/api/v8/learning/selftest"),
+        "semantic_selftest_route": _route_registered("/api/v8/memory/semantic-selftest"),
+        "semantic_reindex_route": _route_registered("/api/v8/memory/semantic-reindex"),
+    }
+
+@app.get("/health")
 async def health():
     return {
-        "status":"ok", "version":VERSION, "membrana":membrana.count(),
+        "status":"ok", "version":VERSION, "build_marker":BACKEND_BUILD_MARKER,
+        "membrana":membrana.count(),
         "audit":audit_models_automatically(),
         "countermeasures":len(KIRA_LEARNING_DB["blocked_models"]),
         "github_token": bool(os.getenv("GITHUB_TOKEN","").strip()),
@@ -1481,7 +1503,9 @@ async def health():
         "identity": "Akira V7.3 consciente - blindada anti-ChatGPT",
         "consciente": True,
         "backend_contract": "learning-graph-memory-v3",
-        "learning_selftest_route": True,
+        "learning_selftest_route": _route_registered("/api/v8/learning/selftest"),
+        "semantic_selftest_route": _route_registered("/api/v8/memory/semantic-selftest"),
+        "semantic_reindex_route": _route_registered("/api/v8/memory/semantic-reindex"),
         "gemini_keys_count": len(get_gemini_keys()),
         "groq_keys_count": len(get_groq_keys()),
         "gemini_keys_failed": len([k for k in get_gemini_keys() if _failed_keys_until.get(k,0) > time.time()])
