@@ -3400,6 +3400,87 @@ def v8_learning_selftest(request: Request):
 
     return {"ok": all(t["status"] == "PASS" for t in tests), "tests": tests, "synthetic_only": True}
 
+@app.get("/api/v8/memory/semantic-selftest")
+def v8_memory_semantic_selftest(request: Request):
+    s = get_session(request)
+    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    if not s.get("is_owner"): return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
+    service = _persistence_service()
+    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+
+    tests = []
+    def add(name, ok, detail=None):
+        tests.append({"name": name, "status": "PASS" if ok else "FAIL", "detail": detail or {}})
+
+    marker_id = "SEMANTIC_SELFTEST_" + hashlib.sha256(
+        str(time.time_ns()).encode("utf-8")
+    ).hexdigest()[:12]
+    memory_id = None
+    try:
+        created = service.save_memory({
+            "content": "Prueba semántica controlada de Akira para recuperación por significado.",
+            "memory_type": "semantic",
+            "importance": 1,
+            "confidence": 0.5,
+            "source": "semantic_selftest",
+            "source_id": marker_id,
+            "source_reference": "selftest://semantic/" + marker_id,
+            "privacy_level": "PRIVATE",
+            "tags": ["semantic_selftest"],
+        }, actor=s["email"], idempotency_key="semantic_selftest:" + marker_id)
+        memory_id = created["record"]["id"]
+        embedding = _generate_memory_embedding(created["record"]["content"])
+        add("embedding_generation", bool(embedding), {"dimensions": len(embedding or [])})
+        if embedding:
+            indexed = service.upsert_memory_embedding(
+                memory_id,
+                MEMORY_EMBEDDING_MODEL,
+                embedding,
+                hashlib.sha256(
+                    (MEMORY_EMBEDDING_MODEL + "\n" + created["record"]["content"]).encode("utf-8")
+                ).hexdigest(),
+            )
+            add("embedding_persisted", bool(indexed and indexed.get("memory_id") == memory_id), indexed or {})
+            query_embedding = _generate_memory_embedding("recuperar prueba de recuperación semántica controlada")
+            semantic = service.search_memory_semantic(
+                query_embedding or embedding,
+                MEMORY_EMBEDDING_MODEL,
+                limit=10,
+            )
+            hit = next((row for row in semantic if row.get("memory_id") == memory_id), None)
+            add(
+                "semantic_search_hit",
+                bool(hit) and float(hit.get("semantic_score") or 0.0) >= 0.0,
+                {"hit": bool(hit), "score": (hit or {}).get("semantic_score")},
+            )
+        if memory_id:
+            memory = service.get_memory(memory_id)
+            if memory:
+                service.archive_memory(memory_id, expected_version=memory["version"], actor=s["email"])
+            service.delete_memory_embedding(memory_id)
+            add("semantic_cleanup", True, {"memory_id": memory_id})
+    except Exception as e:
+        add("semantic_selftest_contract", False, {"error_type": type(e).__name__, "message": str(e)[:200]})
+        if memory_id:
+            try:
+                memory = service.get_memory(memory_id)
+                if memory and memory.get("status") == "active":
+                    service.archive_memory(memory_id, expected_version=memory["version"], actor=s["email"])
+            except Exception:
+                pass
+            try:
+                service.delete_memory_embedding(memory_id)
+            except Exception:
+                pass
+
+    return {
+        "ok": all(t["status"] == "PASS" for t in tests),
+        "model": MEMORY_EMBEDDING_MODEL,
+        "dimensions": MEMORY_EMBEDDING_DIMENSIONS,
+        "tests": tests,
+        "synthetic_only": True,
+    }
+
 @app.get("/api/v8/missions/selftest")
 def v8_missions_selftest(request: Request):
     s = get_session(request)
