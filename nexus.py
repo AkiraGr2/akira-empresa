@@ -26,6 +26,11 @@ OWNER_EMAILS=["bjhon9161@gmail.com"]
 BASE=Path("resultados")
 _r2_lock = threading.Lock()
 
+# Ultimo resultado del SELFTEST E2E por propietario. Es un fallback de transporte
+# para clientes que reciban HTTP 200 de la peticion larga pero cuerpo vacio.
+_learning_selftest_last = {}
+_learning_selftest_last_lock = threading.Lock()
+
 MAX_MISSION_STEPS = 8
 MISSION_PLAN_TIMEOUT_S = 30
 MISSION_ORPHAN_MAX_AGE_S = 3600
@@ -2241,6 +2246,14 @@ def v8_learning_selftest(request: Request):
     selftest_result = json.loads(selftest_payload.decode("utf-8"))
     selftest_result["duration_ms"] = duration_ms
     print(f"[learning-selftest] duration_ms={duration_ms} tests={len(tests)}")
+    try:
+        with _learning_selftest_last_lock:
+            _learning_selftest_last[s["email"]] = {
+                "saved_at": time.time(),
+                "result": dict(selftest_result),
+            }
+    except Exception:
+        pass
     selftest_payload = json.dumps(
         selftest_result, ensure_ascii=False, separators=(",", ":")
     ).encode("utf-8")
@@ -2255,6 +2268,26 @@ def v8_learning_selftest(request: Request):
         },
     )
 
+
+@app.get("/api/v8/learning/selftest/result")
+def v8_learning_selftest_result(request: Request):
+    s = get_session(request)
+    if not s:
+        return JSONResponse({"authenticated": False}, status_code=401)
+    if not s.get("is_owner"):
+        return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
+    try:
+        with _learning_selftest_last_lock:
+            entry = _learning_selftest_last.get(s["email"])
+    except Exception:
+        entry = None
+    if not isinstance(entry, dict) or not isinstance(entry.get("result"), dict):
+        return JSONResponse({"ok": False, "reason": "result_not_available"}, status_code=404)
+    if time.time() - float(entry.get("saved_at") or 0) > 600:
+        return JSONResponse({"ok": False, "reason": "result_expired"}, status_code=404)
+    result = dict(entry["result"])
+    result["transport_fallback"] = True
+    return JSONResponse(result, status_code=200, headers={"Cache-Control": "no-store"})
 
 @app.get("/api/v8/learning/{learning_id}")
 def v8_learning_get(request: Request, learning_id: str):
