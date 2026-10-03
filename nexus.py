@@ -3159,14 +3159,84 @@ def v8_learning_selftest(request: Request):
         add("verified_to_consolidated", consolidated.get("status") == "consolidated", {"status": consolidated.get("status")})
         fetched = service.get_learning(created["id"])
         add("persisted_after_consolidation", fetched is not None and fetched.get("status") == "consolidated", {"id": created["id"]})
+
+        # E2E real del Knowledge Gate: un aprendizaje consolidado debe
+        # materializar memoria/nodo/aristas de forma idempotente.
+        core = service.ensure_core_node(actor=s["email"])
+        if core:
+            current_before = service.get_learning(created["id"])
+            context = {"node_type": "concept", "label": "SELFTEST Learning", "knowledge_node_ids": [core["id"]]}
+            promoted_learning = service.update_learning(
+                created["id"], {"learning_context": context},
+                expected_version=current_before["version"], actor=s["email"]
+            )
+            promoted = service.promote_learning_to_graph(created["id"], actor=s["email"])
+            promoted_node = promoted.get("node")
+            promoted_edges = promoted.get("edges") or []
+            add(
+                "verified_learning_promoted",
+                bool(promoted.get("promoted"))
+                and isinstance(promoted_node, dict)
+                and promoted_node.get("status") == "active",
+                {"node_id": (promoted_node or {}).get("id")}
+            )
+            add(
+                "verified_learning_has_real_edges",
+                len(promoted_edges) >= 1,
+                {"edge_count": len(promoted_edges)}
+            )
+            promoted_memory = promoted.get("memory") or {}
+            add(
+                "verified_learning_has_memory",
+                bool(promoted_memory.get("id"))
+                and promoted_memory.get("source_id") == created["id"],
+                {"memory_id": promoted_memory.get("id")}
+            )
+            recalled_verified = _recall_memories(
+                service,
+                "Dato sintetico de prueba del Learning Engine SELFTEST Learning",
+                limit=5,
+            )
+            add(
+                "verified_learning_recalled",
+                any(m.get("source_id") == created["id"] for m in recalled_verified),
+                {"recalled_count": len(recalled_verified)}
+            )
+            after_recall = service.get_learning(created["id"])
+            add(
+                "verified_learning_reuse_recorded",
+                int((after_recall or {}).get("reuse_count") or 0) >= 1,
+                {"reuse_count": int((after_recall or {}).get("reuse_count") or 0)}
+            )
+            cleanup_result = service.cleanup_learning_materialization(created["id"], actor=s["email"])
+            add(
+                "learning_materialization_cleanup",
+                cleanup_result.get("archived_nodes", 0) >= 1
+                and cleanup_result.get("archived_memories", 0) >= 1,
+                cleanup_result,
+            )
+        else:
+            add("verified_learning_promotion", False, {"reason": "core_node_unavailable"})
+
         try:
-            service.update_learning_status(created["id"], "discarded", expected_version=fetched["version"], actor=s["email"])
+            current_for_transition = service.get_learning(created["id"])
+            service.update_learning_status(
+                created["id"], "discarded",
+                expected_version=current_for_transition["version"],
+                actor=s["email"]
+            )
             add("illegal_transition_rejected", False, {"reason": "discarded_transition_should_fail"})
         except Exception as e:
             add("illegal_transition_rejected", True, {"error_type": type(e).__name__})
-        # Limpieza del artefacto sintético: no queda como conocimiento real.
+
+        # Limpieza final del registro sintético: consolidated -> obsolete.
         try:
-            service.update_learning_status(created["id"], "obsolete", expected_version=fetched["version"], actor=s["email"])
+            current_for_cleanup = service.get_learning(created["id"])
+            service.update_learning_status(
+                created["id"], "obsolete",
+                expected_version=current_for_cleanup["version"],
+                actor=s["email"]
+            )
             add("selftest_cleanup", True, {"status": "obsolete"})
         except Exception as e:
             add("selftest_cleanup", False, {"error_type": type(e).__name__})
