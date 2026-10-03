@@ -105,6 +105,21 @@ class PostgresRepository(PersistenceRepository):
         except psycopg.Error as e:
             raise StorageError(type(e).__name__) from e
 
+    def advisory_xact_lock(self, key):
+        """Serializa operaciones logicas iguales dentro de una transaccion PostgreSQL."""
+        if self._conn is None:
+            raise StorageError("advisory_lock_requires_transaction")
+        try:
+            with self._cursor() as cur:
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, %s))",
+                    (str(key), 0),
+                )
+        except StorageError:
+            raise
+        except Exception as e:
+            raise StorageError(type(e).__name__) from e
+
     @staticmethod
     def _where(entity, filters):
         clauses, params = [], []
