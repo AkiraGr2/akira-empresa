@@ -148,13 +148,13 @@ ENTITIES = {
         "table": "learning_events",
         "columns": (
             "id", "source", "event", "lesson", "knowledge_nodes", "relationships",
-            "confidence", "outcome", "status", "evidence", "verification_analysis", "verified_at", "verified_by", "reuse_count", "last_reused_at",
+            "confidence", "outcome", "status", "evidence", "verification_analysis", "learning_context", "verified_at", "verified_by", "reuse_count", "last_reused_at",
             "schema_version", "idempotency_key",
         ),
-        "json_columns": ("knowledge_nodes", "relationships", "evidence", "verification_analysis"),
+        "json_columns": ("knowledge_nodes", "relationships", "evidence", "verification_analysis", "learning_context"),
         "mutable": (
             "source", "event", "lesson", "knowledge_nodes", "relationships",
-            "confidence", "outcome", "status", "evidence", "verification_analysis", "verified_at", "verified_by", "reuse_count", "last_reused_at",
+            "confidence", "outcome", "status", "evidence", "verification_analysis", "learning_context", "verified_at", "verified_by", "reuse_count", "last_reused_at",
         ),
         "filterable": ("id", "source", "outcome", "status", "idempotency_key"),
         "in_filterable": ("source", "outcome", "status"),
@@ -489,12 +489,12 @@ def validate_self_model(data, partial: bool = False) -> dict:
 _LEARNING_INPUT = {
     "source", "event", "lesson", "knowledge_nodes", "relationships",
     "confidence", "outcome", "status", "evidence", "verification_analysis",
-    "verified_at", "verified_by", "reuse_count", "last_reused_at",
+    "learning_context", "verified_at", "verified_by", "reuse_count", "last_reused_at",
 }
 _LEARNING_UPDATABLE = {
     "source", "event", "lesson", "knowledge_nodes", "relationships",
     "confidence", "outcome", "status", "evidence", "verification_analysis",
-    "verified_at", "verified_by", "reuse_count", "last_reused_at",
+    "learning_context", "verified_at", "verified_by", "reuse_count", "last_reused_at",
 }
 
 def _learning_evidence(value):
@@ -585,6 +585,11 @@ def validate_learning_event(data, partial: bool = False) -> dict:
         out["status"] = _choice("status", data.get("status", "candidate"), LEARNING_STATUSES)
     if "evidence" in data or not partial:
         out["evidence"] = _learning_evidence(data.get("evidence", []))
+    if "learning_context" in data or not partial:
+        value = data.get("learning_context", {})
+        if not isinstance(value, dict):
+            raise ValidationError("learning_context debe ser un objeto (dict)")
+        out["learning_context"] = value
     if "verification_analysis" in data:
         analysis = data["verification_analysis"]
         if not isinstance(analysis, dict):
