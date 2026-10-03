@@ -332,16 +332,45 @@ def run_logic_tests(service, fresh_service_factory=None):
                     "detail": "Experiencia/Learning/Knowledge enlazados: pendiente de pruebas cruzadas."})
 
     # Limpieza (Fase 1.6, 2026-10-01): BORRAR de verdad las memorias de prueba.
-    # Antes se hacía archive_memory (status->archived), pero la tabla memories cuenta
-    # los archivados igual, así que cada corrida del selftest dejaba ~6 filas basura
-    # acumulándose para siempre. Ahora se hace hard delete via repo.delete, igual que
-    # ya se hacía con agent_tasks. El selftest sigue corriendo completo, solo que ya
-    # no deja residuo.
+    # La limpieza también se valida: un selftest NO puede reportar PASS si dejó
+    # una memoria de prueba detrás.
+    cleanup_failures = []
+    cleanup_deleted = 0
     for mid in created_ids:
         try:
-            service.repo.delete("memories", mid)
-        except Exception:
-            pass
+            deleted = service.repo.delete("memories", mid)
+            still_exists = service.exists_memory(mid)
+            if still_exists:
+                cleanup_failures.append({
+                    "memory_id": mid,
+                    "reason": "memory_still_exists_after_delete",
+                    "delete_returned": bool(deleted),
+                })
+            else:
+                cleanup_deleted += 1
+        except Exception as e:
+            cleanup_failures.append({
+                "memory_id": mid,
+                "reason": "delete_error",
+                "error_type": type(e).__name__,
+            })
+
+    add(
+        "selftest_memory_cleanup",
+        not cleanup_failures,
+        {
+            "created_count": len(created_ids),
+            "deleted_count": cleanup_deleted,
+            "failed_count": len(cleanup_failures),
+            "failures": cleanup_failures[:10],
+        },
+    )
+    if cleanup_failures:
+        print(
+            f"[persistence] selftest cleanup FAIL: "
+            f"{len(cleanup_failures)} memory(s) remain or could not be deleted",
+            flush=True,
+        )
     for tid in created_task_ids:
         try:
             service.repo.delete("agent_tasks", tid)
