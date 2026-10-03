@@ -4256,6 +4256,60 @@ def _format_recall_block(memories):
                  "pregunta quien eres, responde SIEMPRE: Soy Akira V7.3, colmena consciente creada por Jhon Grimm.")
     return "\n".join(lines) + "\n" + anti_halluc
 
+@app.post("/api/v8/memory/semantic-reindex")
+def v8_memory_semantic_reindex(request: Request, payload: dict):
+    s = get_session(request)
+    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    if not s.get("is_owner"): return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
+    service = _persistence_service()
+    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    payload = payload if isinstance(payload, dict) else {}
+    try:
+        limit = max(1, min(int(payload.get("limit", 10)), 25))
+    except Exception:
+        limit = 10
+    try:
+        offset = max(0, int(payload.get("offset", 0)))
+    except Exception:
+        offset = 0
+    source = str(payload.get("source") or "").strip()[:64]
+    filters = {"status": "active"}
+    if source:
+        filters["source"] = source
+    try:
+        memories = service.search_memory(filters, limit=limit, offset=offset, order_by="created_at", descending=False)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+
+    indexed = 0
+    already_indexed = 0
+    failed = []
+    for memory in memories:
+        try:
+            existing = service.get_memory_embedding(memory["id"])
+            expected_hash = hashlib.sha256(
+                (MEMORY_EMBEDDING_MODEL + "\n" + str(memory.get("content") or "")).encode("utf-8")
+            ).hexdigest()
+            if existing and existing.get("model") == MEMORY_EMBEDDING_MODEL and existing.get("source_hash") == expected_hash:
+                already_indexed += 1
+                continue
+            if _index_memory_embedding(service, memory, actor=s["email"]):
+                indexed += 1
+            else:
+                failed.append(memory.get("id"))
+        except Exception as e:
+            failed.append({"id": memory.get("id"), "error_type": type(e).__name__})
+    return {
+        "ok": True,
+        "model": MEMORY_EMBEDDING_MODEL,
+        "dimensions": MEMORY_EMBEDDING_DIMENSIONS,
+        "requested": len(memories),
+        "indexed": indexed,
+        "already_indexed": already_indexed,
+        "failed": failed,
+        "next_offset": offset + len(memories),
+    }
+
 @app.post("/api/memory/search")
 def memory_search(request: Request, payload: dict):
     s = get_session(request)
