@@ -1851,7 +1851,6 @@ def v8_learning_absorption_diagnose(request: Request, payload: dict):
     conversation_context = ""
     try:
         if service is not None:
-            memories = awaitable = None
             # Este endpoint es sincrono; recall directo evita persistencia nueva.
             memories = _recall_memories(service, message)
             conversation_id = payload.get("conversation_id")
@@ -5368,6 +5367,9 @@ async def chat_stream(request: Request):
         recall_block = _format_recall_block(memories)
         conversation_context = await asyncio.to_thread(
             _format_conversation_context, service, conversation_id, msg
+        )
+        asyncio.create_task(
+            _run_absorption_shadow(msg, memories, conversation_context)
         )
         t0 = time.time()
 
