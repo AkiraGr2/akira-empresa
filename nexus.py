@@ -2206,7 +2206,7 @@ EVIDENCIA:
             "contradicting_evidence": contradicting,
             "gaps": result["gaps"],
             "evaluated_by": result["evaluated_by"],
-            "evaluated_at": _now_iso(),
+            "evaluated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         }
         rec = service.update_learning(
             learning_id,
