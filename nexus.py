@@ -53,7 +53,7 @@ ABSORPTION_MODE = (os.getenv("AKIRA_ABSORPTION_MODE", "shadow") or "shadow").str
 if ABSORPTION_MODE not in {"off", "shadow"}:
     ABSORPTION_MODE = "shadow"
 ABSORPTION_MIN_CHARS = 25
-ABSORPTION_TIMEOUT_S = 10
+ABSORPTION_TIMEOUT_S = 20
 ABSORPTION_MAX_EXISTING_MEMORIES = 8
 
 _mission_rate_store = defaultdict(list)
@@ -4670,7 +4670,6 @@ def _decide_absorption(message, memories=None, conversation_context=""):
     decision["source"] = "chat"
     decision["source_id"] = "chat:" + hashlib.sha256(msg.encode("utf-8")).hexdigest()[:16]
     decision["safe_for_recall"] = False
-    decision["provider"] = provider
     return decision
 
 
@@ -4692,7 +4691,6 @@ async def _run_absorption_shadow(message, memories=None, conversation_context=""
                 "novelty": decision.get("novelty"),
                 "reusability": decision.get("reusability"),
                 "source_id": decision.get("source_id"),
-                "provider": decision.get("provider"),
             }
             print(f"[absorption-shadow] {summary}")
         return decision
@@ -5267,6 +5265,9 @@ async def chat(request: Request):
         recall_block = _format_recall_block(memories)
         conversation_context = await asyncio.to_thread(
             _format_conversation_context, service, conversation_id, msg
+        )
+        asyncio.create_task(
+            _run_absorption_shadow(msg, memories, conversation_context)
         )
         model_route, _ = select_model_route(msg, bool(data.get("image_base64","")))
         model_route, _ = validate_model_before_call(model_route, "chat")
