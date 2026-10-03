@@ -26,6 +26,10 @@ jobs:
         run: |
           python -m compileall -q .
 
+      - name: Test autonomous absorption contract
+        run: |
+          python -m unittest persistence.test_absorption -v
+
       - name: Guard route ordering
         run: |
           python - <<'PY'
