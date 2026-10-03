@@ -452,6 +452,25 @@ class PersistenceService:
                 "privacy_level": str(context.get("privacy_level") or "PRIVATE"),
             }, actor=actor, idempotency_key=f"learning_graph_node:{learning_id}")
             node = node_result["record"]
+        else:
+            metadata = node.get("node_metadata") if isinstance(node.get("node_metadata"), dict) else {}
+            metadata.update({
+                "knowledge_kind": "verified_learning",
+                "learning_id": learning_id,
+                "memory_id": memory.get("id"),
+                "learning_status": status,
+                "learning_source": source,
+            })
+            try:
+                updated_node = self.update_node(
+                    node["id"],
+                    {"node_metadata": metadata, "tags": tags},
+                    expected_version=node["version"],
+                    actor=actor,
+                )
+                node = updated_node
+            except (ConflictError, ValidationError):
+                node = self.get_node(node["id"]) or node
 
         if node.get("id") not in knowledge_nodes:
             knowledge_nodes.append(node["id"])
@@ -606,6 +625,61 @@ class PersistenceService:
             "edges": edges,
         }
 
+    def cleanup_learning_materialization(self, learning_id, actor="learning-selftest"):
+        """Retira de forma acotada los artefactos de una prueba de materializacion."""
+        learning = self.get_learning(learning_id)
+        if learning is None:
+            raise NotFoundError(learning_id)
+        learning_node_ids = set(str(x) for x in (learning.get("knowledge_nodes") or []) if str(x).strip())
+        context = learning.get("learning_context") if isinstance(learning.get("learning_context"), dict) else {}
+        if context.get("promoted_node_id"):
+            learning_node_ids.add(str(context["promoted_node_id"]))
+        archived_nodes = 0
+        archived_memories = 0
+        archived_edges = 0
+
+        for node_id in sorted(learning_node_ids):
+            node = self.get_node(node_id)
+            if not node or node.get("status") != "active":
+                continue
+            metadata = node.get("node_metadata") if isinstance(node.get("node_metadata"), dict) else {}
+            if str(metadata.get("learning_id") or "") != str(learning_id):
+                continue
+            try:
+                self.update_node(node_id, {"status": "archived"}, expected_version=node["version"], actor=actor)
+                archived_nodes += 1
+            except Exception:
+                pass
+
+        memories = self.repo.search("memories", {"source_id": learning_id, "status": "active"}, limit=50)
+        for memory in memories:
+            try:
+                with self.repo.transaction() as tx:
+                    tx.update("memories", memory["id"], {"status": "archived"}, memory["version"])
+                archived_memories += 1
+            except Exception:
+                pass
+
+        if learning_node_ids:
+            edge_rows = self.repo.search("graph_edges", {"status": "active"}, limit=5000)
+            for edge in edge_rows:
+                if edge.get("from_node") not in learning_node_ids and edge.get("to_node") not in learning_node_ids:
+                    continue
+                if edge.get("origin") != "learning_promotion" and edge.get("origin") != "auto_connect":
+                    continue
+                try:
+                    with self.repo.transaction() as tx:
+                        tx.update("graph_edges", edge["id"], {"status": "archived"}, edge["version"])
+                    archived_edges += 1
+                except Exception:
+                    pass
+
+        return {
+            "archived_nodes": archived_nodes,
+            "archived_memories": archived_memories,
+            "archived_edges": archived_edges,
+        }
+
     def get_learning(self, learning_id):
         """Fix Neon+pooler: WHERE id a veces falla. Fallback a search sin filtro."""
         rec = self.repo.get("learning_events", learning_id)
@@ -668,6 +742,35 @@ class PersistenceService:
         return {"outcome": "created" if created else "already_synced", "record": verified}
 
     def get_node(self, node_id): return self.repo.get("graph_nodes", node_id)
+
+    def update_node(self, node_id, changes, expected_version=None, actor="system"):
+        current = self.get_node(node_id)
+        if current is None:
+            raise NotFoundError(node_id)
+        clean = validate_graph_node(changes, partial=True)
+        if not clean:
+            raise ValidationError("no hay cambios")
+        if expected_version is None:
+            expected_version = current["version"]
+        try:
+            with self.repo.transaction() as tx:
+                updated = tx.update("graph_nodes", node_id, clean, expected_version)
+                tx.append_audit({
+                    "actor": actor,
+                    "action": "graph.node.update",
+                    "resource": "graph_nodes",
+                    "resource_id": node_id,
+                    "status": "success",
+                    "detail": {"fields": sorted(clean), "new_version": updated["version"]},
+                })
+        except PersistenceError:
+            raise
+        except Exception as e:
+            raise StorageError(type(e).__name__) from e
+        verified = self.repo.get("graph_nodes", node_id)
+        if verified is None or verified["version"] != expected_version + 1:
+            raise VerificationError("graph node update no confirmado")
+        return verified
 
     def create_edge(self, data, actor="system", idempotency_key=None):
         fields = validate_graph_edge(data)
