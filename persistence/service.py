@@ -162,6 +162,33 @@ class PersistenceService:
         return result
 
     def get_memory(self, memory_id): return self.repo.get("memories", memory_id)
+    def get_memory_embedding(self, memory_id):
+        getter = getattr(self.repo, "get_memory_embedding", None)
+        if getter is None:
+            return None
+        return getter(memory_id)
+
+    def upsert_memory_embedding(self, memory_id, model, embedding, source_hash):
+        memory = self.get_memory(memory_id)
+        if memory is None:
+            raise NotFoundError(memory_id)
+        if memory.get("status") != "active":
+            raise ValidationError("solo memorias activas pueden tener embedding")
+        if not isinstance(embedding, (list, tuple)) or len(embedding) != 768:
+            raise ValidationError("embedding debe tener 768 dimensiones")
+        getter = getattr(self.repo, "upsert_memory_embedding", None)
+        if getter is None:
+            raise StorageError("vector_repository_not_available")
+        return getter(memory_id, model, embedding, source_hash)
+
+    def search_memory_semantic(self, embedding, model, limit=20):
+        if not isinstance(embedding, (list, tuple)) or len(embedding) != 768:
+            raise ValidationError("embedding debe tener 768 dimensiones")
+        searcher = getattr(self.repo, "search_memory_embeddings", None)
+        if searcher is None:
+            return []
+        return searcher(embedding, model, limit=limit)
+
     def exists_memory(self, memory_id): return self.repo.exists("memories", memory_id)
     def update_memory(self, memory_id, changes, expected_version, actor="system"):
         clean = validate_memory(changes, partial=True)
