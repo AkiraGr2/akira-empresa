@@ -3863,6 +3863,53 @@ _INGEST_TYPE_MAP = {
     "user_context": "user_context", "contexto": "user_context", "system": "system", "sistema": "system",
 }
 
+def _memory_gate_decide(service, content, memory_type, importance, tags, actor):
+    """Gate minimo de ingreso de memoria: clasifica, valida, deduplica y exige procedencia."""
+    text = str(content or "").strip()
+    reasons = []
+    if len(text) < 8:
+        reasons.append("content_too_short")
+    if not actor:
+        reasons.append("actor_required")
+    if memory_type not in {"episodic", "semantic", "procedural", "working", "user_context", "system"}:
+        reasons.append("invalid_memory_type")
+    if isinstance(importance, bool) or not isinstance(importance, int) or not 0 <= importance <= 10:
+        reasons.append("invalid_importance")
+    clean_tags = [str(x).strip()[:64] for x in (tags if isinstance(tags, list) else []) if str(x).strip()]
+    # Evita que el sincronizador de navegador replique exactamente la misma memoria activa.
+    duplicate = None
+    if service is not None and text:
+        try:
+            candidates = service.search_memory({"text_contains": text[:200]}, limit=20)
+            for row in candidates:
+                if str(row.get("content") or "").strip() == text:
+                    if str(row.get("owner_scope") or "owner") == str(actor):
+                        duplicate = row
+                        break
+        except Exception:
+            # Un fallo de lectura no convierte una memoria en "no guardable".
+            pass
+    if duplicate:
+        return {
+            "allowed": False,
+            "decision": "duplicate",
+            "reason": "active_duplicate",
+            "existing_memory_id": duplicate.get("id"),
+        }
+    if reasons:
+        return {"allowed": False, "decision": "reject", "reason": ",".join(reasons)}
+    return {
+        "allowed": True,
+        "decision": "save",
+        "classification": {
+            "memory_type": memory_type,
+            "importance": importance,
+            "tags": clean_tags[:28],
+            "privacy_level": "PRIVATE",
+            "source": "browser_sync",
+        },
+    }
+
 @app.post("/api/memory/ingest")
 def memory_ingest(request: Request, payload: dict):
     s = get_session(request)
@@ -3882,11 +3929,21 @@ def memory_ingest(request: Request, payload: dict):
     if not isinstance(tags, list): tags = []
     tags = [str(t)[:64] for t in tags[:28]]
     if tipo_raw and tipo_raw not in tags: tags.append(tipo_raw[:64])
+    actor = (s.get("email") or "browser")[:64]
+    owner_scope = (s.get("owner_scope") or "owner")[:64]
+    gate = _memory_gate_decide(service, texto, memory_type, importancia, tags, owner_scope)
+    if not gate.get("allowed"):
+        return {
+            "ok": True,
+            "stored": False,
+            "gate": gate,
+            "id": None,
+        }
+    clean_tags = gate["classification"]["tags"]
     data = {"content": texto[:20000], "memory_type": memory_type, "importance": importancia,
             "confidence": 0.5, "source": "browser_sync", "source_id": nid[:256],
-            "created_by": (s.get("email") or "browser")[:64],
-            "owner_scope": (s.get("owner_scope") or "owner")[:64],
-            "privacy_level": "PRIVATE", "tags": tags}
+            "created_by": actor, "owner_scope": owner_scope,
+            "privacy_level": "PRIVATE", "tags": clean_tags}
     from persistence.core import PersistenceError, ValidationError
     try:
         result = service.save_memory(data, actor="browser_sync", idempotency_key=nid[:200])
