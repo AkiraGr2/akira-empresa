@@ -39,5 +39,17 @@ class ChatActionIntegrityGuardTests(unittest.TestCase):
         )
         self.assertIn("learn_real", real_claim)
 
+    def test_github_readonly_gateway_rejects_untrusted_repo(self):
+        from github_readonly import GitHubReadValidationError, read_repo_path
+
+        with self.assertRaises(GitHubReadValidationError):
+            read_repo_path("example/other-repo", "")
+
+    def test_github_readonly_gateway_rejects_path_traversal(self):
+        from github_readonly import GitHubReadValidationError, read_repo_path
+
+        with self.assertRaises(GitHubReadValidationError):
+            read_repo_path("AkiraGr2/akira-empresa", "../secret.txt")
+
 if __name__ == "__main__":
     unittest.main()
