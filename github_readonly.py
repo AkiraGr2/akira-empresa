@@ -14,8 +14,6 @@ import os
 import re
 from typing import Any
 
-import requests
-
 
 ALLOWED_REPOSITORIES = {
     "AkiraGr2/akira-v3-frontend",
@@ -78,6 +76,7 @@ def _headers() -> dict[str, str]:
 
 def _get_json(url: str) -> Any:
     try:
+        import requests
         response = requests.get(
             url,
             headers=_headers(),
