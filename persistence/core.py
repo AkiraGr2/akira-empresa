@@ -151,7 +151,7 @@ ENTITIES = {
             "confidence", "outcome", "status", "evidence", "verification_analysis", "verified_at", "verified_by", "reuse_count", "last_reused_at",
             "schema_version", "idempotency_key",
         ),
-        "json_columns": ("knowledge_nodes", "relationships"),
+        "json_columns": ("knowledge_nodes", "relationships", "evidence", "verification_analysis"),
         "mutable": (
             "source", "event", "lesson", "knowledge_nodes", "relationships",
             "confidence", "outcome", "status", "evidence", "verification_analysis", "verified_at", "verified_by", "reuse_count", "last_reused_at",
@@ -488,11 +488,13 @@ def validate_self_model(data, partial: bool = False) -> dict:
 
 _LEARNING_INPUT = {
     "source", "event", "lesson", "knowledge_nodes", "relationships",
-    "confidence", "outcome", "status", "evidence", "verified_at", "verified_by", "reuse_count", "last_reused_at",
+    "confidence", "outcome", "status", "evidence", "verification_analysis",
+    "verified_at", "verified_by", "reuse_count", "last_reused_at",
 }
 _LEARNING_UPDATABLE = {
     "source", "event", "lesson", "knowledge_nodes", "relationships",
-    "confidence", "outcome", "status", "evidence", "verified_at", "verified_by", "reuse_count", "last_reused_at",
+    "confidence", "outcome", "status", "evidence", "verification_analysis",
+    "verified_at", "verified_by", "reuse_count", "last_reused_at",
 }
 
 def _learning_evidence(value):
@@ -515,6 +517,39 @@ def _learning_evidence(value):
         if not title or not reference:
             raise ValidationError("cada evidencia requiere title y reference")
         out.append({"type": typ, "title": title, "reference": reference, "note": note})
+    return out
+
+def _learning_relationships(value):
+    if not isinstance(value, list) or len(value) > 100:
+        raise ValidationError("relationships debe ser una lista de maximo 100 elementos")
+    out = []
+    for item in value:
+        if isinstance(item, str):
+            # Compatibilidad con registros historicos que guardan solo IDs.
+            out.append(_str("relationship", item, 256))
+            continue
+        if not isinstance(item, dict):
+            raise ValidationError("cada relationship debe ser un objeto o un ID historico")
+        allowed = {"from_node", "to_node", "relation_type", "weight", "confidence", "origin"}
+        extra = sorted(set(item) - allowed)
+        if extra:
+            raise ValidationError(f"campos de relationship no permitidos: {extra}")
+        from_node = _str("relationship.from_node", item.get("from_node", ""), 256)
+        to_node = _str("relationship.to_node", item.get("to_node", ""), 256)
+        relation_type = _str("relationship.relation_type", item.get("relation_type", ""), 64)
+        if not from_node or not to_node or not relation_type:
+            raise ValidationError("cada relationship requiere from_node, to_node y relation_type")
+        weight = _non_negative_float("relationship.weight", item.get("weight", 1.0))
+        confidence = _float_0_1("relationship.confidence", item.get("confidence", 0.5))
+        origin = _str("relationship.origin", item.get("origin", "learning"), 64)
+        out.append({
+            "from_node": from_node,
+            "to_node": to_node,
+            "relation_type": relation_type,
+            "weight": weight,
+            "confidence": confidence,
+            "origin": origin,
+        })
     return out
 
 def validate_learning_event(data, partial: bool = False) -> dict:
@@ -541,7 +576,7 @@ def validate_learning_event(data, partial: bool = False) -> dict:
     if "knowledge_nodes" in data or not partial:
         out["knowledge_nodes"] = _string_list("knowledge_nodes", data.get("knowledge_nodes", []), 100, 256)
     if "relationships" in data or not partial:
-        out["relationships"] = _string_list("relationships", data.get("relationships", []), 100, 256)
+        out["relationships"] = _learning_relationships(data.get("relationships", []))
     if "confidence" in data or not partial:
         out["confidence"] = _float_0_1("confidence", data.get("confidence", 0.5))
     if "outcome" in data or not partial:
