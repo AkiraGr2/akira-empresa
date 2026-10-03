@@ -29,6 +29,7 @@ jobs:
       - name: Test autonomous absorption contract
         run: |
           python -m unittest persistence.test_absorption -v
+          python -m unittest persistence.test_absorption_target -v
 
       - name: Test learning consolidation gate
         run: |
