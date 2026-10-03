@@ -25,6 +25,10 @@ REQUEST_TIMEOUT_S = 8
 MAX_FILES = 24
 MAX_TOTAL_BYTES = 120_000
 MAX_FILE_BYTES = 40_000
+MAX_SEARCH_SOURCE_BYTES = 800_000
+MAX_SEARCH_SNIPPET_BYTES = 18_000
+MAX_SEARCH_MATCHES_PER_FILE = 8
+MAX_SEARCH_CONTEXT_CHARS = 700
 MAX_PATH_CHARS = 240
 
 _SAFE_PATH_RE = re.compile(r"^[A-Za-z0-9_./-]+$")
@@ -106,6 +110,10 @@ def _api_url(repo: str, path: str = "") -> str:
 
 
 def _decode_content(item: dict[str, Any]) -> str:
+    return _decode_content_with_limit(item, MAX_FILE_BYTES)
+
+
+def _decode_content_with_limit(item: dict[str, Any], max_bytes: int) -> str:
     encoded = str(item.get("content") or "").replace("\n", "")
     if not encoded:
         raise GitHubReadUpstreamError("file_content_unavailable")
@@ -113,9 +121,68 @@ def _decode_content(item: dict[str, Any]) -> str:
         raw = base64.b64decode(encoded, validate=False)
     except (ValueError, TypeError) as exc:
         raise GitHubReadUpstreamError("file_content_decode_failed") from exc
-    if len(raw) > MAX_FILE_BYTES:
+    if len(raw) > max_bytes:
         raise GitHubReadValidationError("file_too_large")
     return raw.decode("utf-8", errors="replace")
+
+
+def _search_oversized_file(
+    item: dict[str, Any],
+    queries: list[str],
+) -> dict[str, Any]:
+    source = _decode_content_with_limit(item, MAX_SEARCH_SOURCE_BYTES)
+    normalized_queries = []
+    for raw in queries or []:
+        value = str(raw or "").strip()
+        if value and value.lower() not in {q.lower() for q in normalized_queries}:
+            normalized_queries.append(value[:120])
+        if len(normalized_queries) >= 12:
+            break
+
+    matches = []
+    seen = set()
+    for query in normalized_queries:
+        start = 0
+        needle = query.lower()
+        while len(matches) < MAX_SEARCH_MATCHES_PER_FILE:
+            idx = source.lower().find(needle, start)
+            if idx < 0:
+                break
+            start = idx + max(1, len(needle))
+            left = max(0, idx - MAX_SEARCH_CONTEXT_CHARS)
+            right = min(len(source), idx + len(query) + MAX_SEARCH_CONTEXT_CHARS)
+            snippet = source[left:right]
+            key = (left, right)
+            if key not in seen:
+                seen.add(key)
+                matches.append({
+                    "query": query,
+                    "start_char": idx,
+                    "snippet": snippet,
+                })
+    payload = {
+        "status": "ok",
+        "mode": "targeted_snippets",
+        "size_bytes": len(source.encode("utf-8")),
+        "queries": normalized_queries,
+        "matches": matches,
+    }
+    encoded_size = len(str(payload.get("matches") or "").encode("utf-8"))
+    if encoded_size > MAX_SEARCH_SNIPPET_BYTES:
+        # Keep deterministic, bounded evidence without exposing the whole file.
+        kept = []
+        used = 0
+        for match in matches:
+            cost = len(match["snippet"].encode("utf-8"))
+            if used + cost > MAX_SEARCH_SNIPPET_BYTES:
+                break
+            kept.append(match)
+            used += cost
+        payload["matches"] = kept
+        payload["truncated"] = len(kept) < len(matches)
+    else:
+        payload["truncated"] = False
+    return payload
 
 
 def read_repo_path(repo: str, path: str = "", max_items: int = MAX_FILES) -> dict[str, Any]:
@@ -169,38 +236,68 @@ def inspect_repository(
     repo: str,
     paths: list[str] | None = None,
     max_files: int = 8,
+    queries: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Read selected files plus a shallow root tree, without any write capability."""
+    """Read selected files plus targeted evidence from oversized files, read-only."""
     repo = _validate_repo(repo)
     max_files = max(1, min(int(max_files), MAX_FILES))
     selected = [_validate_path(p) for p in (paths or []) if str(p or "").strip()]
     selected = list(dict.fromkeys(selected))[:max_files]
+    queries = [
+        str(q or "").strip()[:120]
+        for q in (queries or [])
+        if str(q or "").strip()
+    ][:12]
 
     root = read_repo_path(repo, "", max_items=MAX_FILES)
     files = []
     total_bytes = 0
     for path in selected:
-        result = read_repo_path(repo, path, max_items=MAX_FILES)
-        if result.get("operation") != "read_file":
+        data = _get_json(_api_url(repo, path))
+        if isinstance(data, dict) and data.get("type") == "file":
+            size = int(data.get("size") or 0)
+            if total_bytes + size > MAX_TOTAL_BYTES:
+                files.append({
+                    "path": path,
+                    "status": "skipped_total_size_limit",
+                    "size_bytes": size,
+                })
+                continue
+            total_bytes += size
+            if size <= MAX_FILE_BYTES:
+                content = _decode_content(data)
+                files.append({
+                    "path": path,
+                    "status": "ok",
+                    "mode": "full_file",
+                    "size_bytes": size,
+                    "content": content,
+                })
+            elif queries:
+                evidence = _search_oversized_file(data, queries)
+                files.append({
+                    "path": path,
+                    "status": evidence.get("status", "ok"),
+                    "mode": evidence.get("mode", "targeted_snippets"),
+                    "size_bytes": size,
+                    "queries": evidence.get("queries", []),
+                    "matches": evidence.get("matches", []),
+                    "truncated": bool(evidence.get("truncated")),
+                })
+            else:
+                files.append({
+                    "path": path,
+                    "status": "too_large_for_direct_read",
+                    "mode": "metadata_only",
+                    "size_bytes": size,
+                })
+        elif isinstance(data, list):
             files.append({
                 "path": path,
                 "status": "not_a_file",
             })
-            continue
-        size = int(result.get("size_bytes") or 0)
-        if total_bytes + size > MAX_TOTAL_BYTES:
-            files.append({
-                "path": path,
-                "status": "skipped_total_size_limit",
-            })
-            continue
-        total_bytes += size
-        files.append({
-            "path": path,
-            "status": "ok",
-            "size_bytes": size,
-            "content": result.get("content") or "",
-        })
+        else:
+            raise GitHubReadUpstreamError("unexpected_contents_shape")
 
     return {
         "ok": True,
@@ -214,6 +311,9 @@ def inspect_repository(
             "max_files": max_files,
             "max_file_bytes": MAX_FILE_BYTES,
             "max_total_bytes": MAX_TOTAL_BYTES,
+            "max_search_source_bytes": MAX_SEARCH_SOURCE_BYTES,
+            "max_search_matches_per_file": MAX_SEARCH_MATCHES_PER_FILE,
+            "max_search_snippet_bytes": MAX_SEARCH_SNIPPET_BYTES,
         },
         "read_only": True,
     }
