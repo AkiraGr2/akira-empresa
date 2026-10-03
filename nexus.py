@@ -2447,7 +2447,9 @@ def v8_graph_cleanup_tests(request: Request):
         return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
 
     try:
-        nodes = service.repo.search("graph_nodes", {"status": "active"}, limit=2000)
+        # Incluye test_* ya archivados para que la limpieza sea idempotente y
+        # pueda retirar cualquier arista activa que haya quedado colgando.
+        nodes = service.repo.search("graph_nodes", {}, limit=2000)
     except Exception as e:
         return JSONResponse(
             {"ok": False, "reason": "search_failed", "error_type": type(e).__name__},
@@ -2464,6 +2466,10 @@ def v8_graph_cleanup_tests(request: Request):
         if not (label.startswith("test_") or label.startswith("test-")):
             continue
         test_node_ids.append(str(n["id"]))
+
+        if n.get("status") != "active":
+            continue
+
         try:
             with service.repo.transaction() as tx:
                 tx.update("graph_nodes", n["id"], {"status": "archived"}, n["version"])
@@ -2479,11 +2485,10 @@ def v8_graph_cleanup_tests(request: Request):
         except Exception:
             errors += 1
 
-    # No dejes aristas activas apuntando a nodos de prueba ya archivados.
-    # Solo se tocan relaciones incidentes a los test_* que esta misma
-    # operacion identifico y archivo.
+    # Retira cualquier arista activa cuyo extremo sea un nodo test_*, incluso
+    # si ese nodo ya estaba archivado antes de pulsar LIMPIAR TEST_*.
     edge_map = {}
-    for node_id in test_node_ids:
+    for node_id in sorted(set(test_node_ids)):
         for field in ("from_node", "to_node"):
             try:
                 rows = service.repo.search(
@@ -2499,7 +2504,12 @@ def v8_graph_cleanup_tests(request: Request):
     for edge in edge_map.values():
         try:
             with service.repo.transaction() as tx:
-                tx.update("graph_edges", edge["id"], {"status": "archived"}, edge["version"])
+                tx.update(
+                    "graph_edges",
+                    edge["id"],
+                    {"status": "archived"},
+                    edge["version"],
+                )
                 tx.append_audit({
                     "actor": s["email"],
                     "action": "graph.cleanup_tests.archive_edge",
@@ -2522,9 +2532,12 @@ def v8_graph_cleanup_tests(request: Request):
         "archived": archived,
         "archived_edges": archived_edges,
         "errors": errors,
-        "message": "Los nodos test_* y sus aristas incidentes fueron archivados. Refresca Cerebro Akira."
+        "message": (
+            "Los nodos test_* y sus aristas incidentes fueron archivados. "
+            "Refresca Cerebro Akira."
             if archived or archived_edges
-            else "No se encontraron artefactos test_* activos.",
+            else "No se encontraron artefactos test_* activos."
+        ),
     }
 
 def _run_reason_stage(message, memories):
