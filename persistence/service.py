@@ -189,6 +189,12 @@ class PersistenceService:
             return []
         return searcher(embedding, model, limit=limit)
 
+    def delete_memory_embedding(self, memory_id):
+        deleter = getattr(self.repo, "delete_memory_embedding", None)
+        if deleter is None:
+            return False
+        return deleter(memory_id)
+
     def exists_memory(self, memory_id): return self.repo.exists("memories", memory_id)
     def update_memory(self, memory_id, changes, expected_version, actor="system"):
         clean = validate_memory(changes, partial=True)
