@@ -19,6 +19,11 @@ from collections import defaultdict
 from dotenv import load_dotenv
 load_dotenv()
 
+from github_readonly import (
+    GitHubReadError,
+    inspect_repository,
+)
+
 from persistence.absorption import (
     AbsorptionContractError,
     build_autonomous_candidate,
@@ -446,6 +451,47 @@ def check_rate_limit(ip,is_owner=False):
     if len(rate_store[ip])>=15: return False
     rate_store[ip].append(now); return True
 
+def _detect_github_read_request(msg):
+    """Detecta solicitudes explícitas de inspección GitHub sin dar al modelo control del gateway."""
+    text = str(msg or "").strip()
+    low = text.lower()
+    repo_signals = (
+        "github", "repositorio", "repo", "código fuente", "codigo fuente",
+        "archivos del proyecto", "estructura del proyecto", "carpeta del proyecto",
+    )
+    action_signals = (
+        "inspeccion", "inspecciona", "revisa", "revisar", "verifica", "verificar",
+        "analiza el codigo", "analiza el código", "mira el código", "mira el codigo",
+        "lee los archivos", "leer los archivos", "qué archivos", "que archivos",
+        "que hay en", "qué hay en", "estructura", "source", "read-only",
+    )
+    if not any(x in low for x in repo_signals) or not any(x in low for x in action_signals):
+        return None
+
+    repo = "AkiraGr2/akira-v3-frontend"
+    if "akira-empresa" in low or "backend" in low or "nexus.py" in low or "fastapi" in low:
+        repo = "AkiraGr2/akira-empresa"
+
+    paths = []
+    if repo.endswith("akira-v3-frontend"):
+        if any(x in low for x in ("cerebro", "brain", "membrane", "nodo", "nodos", "2d")):
+            paths.extend(["js/akira_brain.js", "js/obsidian_membrane.js"])
+        if "3d" in low:
+            paths.append("js/akira_brain_3d.js")
+        if any(x in low for x in ("mision", "misiones", "mission")):
+            paths.append("js/akira_missions_panel.js")
+        if not paths:
+            paths.append("index.html")
+    else:
+        paths = ["nexus.py", "persistence/core.py", "persistence/service.py"]
+
+    return {
+        "repo": repo,
+        "path": "",
+        "paths": list(dict.fromkeys(paths))[:8],
+        "max_files": 8,
+    }
+
 def check_security(msg):
     low=msg.lower()
     if any(x in low for x in ["ignore previous","system prompt","jailbreak","dan mode"]):
@@ -471,7 +517,8 @@ def resolve_is_owner(request, data):
     return False
 
 _TOOL_SEED = [
-    {"name": "web_search", "description": "Busqueda web via DuckDuckGo.", "category": "web", "permissions": ["auth"], "inputs_schema": {"query": "str"}, "outputs_schema": {"result": "str"}, "limits_json": {"timeout_s": 10}, "risks": ["dependencia de red"]},
+    {"name": "web_search", "description": "Busqueda web via DuckDuckGo.", "category": "web", "permissions": ["auth"], "inputs_schema": {"query": "str"}, "outputs_schema": {"result": "str"}, "limits_json": {"timeout_s": 10}, "risks": ["dependencia de red"],},
+    {"name": "github_repo_read", "description": "Inspeccion de solo lectura de repositorios GitHub allow-listados.", "category": "code", "permissions": ["auth"], "inputs_schema": {"repo": "str", "path": "str", "paths": "list", "max_files": "int"}, "outputs_schema": {"result": "dict"}, "limits_json": {"timeout_s": 8, "max_files": 24, "max_file_bytes": 40000, "max_total_bytes": 120000}, "risks": ["dependencia de red", "lectura de codigo"], "read_only": True},
     {"name": "memory_save", "description": "Guarda una memoria persistente.", "category": "memory", "permissions": ["auth"], "inputs_schema": {"content": "str", "memory_type": "str"}, "outputs_schema": {"id": "str"}, "limits_json": {"max_content": 20000}, "risks": []},
     {"name": "memory_search", "description": "Busca memorias por texto.", "category": "memory", "permissions": ["auth"], "inputs_schema": {"query": "str"}, "outputs_schema": {"results": "list"}, "limits_json": {"max_results": 20}, "risks": []},
     {"name": "graph_create_node", "description": "Crea un nodo en el grafo neuronal.", "category": "knowledge", "permissions": ["auth"], "inputs_schema": {"node_type": "str", "label": "str"}, "outputs_schema": {"id": "str"}, "limits_json": {}, "risks": []},
@@ -485,7 +532,7 @@ _TOOL_SEED = [
 ]
 
 _AGENT_SEED = [
-    {"name": "researcher", "role": "researcher", "description": "Investiga en web usando web_search.", "allowed_tools": ["web_search", "memory_search"]},
+    {"name": "researcher", "role": "researcher", "description": "Investiga en web y repositorios GitHub mediante herramientas de solo lectura.", "allowed_tools": ["web_search", "memory_search", "github_repo_read"]},
     {"name": "memorizer", "role": "memorizer", "description": "Guarda y recupera memorias.", "allowed_tools": ["memory_save", "memory_search"]},
     {"name": "graph_builder", "role": "graph_builder", "description": "Construye y consulta el grafo neuronal.", "allowed_tools": ["graph_create_node", "graph_create_edge", "graph_related"]},
     {"name": "learner", "role": "learner", "description": "Registra aprendizajes persistentes.", "allowed_tools": ["learning_save", "memory_save"]},
@@ -2981,6 +3028,45 @@ def v8_tools_invocations(request: Request, tool_name: str = None, status: str = 
     invocations = service.list_invocations(tool_name=tool_name, status=status, limit=limit)
     return {"ok": True, "invocations": invocations, "count": len(invocations)}
 
+@app.post("/api/v8/github/read")
+def v8_github_read(request: Request, payload: dict):
+    """Gateway explícito de solo lectura para repositorios GitHub allow-listados."""
+    s = get_session(request)
+    if not s:
+        return JSONResponse({"authenticated": False}, status_code=401)
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    if not isinstance(payload, dict):
+        return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
+    inputs = {
+        "repo": payload.get("repo"),
+        "path": payload.get("path"),
+        "paths": payload.get("paths"),
+        "max_files": payload.get("max_files", 8),
+    }
+    outputs, error = _invoke_tool(service, "github_repo_read", inputs, actor=s["email"])
+    try:
+        service.log_invocation(
+            "github_repo_read",
+            inputs,
+            outputs or {},
+            "success" if error is None else "failure",
+            s["email"],
+            0,
+            error=error,
+        )
+    except Exception as e:
+        print(f"[github-read] log_invocation fallo: {type(e).__name__}")
+    if error is not None:
+        status_code = 400 if error.get("type") == "GitHubReadValidationError" else 502
+        return JSONResponse({"ok": False, "reason": "github_read_failed", "error": error}, status_code=status_code)
+    return {
+        "ok": True,
+        "read_only": True,
+        "result": outputs.get("result") if isinstance(outputs, dict) else outputs,
+    }
+
 @app.get("/api/v8/tools/{name}")
 def v8_tools_get(request: Request, name: str):
     s = get_session(request)
@@ -2992,6 +3078,21 @@ def v8_tools_get(request: Request, name: str):
     return {"ok": True, "tool": tool}
 
 def _invoke_tool(service, tool_name, inputs, actor):
+    if tool_name == "github_repo_read":
+        repo = str(inputs.get("repo") or "").strip()
+        paths = inputs.get("paths")
+        if paths is not None and not isinstance(paths, list):
+            return None, {"type": "ValidationError", "message": "paths debe ser lista"}
+        try:
+            result = inspect_repository(
+                repo,
+                paths=paths,
+                max_files=int(inputs.get("max_files") or 8),
+            )
+            return {"result": result}, None
+        except GitHubReadError as e:
+            return None, {"type": type(e).__name__, "message": str(e)[:200]}
+
     if tool_name == "web_search":
         q = str(inputs.get("query") or "").strip()
         if not q: return None, {"type": "ValidationError", "message": "query requerida"}
@@ -5574,6 +5675,58 @@ async def chat(request: Request):
         conversation_context = await asyncio.to_thread(
             _format_conversation_context, service, conversation_id, msg
         )
+
+        github_context = ""
+        github_read = _detect_github_read_request(msg)
+        if github_read and persist:
+            try:
+                github_outputs, github_error = _invoke_tool(
+                    service, "github_repo_read", github_read, actor=session["email"]
+                )
+                try:
+                    service.log_invocation(
+                        "github_repo_read",
+                        github_read,
+                        github_outputs or {},
+                        "success" if github_error is None else "failure",
+                        session["email"],
+                        0,
+                        error=github_error,
+                    )
+                except Exception as log_error:
+                    print(f"[github-read] chat log fallo: {type(log_error).__name__}")
+                if github_error is None and isinstance(github_outputs, dict):
+                    github_context = (
+                        "\n[GitHub READ-ONLY EVIDENCE — SERVER RESULT]\n"
+                        + json_lib.dumps(
+                            github_outputs.get("result", {}),
+                            ensure_ascii=False,
+                        )[:45000]
+                        + "\n[END GITHUB EVIDENCE]\n"
+                    )
+                elif github_error:
+                    github_context = (
+                        "\n[GitHub READ-ONLY RESULT — ERROR]\n"
+                        + json_lib.dumps(github_error, ensure_ascii=False)[:3000]
+                        + "\n[END GITHUB RESULT]\n"
+                    )
+            except Exception as github_exc:
+                github_context = (
+                    "\n[GitHub READ-ONLY RESULT — ERROR]\n"
+                    + json_lib.dumps(
+                        {"type": type(github_exc).__name__},
+                        ensure_ascii=False,
+                    )
+                    + "\n[END GITHUB RESULT]\n"
+                )
+        elif github_read and not persist:
+            github_context = (
+                "\n[GitHub READ-ONLY RESULT — AUTH REQUIRED]\n"
+                + "La inspección del repositorio requiere una sesión autenticada."
+                + "\n[END GITHUB RESULT]\n"
+            )
+        if github_context:
+            conversation_context = (conversation_context + github_context)[:52000]
         if persist and ABSORPTION_MODE == "shadow":
             asyncio.create_task(
                 _run_absorption_shadow(msg, memories, conversation_context)
