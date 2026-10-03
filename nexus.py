@@ -21,6 +21,7 @@ load_dotenv()
 
 from persistence.absorption import (
     AbsorptionContractError,
+    build_autonomous_candidate,
     validate_absorption_decision,
     validate_absorption_target,
 )
@@ -60,7 +61,7 @@ MISSION_MAX_DURATION_S = 480
 # Fase 2: el decisor se ejecuta en modo shadow. Analiza el chat real, pero
 # todavía NO crea learning candidates ni toca memoria/grafo.
 ABSORPTION_MODE = (os.getenv("AKIRA_ABSORPTION_MODE", "off") or "off").strip().lower()
-if ABSORPTION_MODE not in {"off", "shadow"}:
+if ABSORPTION_MODE not in {"off", "shadow", "candidate"}:
     ABSORPTION_MODE = "off"
 ABSORPTION_MIN_CHARS = 25
 ABSORPTION_TIMEOUT_S = 20
@@ -4944,6 +4945,63 @@ async def _run_absorption_shadow(message, memories=None, conversation_context=""
         print(f"[absorption-shadow] error: {type(e).__name__}: {str(e)[:200]}")
         return None
 
+
+async def _run_absorption_candidate(
+    message,
+    service,
+    actor,
+    memories=None,
+    conversation_context="",
+    conversation_id=None,
+):
+    """Decide absorción y persiste únicamente CANDIDATE de forma idempotente."""
+    if ABSORPTION_MODE != "candidate":
+        return None
+    try:
+        decision = await asyncio.to_thread(
+            _decide_absorption,
+            message,
+            memories,
+            conversation_context,
+        )
+        if not decision:
+            return None
+
+        if decision.get("decision") != "CANDIDATE":
+            print(
+                f"[absorption-candidate] observed_non_candidate="
+                f"{decision.get('decision')}",
+                flush=True,
+            )
+            return decision
+
+        candidate = build_autonomous_candidate(
+            decision,
+            conversation_id=conversation_id,
+        )
+        rec = await asyncio.to_thread(
+            service.save_learning,
+            candidate["learning"],
+            actor,
+            candidate["idempotency_key"],
+        )
+        record = rec.get("record") if isinstance(rec, dict) else None
+        print(
+            f"[absorption-candidate] outcome={rec.get('outcome') if isinstance(rec, dict) else 'unknown'} "
+            f"learning_id={record.get('id') if isinstance(record, dict) else ''}",
+            flush=True,
+        )
+        return decision | {
+            "materialized_candidate": bool(record),
+            "learning_id": record.get("id") if isinstance(record, dict) else None,
+        }
+    except Exception as e:
+        print(
+            f"[absorption-candidate] error={type(e).__name__}: {str(e)[:200]}",
+            flush=True,
+        )
+        return None
+
 MEMORY_EMBEDDING_MODEL = "gemini-embedding-2"
 MEMORY_EMBEDDING_DIMENSIONS = 768
 
@@ -5516,9 +5574,18 @@ async def chat(request: Request):
         conversation_context = await asyncio.to_thread(
             _format_conversation_context, service, conversation_id, msg
         )
-        if persist:
+        if persist and ABSORPTION_MODE == "shadow":
             asyncio.create_task(
                 _run_absorption_shadow(msg, memories, conversation_context)
+            )
+        elif persist and ABSORPTION_MODE == "candidate":
+            await _run_absorption_candidate(
+                msg,
+                service,
+                session["email"],
+                memories,
+                conversation_context,
+                conversation_id,
             )
         model_route, _ = select_model_route(msg, bool(data.get("image_base64","")))
         model_route, _ = validate_model_before_call(model_route, "chat")
@@ -5654,9 +5721,18 @@ async def chat_stream(request: Request):
         conversation_context = await asyncio.to_thread(
             _format_conversation_context, service, conversation_id, msg
         )
-        if persist:
+        if persist and ABSORPTION_MODE == "shadow":
             asyncio.create_task(
                 _run_absorption_shadow(msg, memories, conversation_context)
+            )
+        elif persist and ABSORPTION_MODE == "candidate":
+            await _run_absorption_candidate(
+                msg,
+                service,
+                session["email"],
+                memories,
+                conversation_context,
+                conversation_id,
             )
         t0 = time.time()
 

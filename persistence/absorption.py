@@ -2,7 +2,7 @@
 
 Este módulo define SOLO el contrato de decisión. No persiste memoria,
 no crea nodos y no decide por sí mismo qué debe aprender Akira.
-La integración con chat y el Learning Engine se hará en fases posteriores.
+La persistencia de candidatos se orquesta desde chat mediante un modo explícito y controlado.
 
 Regla fundamental:
     conversación != memoria
@@ -13,6 +13,7 @@ materializar conocimiento por este contrato.
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any, Mapping
 
 
@@ -46,6 +47,50 @@ MAX_EVIDENCE_ITEMS = 20
 
 class AbsorptionContractError(ValueError):
     """Payload de decisión autónoma inválido."""
+
+
+def build_autonomous_candidate(decision, conversation_id=None):
+    """Construye el payload persistible para un CANDIDATE autónomo sin evidencia ni grafo."""
+    normalized = validate_absorption_decision(dict(decision or {}))
+    if normalized["decision"] != "CANDIDATE":
+        raise AbsorptionContractError(
+            "solo CANDIDATE puede convertirse en learning autónomo en esta fase"
+        )
+    lesson = normalized["value"].strip()
+    source_id = normalized["source_id"].strip()
+    if not lesson or not source_id:
+        raise AbsorptionContractError(
+            "CANDIDATE autónomo requiere value y source_id"
+        )
+    context = {
+        "mode": "candidate",
+        "decision": normalized["decision"],
+        "knowledge_kind": normalized["knowledge_kind"],
+        "confidence": normalized["confidence"],
+        "novelty": normalized["novelty"],
+        "reusability": normalized["reusability"],
+        "source_id": source_id,
+    }
+    if conversation_id:
+        context["conversation_id"] = str(conversation_id)[:128]
+    return {
+        "learning": {
+            "source": "autonomous_absorption",
+            "event": "chat_absorption_candidate",
+            "lesson": lesson,
+            "knowledge_nodes": [],
+            "relationships": [],
+            "confidence": normalized["confidence"],
+            "outcome": "unknown",
+            "status": "candidate",
+            "evidence": [],
+            "learning_context": context,
+        },
+        "idempotency_key": (
+            "absorption_candidate_"
+            + hashlib.sha256(source_id.encode("utf-8")).hexdigest()[:32]
+        ),
+    }
 
 
 def validate_absorption_target(target_learning_id: str, allowed_target_ids) -> str:
