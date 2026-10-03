@@ -38,6 +38,13 @@ class AbsorptionContractTests(unittest.TestCase):
         with self.assertRaises(AbsorptionContractError):
             validate_absorption_decision(valid_payload(safe_for_recall=True))
 
+    def test_allows_empty_value_on_ignore(self):
+        result = validate_absorption_decision(
+            valid_payload(decision="IGNORE", knowledge_kind="unknown", value="")
+        )
+        self.assertEqual(result["decision"], "IGNORE")
+        self.assertEqual(result["value"], "")
+
     def test_rejects_ignore_with_evidence(self):
         with self.assertRaises(AbsorptionContractError):
             validate_absorption_decision(
