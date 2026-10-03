@@ -157,6 +157,44 @@ class PostgresRepository(PersistenceRepository):
             raise StorageError("insert sin efecto y sin registro existente")
         return _out(existing), False
 
+    def upsert_graph_edge(self, from_node, to_node, relation_type, delta_weight=0.5,
+                          confidence=0.5, origin="auto_connect"):
+        """Crea o refuerza una única arista activa en una sola sentencia SQL."""
+        if self._conn is None:
+            raise StorageError("upsert_graph_edge_requires_transaction")
+        try:
+            with self._cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO graph_edges
+                        (id, from_node, to_node, relation_type, weight, confidence,
+                         frequency, origin, status, schema_version, version, last_used_at)
+                    VALUES
+                        (%s, %s, %s, %s, %s, %s, 1, %s, 'active', 'graph_edge.v1', 1, now())
+                    ON CONFLICT (from_node, to_node, relation_type)
+                        WHERE status = 'active'
+                    DO UPDATE SET
+                        frequency = graph_edges.frequency + 1,
+                        weight = LEAST(1.0, graph_edges.weight + EXCLUDED.weight * 0.5),
+                        last_used_at = now(),
+                        updated_at = now(),
+                        version = graph_edges.version + 1
+                    RETURNING *
+                    """,
+                    (
+                        new_id("edge"), from_node, to_node, relation_type,
+                        float(delta_weight), float(confidence), origin,
+                    ),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    raise StorageError("graph edge upsert sin resultado")
+                return _out(row)
+        except StorageError:
+            raise
+        except psycopg.Error as e:
+            raise StorageError(type(e).__name__) from e
+
     def get(self, entity, record_id):
         spec = entity_spec(entity)
         with self._cursor() as cur:
