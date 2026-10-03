@@ -39,6 +39,17 @@ class ChatActionIntegrityGuardTests(unittest.TestCase):
         )
         self.assertIn("learn_real", real_claim)
 
+    def test_stream_chat_has_github_readonly_evidence_path(self):
+        with open("nexus.py", "r", encoding="utf-8") as handle:
+            text = handle.read()
+
+        stream_start = text.index('@app.post("/api/chat/stream")')
+        stream_body = text[stream_start:]
+        self.assertIn('github_read = _detect_github_read_request(msg)', stream_body)
+        self.assertIn('service, "github_repo_read", github_read', stream_body)
+        self.assertIn("[GitHub READ-ONLY EVIDENCE — SERVER RESULT]", stream_body)
+        self.assertIn('conversation_context = (conversation_context + github_context)[:52000]', stream_body)
+
     def test_github_readonly_gateway_rejects_untrusted_repo(self):
         from github_readonly import GitHubReadValidationError, read_repo_path
 
