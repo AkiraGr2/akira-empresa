@@ -1,7 +1,7 @@
-"""Repositorio PostgreSQL (Neon) con psycopg 3.
+"""Repositorio PostgreSQL (Supabase/PostgreSQL) con psycopg 3.
 
 - SQL directo, sin ORM. Nombres de tabla/columna salen de una lista blanca (core.ENTITIES); los valores van parametrizados.
-- Funciona con la URL directa de Neon y con la URL pooler (prepare_threshold=None).
+- Funciona con DATABASE_URL directa o pooler de Supabase (prepare_threshold=None).
 - Cada `pool.connection()` hace commit al salir bien y rollback si hay excepcion.
 """
 from __future__ import annotations
@@ -35,7 +35,7 @@ def _like_escape(text: str) -> str:
 
 
 def make_pool(database_url: str):
-    """Pool pequeno (plan gratis). Neon suspende el computo por inactividad: se valida la conexion al prestarla."""
+    """Pool pequeno para PostgreSQL gestionado (incluido Supabase). Se valida la conexion al prestarla."""
     from psycopg_pool import ConnectionPool
     return ConnectionPool(
         database_url,
