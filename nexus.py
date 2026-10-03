@@ -1959,6 +1959,156 @@ def v8_learning_investigate(request: Request, learning_id: str, payload: dict):
         "requires_human_review": True
     }
 
+def _parse_learning_evaluation_json(raw):
+    text = str(raw or "").strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("evaluation_not_json")
+    result = json.loads(text[start:end + 1])
+    if not isinstance(result, dict):
+        raise ValueError("evaluation_not_object")
+    verdict = str(result.get("verdict") or "insufficient").strip().lower()
+    if verdict not in ("supported", "mixed", "contradicted", "insufficient"):
+        verdict = "insufficient"
+    try:
+        confidence = max(0.0, min(1.0, float(result.get("confidence", 0.0))))
+    except Exception:
+        confidence = 0.0
+    supporting = result.get("supporting_evidence") or []
+    contradicting = result.get("contradicting_evidence") or []
+    gaps = result.get("gaps") or []
+    if not isinstance(supporting, list) or not isinstance(contradicting, list) or not isinstance(gaps, list):
+        raise ValueError("evaluation_shape_invalid")
+    return {
+        "verdict": verdict,
+        "confidence": confidence,
+        "summary": str(result.get("summary") or "")[:2000],
+        "supporting_evidence": supporting,
+        "contradicting_evidence": contradicting,
+        "gaps": [str(x)[:500] for x in gaps[:20]],
+    }
+
+
+def _evaluate_learning_with_fallback(prompt):
+    """Evalua evidencia con Gemini y fallback controlado a Groq/OpenRouter."""
+    last_error = None
+    gemini_keys = _pick_gemini_keys()
+    if gemini_keys:
+        try:
+            from google import genai
+            from google.genai import types
+            for key in gemini_keys:
+                try:
+                    client = genai.Client(
+                        api_key=key,
+                        http_options=types.HttpOptions(
+                            timeout=15000,
+                            retry_options=types.HttpRetryOptions(
+                                attempts=1,
+                                http_status_codes=[408, 500, 502, 503, 504],
+                            ),
+                        ),
+                    )
+                    resp = client.models.generate_content(
+                        model="gemini-3.8-flash",
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            temperature=0.1,
+                            max_output_tokens=900,
+                            response_mime_type="application/json",
+                        ),
+                    )
+                    return _parse_learning_evaluation_json(
+                        getattr(resp, "text", "") or ""
+                    ) | {"evaluated_by": "gemini-3.8-flash"}
+                except Exception as e:
+                    code = _gemini_error_code(e)
+                    if code in (401, 402, 403, 429):
+                        _mark_key_failed(key)
+                    last_error = e
+        except Exception as e:
+            last_error = e
+
+    try:
+        import requests
+        keys = _pick_groq_keys()
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        system_prompt = (
+            "Evalua evidencia de forma estrictamente factual. "
+            "Devuelve exclusivamente un objeto JSON valido con las claves "
+            "verdict, confidence, summary, supporting_evidence, "
+            "contradicting_evidence y gaps. No inventes fuentes."
+        )
+        for key in keys:
+            headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+            for model_name in ("openai/gpt-oss-20b", "qwen/qwen3.8-27b"):
+                model, _ = validate_model_before_call(model_name, "learning_evaluate")
+                try:
+                    payload = {
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": prompt},
+                        ],
+                        "max_tokens": 900,
+                        "temperature": 0.1,
+                        "response_format": {"type": "json_object"},
+                    }
+                    resp = requests.post(
+                        url,
+                        json=payload,
+                        headers=headers,
+                        timeout=15,
+                    )
+                    if resp.status_code == 200:
+                        return _parse_learning_evaluation_json(
+                            resp.json()["choices"][0]["message"]["content"]
+                        ) | {"evaluated_by": model}
+                    if resp.status_code == 429:
+                        _mark_key_failed(key, provider="groq")
+                        break
+                    last_error = RuntimeError(f"groq_status_{resp.status_code}")
+                except Exception as e:
+                    last_error = e
+    except Exception as e:
+        last_error = e
+
+    key = (os.getenv("OPENROUTER_API_KEY") or "").strip()
+    if key:
+        try:
+            import requests
+            resp = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                json={
+                    "model": "openrouter/free",
+                    "messages": [
+                        {"role": "system", "content": "Devuelve solo JSON valido para la evaluacion factual solicitada."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "max_tokens": 900,
+                    "temperature": 0.1,
+                },
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                    "X-OpenRouter-Title": "Akira Learning Evaluation",
+                },
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                content = ((resp.json().get("choices") or [{}])[0].get("message") or {}).get("content")
+                return _parse_learning_evaluation_json(content) | {"evaluated_by": resp.json().get("model") or "openrouter/free"}
+            last_error = RuntimeError(f"openrouter_status_{resp.status_code}")
+        except Exception as e:
+            last_error = e
+
+    if last_error:
+        raise RuntimeError("all_learning_evaluators_failed") from last_error
+    raise RuntimeError("no_learning_evaluator_available")
+
+
+
 @app.post("/api/v8/learning/{learning_id}/evaluate")
 def v8_learning_evaluate(request: Request, learning_id: str, payload: dict):
     s = get_session(request)
@@ -1986,45 +2136,37 @@ EVIDENCIA:
 """ + json.dumps(evidence, ensure_ascii=False) + """
 """
     try:
-        keys = _pick_gemini_keys()
-        if not keys: return JSONResponse({"ok": False, "reason": "gemini_unavailable"}, status_code=503)
-        from google import genai
-        result = None
-        for key in keys:
-            try:
-                client = genai.Client(api_key=key, http_options={"timeout": 15000})
-                resp = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
-                raw = getattr(resp, "text", "") or ""
-                start, end = raw.find("{"), raw.rfind("}")
-                if start >= 0 and end > start:
-                    result = json.loads(raw[start:end + 1])
-                    break
-            except Exception:
-                continue
-        if not isinstance(result, dict):
-            return JSONResponse({"ok": False, "reason": "evaluation_failed"}, status_code=503)
-        verdict = str(result.get("verdict") or "insufficient").strip().lower()
-        if verdict not in ("supported", "mixed", "contradicted", "insufficient"):
-            verdict = "insufficient"
-        try: confidence = max(0.0, min(1.0, float(result.get("confidence", 0.0))))
-        except Exception: confidence = 0.0
-        analysis = {
-            "verdict": verdict, "confidence": confidence,
-            "summary": str(result.get("summary") or "")[:2000],
-            "supporting_evidence": result.get("supporting_evidence") or [],
-            "contradicting_evidence": result.get("contradicting_evidence") or [],
-            "gaps": result.get("gaps") or [],
-            "evaluated_by": "gemini-3.8-flash",
-            "evaluated_at": _now_iso(),
-        }
+        result = _evaluate_learning_with_fallback(prompt)
         try:
             expected_version = int(payload.get("expected_version", current["version"]))
         except Exception:
             expected_version = current["version"]
-        rec = service.update_learning(learning_id, {"verification_analysis": analysis},
-                                     expected_version=expected_version, actor=s["email"])
-        return {"ok": True, "learning": rec, "analysis": analysis,
-                "recommended_status": "verified" if verdict == "supported" else ("conflicted" if verdict == "contradicted" else "candidate")}
+        analysis = {
+            "verdict": result["verdict"],
+            "confidence": result["confidence"],
+            "summary": result["summary"],
+            "supporting_evidence": result["supporting_evidence"],
+            "contradicting_evidence": result["contradicting_evidence"],
+            "gaps": result["gaps"],
+            "evaluated_by": result["evaluated_by"],
+            "evaluated_at": _now_iso(),
+        }
+        rec = service.update_learning(
+            learning_id,
+            {"verification_analysis": analysis},
+            expected_version=expected_version,
+            actor=s["email"],
+        )
+        return {
+            "ok": True,
+            "learning": rec,
+            "analysis": analysis,
+            "recommended_status": (
+                "verified"
+                if result["verdict"] == "supported"
+                else ("conflicted" if result["verdict"] == "contradicted" else "candidate")
+            ),
+        }
     except ConflictError:
         return JSONResponse({"ok": False, "reason": "conflict"}, status_code=409)
     except (ValidationError, NotFoundError) as e:
@@ -2032,7 +2174,7 @@ EVIDENCIA:
     except PersistenceError as e:
         return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
     except Exception as e:
-        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+        return JSONResponse({"ok": False, "reason": "evaluation_failed", "error_type": type(e).__name__}, status_code=503)
 
 @app.patch("/api/v8/learning/{learning_id}/status")
 def v8_learning_status_update(request: Request, learning_id: str, payload: dict):
