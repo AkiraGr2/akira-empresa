@@ -48,6 +48,21 @@ class AbsorptionContractError(ValueError):
     """Payload de decisión autónoma inválido."""
 
 
+def validate_absorption_target(target_learning_id: str, allowed_target_ids) -> str:
+    """Valida que el objetivo provenga de la lista explícitamente presentada al decisor."""
+    target = _text("target_learning_id", target_learning_id, 256)
+    allowed = {
+        str(value).strip()
+        for value in (allowed_target_ids or [])
+        if str(value).strip()
+    }
+    if target not in allowed:
+        raise AbsorptionContractError(
+            "target_learning_id no pertenece a los objetivos elegibles presentados por el servidor"
+        )
+    return target
+
+
 def _text(name: str, value: Any, maximum: int, *, allow_empty: bool = False) -> str:
     if not isinstance(value, str):
         raise AbsorptionContractError(f"{name} debe ser texto")
