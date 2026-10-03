@@ -2228,7 +2228,11 @@ def v8_learning_selftest(request: Request):
             {"error_type": type(e).__name__, "message": str(e)[:200]},
         )
 
-    return {"ok": all(t["status"] == "PASS" for t in tests), "tests": tests, "synthetic_only": True}
+    return JSONResponse({
+        "ok": all(t["status"] == "PASS" for t in tests),
+        "tests": tests,
+        "synthetic_only": True,
+    }, status_code=200, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/v8/learning/{learning_id}")
