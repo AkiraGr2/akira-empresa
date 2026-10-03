@@ -1,6 +1,10 @@
 import unittest
 
-from persistence.absorption import AbsorptionContractError, validate_absorption_decision
+from persistence.absorption import (
+    AbsorptionContractError,
+    validate_absorption_decision,
+    validate_absorption_target,
+)
 
 
 def _base(decision, **extra):
@@ -51,6 +55,16 @@ class AbsorptionTargetIdentityTests(unittest.TestCase):
             validate_absorption_decision(
                 _base("IGNORE", value="", target_learning_id="learn_123")
             )
+    def test_target_must_be_presented_by_server(self):
+        with self.assertRaises(AbsorptionContractError):
+            validate_absorption_target("learn_123", ["learn_999"])
+
+    def test_target_allowlist_accepts_presented_id(self):
+        self.assertEqual(
+            validate_absorption_target("learn_123", ["learn_123", "learn_999"]),
+            "learn_123",
+        )
+
 
 
 if __name__ == "__main__":
