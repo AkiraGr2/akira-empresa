@@ -51,7 +51,7 @@ MISSION_MAX_DURATION_S = 480
 # todavía NO crea learning candidates ni toca memoria/grafo.
 ABSORPTION_MODE = (os.getenv("AKIRA_ABSORPTION_MODE", "off") or "off").strip().lower()
 if ABSORPTION_MODE not in {"off", "shadow"}:
-    ABSORPTION_MODE = "shadow"
+    ABSORPTION_MODE = "off"
 ABSORPTION_MIN_CHARS = 25
 ABSORPTION_TIMEOUT_S = 20
 ABSORPTION_MAX_EXISTING_MEMORIES = 8
