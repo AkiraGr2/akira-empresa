@@ -5303,6 +5303,10 @@ def _format_conversation_context(service, conversation_id, current_msg, limit=20
         if role not in ("user", "assistant") or not content:
             continue
         content = content[:4000]
+        if role == "assistant" and str(r.get("model") or "").strip() != "learning_engine":
+            low_content = content.lower()
+            if "id de aprendizaje:" in low_content or "he recibido la corrección y la he registrado" in low_content:
+                content = "[RESPUESTA HISTORICA NO VERIFICABLE: no usar como evidencia de una accion ejecutada.]"
         block = f"{'Usuario' if role == 'user' else 'Akira'}: {content}"
         if used + len(block) > max_chars:
             break
