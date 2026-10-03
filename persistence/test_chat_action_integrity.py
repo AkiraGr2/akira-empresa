@@ -63,9 +63,12 @@ class ChatActionIntegrityGuardTests(unittest.TestCase):
         start = text.index("def _detect_github_read_request")
         end = text.index("def check_security", start)
         detector = text[start:end]
-        self.assertIn('paths.append("js/obsidian_membrane.js")', detector)
-        self.assertNotIn('"js/akira_brain.js", "js/obsidian_membrane.js"', detector)
-        self.assertNotIn('paths.append("index.html")', detector)
+        branch_start = detector.index('if wants_3d:')
+        branch_end = detector.index('queries = []', branch_start)
+        brain_branch = detector[branch_start:branch_end]
+        self.assertIn('paths.append("js/obsidian_membrane.js")', brain_branch)
+        self.assertNotIn('"js/akira_brain.js", "js/obsidian_membrane.js"', brain_branch)
+        self.assertNotIn('paths.append("index.html")', brain_branch)
         self.assertIn('"cyMembrane.on"', detector)
         self.assertIn('"_updateMembraneContextPanel"', detector)
 
