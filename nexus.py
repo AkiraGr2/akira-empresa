@@ -370,7 +370,7 @@ REGLAS ANTI-ALUCINACION (OBLIGATORIAS):
     return None
 
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, Response
 import json as json_lib
 app=FastAPI(title="Akira V7.3 Consciente")
 
@@ -2228,17 +2228,15 @@ def v8_learning_selftest(request: Request):
             {"error_type": type(e).__name__, "message": str(e)[:200]},
         )
 
-    # Envia el cuerpo como bytes mediante StreamingResponse para evitar que
-    # cualquier capa/proxy intermedio entregue un 200 JSON con cuerpo vacio.
-    # El frontend necesita recibir la matriz completa de tests para renderizar
-    # el resultado E2E; el contrato HTTP sigue siendo application/json.
+    # Respuesta HTTP directa con bytes: evita depender de la serializacion
+    # de JSONResponse/streaming para el cuerpo del resultado E2E.
     selftest_payload = json.dumps({
         "ok": all(t["status"] == "PASS" for t in tests),
         "tests": tests,
         "synthetic_only": True,
     }, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    return StreamingResponse(
-        iter([selftest_payload]),
+    return Response(
+        content=selftest_payload,
         status_code=200,
         media_type="application/json",
         headers={
