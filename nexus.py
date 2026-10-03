@@ -2141,12 +2141,21 @@ EVIDENCIA:
             expected_version = int(payload.get("expected_version", current["version"]))
         except Exception:
             expected_version = current["version"]
+        max_evidence_index = len(evidence) - 1
+        supporting = [
+            int(i) for i in result["supporting_evidence"]
+            if isinstance(i, int) and not isinstance(i, bool) and 0 <= i <= max_evidence_index
+        ]
+        contradicting = [
+            int(i) for i in result["contradicting_evidence"]
+            if isinstance(i, int) and not isinstance(i, bool) and 0 <= i <= max_evidence_index
+        ]
         analysis = {
             "verdict": result["verdict"],
             "confidence": result["confidence"],
             "summary": result["summary"],
-            "supporting_evidence": result["supporting_evidence"],
-            "contradicting_evidence": result["contradicting_evidence"],
+            "supporting_evidence": supporting,
+            "contradicting_evidence": contradicting,
             "gaps": result["gaps"],
             "evaluated_by": result["evaluated_by"],
             "evaluated_at": _now_iso(),
