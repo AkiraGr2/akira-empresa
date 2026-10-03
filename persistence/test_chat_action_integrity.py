@@ -39,6 +39,18 @@ class ChatActionIntegrityGuardTests(unittest.TestCase):
         )
         self.assertIn("learn_real", real_claim)
 
+    def test_2d_brain_inspection_targets_renderer_and_panel_not_chat_client(self):
+        with open("nexus.py", "r", encoding="utf-8") as handle:
+            text = handle.read()
+
+        start = text.index("def _detect_github_read_request")
+        end = text.index("def check_security", start)
+        detector = text[start:end]
+        self.assertIn('"js/obsidian_membrane.js", "index.html"', detector)
+        self.assertNotIn('"js/akira_brain.js", "js/obsidian_membrane.js"', detector)
+        self.assertIn('"cyMembrane.on"', detector)
+        self.assertIn('"_updateMembraneContextPanel"', detector)
+
     def test_stream_chat_has_github_readonly_evidence_path(self):
         with open("nexus.py", "r", encoding="utf-8") as handle:
             text = handle.read()
