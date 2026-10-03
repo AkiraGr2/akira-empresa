@@ -2005,6 +2005,7 @@ def v8_learning_status_update(request: Request, learning_id: str, payload: dict)
 
 @app.get("/api/v8/learning/selftest")
 def v8_learning_selftest(request: Request):
+    selftest_started = time.monotonic()
     s = get_session(request)
     if not s: return JSONResponse({"authenticated": False}, status_code=401)
     if not s.get("is_owner"): return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
@@ -2079,6 +2080,7 @@ def v8_learning_selftest(request: Request):
                 service,
                 "Dato sintetico de prueba del Learning Engine SELFTEST Learning",
                 limit=5,
+                include_semantic=False,
             )
             add(
                 "verified_learning_recalled",
@@ -2235,6 +2237,13 @@ def v8_learning_selftest(request: Request):
         "tests": tests,
         "synthetic_only": True,
     }, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    duration_ms = round((time.monotonic() - selftest_started) * 1000)
+    selftest_result = json.loads(selftest_payload.decode("utf-8"))
+    selftest_result["duration_ms"] = duration_ms
+    print(f"[learning-selftest] duration_ms={duration_ms} tests={len(tests)}")
+    selftest_payload = json.dumps(
+        selftest_result, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
     return Response(
         content=selftest_payload,
         status_code=200,
@@ -4323,7 +4332,7 @@ def _memory_recency_score(created_at):
     except Exception:
         return 0.0
 
-def _recall_memories(service, msg, limit=5):
+def _recall_memories(service, msg, limit=5, include_semantic=True):
     if service is None:
         return []
     query = str(msg or "").strip()
@@ -4389,7 +4398,12 @@ def _recall_memories(service, msg, limit=5):
         accept(memory, 0.0)
 
     # Semantic branch: Gemini Embedding 2 (768d) + pgvector cosine search.
-    query_embedding = _generate_memory_embedding(query)
+    # Learning E2E can disable this branch because semantic retrieval has its
+    # own dedicated selftest and Gemini can consume up to two 8s key attempts.
+    if include_semantic:
+        query_embedding = _generate_memory_embedding(query)
+    else:
+        query_embedding = None
     if query_embedding:
         try:
             semantic_rows = service.search_memory_semantic(
