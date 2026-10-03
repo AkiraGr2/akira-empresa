@@ -710,7 +710,7 @@ class PersistenceService:
                     try:
                         rows = self.repo.search(
                             "graph_edges",
-                            {"status": "active", field: node_id},
+                            {"status": "active", **{field: node_id}},
                             limit=500,
                         )
                     except Exception:
