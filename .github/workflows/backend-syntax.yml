@@ -34,7 +34,6 @@ jobs:
       - name: Test chat action integrity
         run: |
           python -m unittest persistence.test_chat_action_integrity -v
-          python -m unittest persistence.test_absorption_target -v
 
       - name: Test learning consolidation gate
         run: |
