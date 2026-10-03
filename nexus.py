@@ -2059,7 +2059,7 @@ def v8_learning_status_update(request: Request, learning_id: str, payload: dict)
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
     graph = None
-    if status in ("verified", "consolidated"):
+    if status == "consolidated":
         try:
             graph = service.promote_learning_to_graph(learning_id, actor=s["email"])
             rec = graph.get("learning") or rec
