@@ -2228,11 +2228,25 @@ def v8_learning_selftest(request: Request):
             {"error_type": type(e).__name__, "message": str(e)[:200]},
         )
 
-    return JSONResponse({
+    # Envia el cuerpo como bytes mediante StreamingResponse para evitar que
+    # cualquier capa/proxy intermedio entregue un 200 JSON con cuerpo vacio.
+    # El frontend necesita recibir la matriz completa de tests para renderizar
+    # el resultado E2E; el contrato HTTP sigue siendo application/json.
+    selftest_payload = json.dumps({
         "ok": all(t["status"] == "PASS" for t in tests),
         "tests": tests,
         "synthetic_only": True,
-    }, status_code=200, headers={"Cache-Control": "no-store"})
+    }, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return StreamingResponse(
+        iter([selftest_payload]),
+        status_code=200,
+        media_type="application/json",
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Length": str(len(selftest_payload)),
+            "X-Akira-Selftest-Tests": str(len(tests)),
+        },
+    )
 
 
 @app.get("/api/v8/learning/{learning_id}")
