@@ -129,6 +129,7 @@ def validate_absorption_decision(payload: Mapping[str, Any]) -> dict[str, Any]:
         "evidence",
         "source",
         "source_id",
+        "target_learning_id",
         "safe_for_recall",
     }
     extra = sorted(set(payload) - allowed)
@@ -161,6 +162,20 @@ def validate_absorption_decision(payload: Mapping[str, Any]) -> dict[str, Any]:
     source_id = _text(
         "source_id", payload.get("source_id", ""), 256, allow_empty=True
     )
+    target_learning_id = _text(
+        "target_learning_id",
+        payload.get("target_learning_id", ""),
+        256,
+        allow_empty=True,
+    )
+    if decision in ("REINFORCE", "UPDATE", "CONFLICT") and not target_learning_id:
+        raise AbsorptionContractError(
+            f"{decision} requiere target_learning_id"
+        )
+    if decision in ("IGNORE", "CANDIDATE") and target_learning_id:
+        raise AbsorptionContractError(
+            f"{decision} no debe declarar target_learning_id"
+        )
     evidence = _evidence(payload.get("evidence", []))
 
     safe_for_recall = payload.get("safe_for_recall", False)
@@ -192,5 +207,6 @@ def validate_absorption_decision(payload: Mapping[str, Any]) -> dict[str, Any]:
         "evidence": evidence,
         "source": source,
         "source_id": source_id,
+        "target_learning_id": target_learning_id,
         "safe_for_recall": False,
     }
