@@ -68,9 +68,12 @@ class ChatActionIntegrityGuardTests(unittest.TestCase):
         branch_start = detector.index('if wants_3d:')
         branch_end = detector.index('queries = []', branch_start)
         brain_branch = detector[branch_start:branch_end]
-        self.assertIn('paths.append("js/obsidian_membrane.js")', brain_branch)
-        self.assertNotIn('"js/akira_brain.js", "js/obsidian_membrane.js"', brain_branch)
-        self.assertNotIn('paths.append("index.html")', brain_branch)
+        two_d_start = brain_branch.index('elif wants_2d')
+        mission_start = brain_branch.index('if any(x in low for x in ("mision", "misiones", "mission"))')
+        two_d = brain_branch[two_d_start:mission_start]
+        self.assertIn('paths.append("js/obsidian_membrane.js")', two_d)
+        self.assertNotIn('"js/akira_brain.js", "js/obsidian_membrane.js"', two_d)
+        self.assertNotIn('paths.append("index.html")', two_d)
         self.assertIn('"cyMembrane.on"', detector)
         self.assertIn('"_updateMembraneContextPanel"', detector)
 
