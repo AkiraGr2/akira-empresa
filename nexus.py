@@ -485,10 +485,22 @@ def _detect_github_read_request(msg):
     else:
         paths = ["nexus.py", "persistence/core.py", "persistence/service.py"]
 
+    queries = []
+    if repo.endswith("akira-v3-frontend"):
+        if "3d" not in low:
+            queries.extend(["tap", "node", "zoom", "brainContext", "brain-select"])
+        else:
+            queries.extend(["click", "node", "zoom", "camera", "brain"])
+        if any(x in low for x in ("panel", "información", "informacion", "nodo")):
+            queries.extend(["brainContext", "context", "nodeId", "select"])
+    else:
+        queries.extend(["github_repo_read", "tool_registry", "_invoke_tool"])
+
     return {
         "repo": repo,
         "path": "",
         "paths": list(dict.fromkeys(paths))[:8],
+        "queries": list(dict.fromkeys(queries))[:12],
         "max_files": 8,
     }
 
@@ -518,7 +530,7 @@ def resolve_is_owner(request, data):
 
 _TOOL_SEED = [
     {"name": "web_search", "description": "Busqueda web via DuckDuckGo.", "category": "web", "permissions": ["auth"], "inputs_schema": {"query": "str"}, "outputs_schema": {"result": "str"}, "limits_json": {"timeout_s": 10}, "risks": ["dependencia de red"],},
-    {"name": "github_repo_read", "description": "Inspeccion de solo lectura de repositorios GitHub allow-listados.", "category": "code", "permissions": ["auth"], "inputs_schema": {"repo": "str", "path": "str", "paths": "list", "max_files": "int"}, "outputs_schema": {"result": "dict"}, "limits_json": {"timeout_s": 8, "max_files": 24, "max_file_bytes": 40000, "max_total_bytes": 120000}, "risks": ["dependencia de red", "lectura de codigo"]},
+    {"name": "github_repo_read", "description": "Inspeccion de solo lectura de repositorios GitHub allow-listados.", "category": "code", "permissions": ["auth"], "inputs_schema": {"repo": "str", "path": "str", "paths": "list", "queries": "list", "max_files": "int"}, "outputs_schema": {"result": "dict"}, "limits_json": {"timeout_s": 8, "max_files": 24, "max_file_bytes": 40000, "max_total_bytes": 120000, "max_search_source_bytes": 800000, "max_search_matches_per_file": 8}, "risks": ["dependencia de red", "lectura de codigo"]},
     {"name": "memory_save", "description": "Guarda una memoria persistente.", "category": "memory", "permissions": ["auth"], "inputs_schema": {"content": "str", "memory_type": "str"}, "outputs_schema": {"id": "str"}, "limits_json": {"max_content": 20000}, "risks": []},
     {"name": "memory_search", "description": "Busca memorias por texto.", "category": "memory", "permissions": ["auth"], "inputs_schema": {"query": "str"}, "outputs_schema": {"results": "list"}, "limits_json": {"max_results": 20}, "risks": []},
     {"name": "graph_create_node", "description": "Crea un nodo en el grafo neuronal.", "category": "knowledge", "permissions": ["auth"], "inputs_schema": {"node_type": "str", "label": "str"}, "outputs_schema": {"id": "str"}, "limits_json": {}, "risks": []},
@@ -3081,13 +3093,17 @@ def _invoke_tool(service, tool_name, inputs, actor):
     if tool_name == "github_repo_read":
         repo = str(inputs.get("repo") or "").strip()
         paths = inputs.get("paths")
+        queries = inputs.get("queries")
         if paths is not None and not isinstance(paths, list):
             return None, {"type": "ValidationError", "message": "paths debe ser lista"}
+        if queries is not None and not isinstance(queries, list):
+            return None, {"type": "ValidationError", "message": "queries debe ser lista"}
         try:
             result = inspect_repository(
                 repo,
                 paths=paths,
                 max_files=int(inputs.get("max_files") or 8),
+                queries=queries,
             )
             return {"result": result}, None
         except GitHubReadError as e:
