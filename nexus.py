@@ -1994,11 +1994,12 @@ def _evaluate_learning_with_fallback(prompt):
     """Evalua evidencia con Gemini y fallback controlado a Groq/OpenRouter."""
     last_error = None
     gemini_keys = _pick_gemini_keys()
+    print(f"[learning-evaluate] gemini_keys_available={len(gemini_keys)}", flush=True)
     if gemini_keys:
         try:
             from google import genai
             from google.genai import types
-            for key in gemini_keys:
+            for key_index, key in enumerate(gemini_keys, start=1):
                 try:
                     client = genai.Client(
                         api_key=key,
@@ -2019,13 +2020,24 @@ def _evaluate_learning_with_fallback(prompt):
                             response_mime_type="application/json",
                         ),
                     )
-                    return _parse_learning_evaluation_json(
+                    parsed = _parse_learning_evaluation_json(
                         getattr(resp, "text", "") or ""
-                    ) | {"evaluated_by": "gemini-3.8-flash"}
+                    )
+                    print(
+                        f"[learning-evaluate] provider=gemini model=gemini-3.8-flash "
+                        f"key_index={key_index} result=success",
+                        flush=True,
+                    )
+                    return parsed | {"evaluated_by": "gemini-3.8-flash"}
                 except Exception as e:
                     code = _gemini_error_code(e)
                     if code in (401, 402, 403, 429):
                         _mark_key_failed(key)
+                    print(
+                        f"[learning-evaluate] provider=gemini model=gemini-3.8-flash "
+                        f"key_index={key_index} code={code} type={type(e).__name__}",
+                        flush=True,
+                    )
                     last_error = e
         except Exception as e:
             last_error = e
@@ -2033,6 +2045,7 @@ def _evaluate_learning_with_fallback(prompt):
     try:
         import requests
         keys = _pick_groq_keys()
+        print(f"[learning-evaluate] groq_keys_available={len(keys)}", flush=True)
         url = "https://api.groq.com/openai/v1/chat/completions"
         system_prompt = (
             "Evalua evidencia de forma estrictamente factual. "
@@ -2040,9 +2053,9 @@ def _evaluate_learning_with_fallback(prompt):
             "verdict, confidence, summary, supporting_evidence, "
             "contradicting_evidence y gaps. No inventes fuentes."
         )
-        for key in keys:
+        for key_index, key in enumerate(keys, start=1):
             headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-            for model_name in ("openai/gpt-oss-20b", "qwen/qwen3.8-27b"):
+            for model_name in ("openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"):
                 model, _ = validate_model_before_call(model_name, "learning_evaluate")
                 try:
                     payload = {
@@ -2062,19 +2075,40 @@ def _evaluate_learning_with_fallback(prompt):
                         timeout=15,
                     )
                     if resp.status_code == 200:
-                        return _parse_learning_evaluation_json(
+                        parsed = _parse_learning_evaluation_json(
                             resp.json()["choices"][0]["message"]["content"]
-                        ) | {"evaluated_by": model}
+                        )
+                        print(
+                            f"[learning-evaluate] provider=groq model={model} "
+                            f"key_index={key_index} result=success",
+                            flush=True,
+                        )
+                        return parsed | {"evaluated_by": model}
+                    print(
+                        f"[learning-evaluate] provider=groq model={model} "
+                        f"key_index={key_index} status={resp.status_code}",
+                        flush=True,
+                    )
                     if resp.status_code == 429:
                         _mark_key_failed(key, provider="groq")
                         break
                     last_error = RuntimeError(f"groq_status_{resp.status_code}")
                 except Exception as e:
+                    print(
+                        f"[learning-evaluate] provider=groq model={model} "
+                        f"key_index={key_index} type={type(e).__name__}",
+                        flush=True,
+                    )
                     last_error = e
     except Exception as e:
+        print(
+            f"[learning-evaluate] provider=groq init_error={type(e).__name__}",
+            flush=True,
+        )
         last_error = e
 
     key = (os.getenv("OPENROUTER_API_KEY") or "").strip()
+    print(f"[learning-evaluate] openrouter_key_available={bool(key)}", flush=True)
     if key:
         try:
             import requests
@@ -2098,9 +2132,23 @@ def _evaluate_learning_with_fallback(prompt):
             )
             if resp.status_code == 200:
                 content = ((resp.json().get("choices") or [{}])[0].get("message") or {}).get("content")
-                return _parse_learning_evaluation_json(content) | {"evaluated_by": resp.json().get("model") or "openrouter/free"}
+                parsed = _parse_learning_evaluation_json(content)
+                print(
+                    f"[learning-evaluate] provider=openrouter model="
+                    f"{resp.json().get('model') or 'openrouter/free'} result=success",
+                    flush=True,
+                )
+                return parsed | {"evaluated_by": resp.json().get("model") or "openrouter/free"}
+            print(
+                f"[learning-evaluate] provider=openrouter status={resp.status_code}",
+                flush=True,
+            )
             last_error = RuntimeError(f"openrouter_status_{resp.status_code}")
         except Exception as e:
+            print(
+                f"[learning-evaluate] provider=openrouter type={type(e).__name__}",
+                flush=True,
+            )
             last_error = e
 
     if last_error:
