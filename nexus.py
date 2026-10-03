@@ -2196,8 +2196,15 @@ def v8_learning_selftest(request: Request):
         )
         add(
             "autonomous_candidate_not_recalled",
-            len(recalled) == 0,
-            {"recalled_count": len(recalled)},
+            not any(m.get("source_id") == auto_id for m in recalled),
+            {
+                "recalled_count": len(recalled),
+                "recalled_learning_ids": [
+                    m.get("source_id")
+                    for m in recalled
+                    if m.get("source_id")
+                ],
+            },
         )
         cleaned = service.update_learning_status(
             auto_id, "discarded",
