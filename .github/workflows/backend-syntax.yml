@@ -25,3 +25,15 @@ jobs:
       - name: Compile all Python modules
         run: |
           python -m compileall -q .
+
+      - name: Guard route ordering
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text = Path("nexus.py").read_text(encoding="utf-8")
+          selftest = text.index('@app.get("/api/v8/learning/selftest")')
+          dynamic = text.index('@app.get("/api/v8/learning/{learning_id}")')
+          assert selftest < dynamic, "Learning selftest route must be declared before dynamic learning_id route"
+          assert '@app.get("/api/v8/memory/semantic-selftest")' in text
+          assert '@app.post("/api/v8/memory/semantic-reindex")' in text
+          print("route ordering OK")
