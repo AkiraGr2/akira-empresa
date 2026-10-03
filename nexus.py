@@ -4228,12 +4228,14 @@ def _generate_memory_embedding(text):
         from google.genai import types
     except Exception:
         return None
-    for key in _pick_gemini_keys():
+    # El indexado no debe bloquear el request durante toda una piscina de claves.
+    # Probamos como maximo dos claves disponibles; el fallback siguiente conserva el servicio.
+    for key in _pick_gemini_keys()[:2]:
         client = None
         try:
             client = genai.Client(
                 api_key=key,
-                http_options=types.HttpOptions(timeout=12000),
+                http_options=types.HttpOptions(timeout=8000),
             )
             result = client.models.embed_content(
                 model=MEMORY_EMBEDDING_MODEL,
