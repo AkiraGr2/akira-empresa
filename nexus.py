@@ -4066,8 +4066,13 @@ def memory_ingest(request: Request, payload: dict):
         return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
-    _index_memory_embedding(service, result["record"], actor="browser_sync")
-    return {"ok": True, "stored": True, "id": result["record"]["id"], "outcome": result["outcome"], "semantic_indexed": bool(service.get_memory_embedding(result["record"]["id"]))}
+    indexed = _index_memory_embedding(service, result["record"], actor="browser_sync")
+    if not indexed:
+        try:
+            indexed = bool(service.get_memory_embedding(result["record"]["id"]))
+        except Exception:
+            indexed = False
+    return {"ok": True, "stored": True, "id": result["record"]["id"], "outcome": result["outcome"], "semantic_indexed": indexed}
 
 _STOPWORDS_ES = {"que","de","la","el","en","y","a","los","del","se","las","por","un","para","con","no","una","su","al","lo","como","mas","pero","sus","le","ya","o","este","si","porque","esta","entre","cuando","muy","sin","sobre","tambien","me","hasta","hay","donde","quien","desde","todo","nos","durante","todos","uno","les","ni","contra","otros","ese","eso","ante","ellos","e","esto","mi","antes","algunos","unos","yo","otro","otras","otra","tanto","esa","estos","mucho","quienes","nada","muchos","cual","poco","ella","estar","estas","algunas","algo","nosotros","mis","tu","te","ti","tus","ellas","nosotras","vosotros","vosotras","os","mio","mia","mios","mias","tuyo","tuya","tuyos","tuyas","suyo","suya","suyos","suyas","nuestro","nuestra","nuestros","nuestras","vuestro","vuestra","vuestros","vuestras","esos","esas","estoy","estamos","estais","estan","hacer","tener","poder","decir","ver","dar","saber","querer","llegar","pasar","deber","poner","parecer","quedar","creer","hablar","llevar","dejar","seguir","encontrar","llamar","venir","pensar","salir","volver","tomar","conocer","vivir","sentir","tratar","mirar","contar","empezar","esperar","buscar","existir","entrar","trabajar","escribir","perder","producir","ocurrir","entender","pedir","recibir","recordar","recorda","recuerda","recuerdas","probamos","probe","dime","digo","hola","buenas","gracias"}
 
