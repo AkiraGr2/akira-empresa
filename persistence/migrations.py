@@ -418,4 +418,21 @@ MIGRATIONS = [
         ALTER TABLE learning_events ADD COLUMN learning_context JSONB NOT NULL DEFAULT '{}'::jsonb
         """,
     ),
+    (
+        "017_memory_embeddings",
+        """
+        CREATE EXTENSION IF NOT EXISTS vector;
+        CREATE TABLE memory_embeddings (
+            memory_id TEXT PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
+            model TEXT NOT NULL,
+            dimensions INTEGER NOT NULL CHECK (dimensions >= 128 AND dimensions <= 3072),
+            embedding vector(768) NOT NULL,
+            source_hash TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX memory_embeddings_model_idx ON memory_embeddings (model);
+        CREATE INDEX memory_embeddings_hnsw_idx ON memory_embeddings USING hnsw (embedding vector_cosine_ops)
+        """,
+    ),
 ]
