@@ -30,6 +30,10 @@ jobs:
         run: |
           python -m unittest persistence.test_absorption -v
 
+      - name: Test learning consolidation gate
+        run: |
+          python -m unittest persistence.test_consolidation_gate -v
+
       - name: Guard route ordering
         run: |
           python - <<'PY'
