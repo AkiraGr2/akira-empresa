@@ -2004,6 +2004,234 @@ def v8_learning_status_update(request: Request, learning_id: str, payload: dict)
             graph["semantic_indexed"] = False
     return {"ok": True, "learning": rec, "graph": graph}
 
+@app.get("/api/v8/learning/selftest")
+def v8_learning_selftest(request: Request):
+    s = get_session(request)
+    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    if not s.get("is_owner"): return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
+    service = _persistence_service()
+    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    tests = []
+    def add(name, ok, detail=None):
+        tests.append({"name": name, "status": "PASS" if ok else "FAIL", "detail": detail or {}})
+    import uuid
+    marker_id = "SELFTEST_LEARNING_" + uuid.uuid4().hex[:12]
+    try:
+        created = service.save_learning({
+            "source": "explicit_user_teaching",
+            "event": marker_id,
+            "lesson": "Dato sintetico de prueba del Learning Engine: el agua hierve a 100 C a nivel del mar.",
+            "knowledge_nodes": [],
+            "relationships": [],
+            "confidence": 0.5,
+            "outcome": "unknown",
+            "status": "candidate",
+            "evidence": [],
+        }, actor=s["email"], idempotency_key="learning_selftest:" + marker_id)
+        created_rec = created.get("record") if isinstance(created, dict) else None
+        if not isinstance(created_rec, dict):
+            raise ValidationError("save_learning selftest no devolvio record")
+        created_id = created_rec["id"]
+        created_version = created_rec["version"]
+        add("candidate_created", created_rec.get("status") == "candidate", {"id": created_id})
+        evidence = [{"type": "test", "title": "Fuente sintetica de selftest", "reference": "selftest://learning/" + marker_id, "note": "Evidencia controlada de prueba."}]
+        updated = service.add_learning_evidence(created_id, evidence, expected_version=created_version, actor=s["email"])
+        add("evidence_added", len(updated.get("evidence") or []) == 1, {"version": updated.get("version")})
+        verified = service.update_learning_status(created_id, "verified", expected_version=updated["version"], actor=s["email"])
+        add("candidate_to_verified", verified.get("status") == "verified" and bool(verified.get("verified_at")), {"status": verified.get("status")})
+        consolidated = service.update_learning_status(created_id, "consolidated", expected_version=verified["version"], actor=s["email"])
+        add("verified_to_consolidated", consolidated.get("status") == "consolidated", {"status": consolidated.get("status")})
+        fetched = service.get_learning(created_id)
+        add("persisted_after_consolidation", fetched is not None and fetched.get("status") == "consolidated", {"id": created_id})
+
+        # E2E real del Knowledge Gate: un aprendizaje consolidado debe
+        # materializar memoria/nodo/aristas de forma idempotente.
+        core = service.ensure_core_node(actor=s["email"])
+        if core:
+            current_before = service.get_learning(created_id)
+            context = {"node_type": "concept", "label": "SELFTEST Learning", "knowledge_node_ids": [core["id"]]}
+            promoted_learning = service.update_learning(
+                created_id, {"learning_context": context},
+                expected_version=current_before["version"], actor=s["email"]
+            )
+            promoted = service.promote_learning_to_graph(created_id, actor=s["email"])
+            promoted_node = promoted.get("node")
+            promoted_edges = promoted.get("edges") or []
+            add(
+                "verified_learning_promoted",
+                bool(promoted.get("promoted"))
+                and isinstance(promoted_node, dict)
+                and promoted_node.get("status") == "active",
+                {"node_id": (promoted_node or {}).get("id")}
+            )
+            add(
+                "verified_learning_has_real_edges",
+                len(promoted_edges) >= 1,
+                {"edge_count": len(promoted_edges)}
+            )
+            promoted_memory = promoted.get("memory") or {}
+            add(
+                "verified_learning_has_memory",
+                bool(promoted_memory.get("id"))
+                and promoted_memory.get("source_id") == created_id,
+                {"memory_id": promoted_memory.get("id")}
+            )
+            recalled_verified = _recall_memories(
+                service,
+                "Dato sintetico de prueba del Learning Engine SELFTEST Learning",
+                limit=5,
+            )
+            add(
+                "verified_learning_recalled",
+                any(m.get("source_id") == created_id for m in recalled_verified),
+                {"recalled_count": len(recalled_verified)}
+            )
+            after_recall = service.get_learning(created_id)
+            add(
+                "verified_learning_reuse_recorded",
+                int((after_recall or {}).get("reuse_count") or 0) >= 1,
+                {"reuse_count": int((after_recall or {}).get("reuse_count") or 0)}
+            )
+            cleanup_result = service.cleanup_learning_materialization(created_id, actor=s["email"])
+            add(
+                "learning_materialization_cleanup",
+                cleanup_result.get("archived_nodes", 0) >= 1
+                and cleanup_result.get("archived_memories", 0) >= 1,
+                cleanup_result,
+            )
+        else:
+            add("verified_learning_promotion", False, {"reason": "core_node_unavailable"})
+
+        try:
+            current_for_transition = service.get_learning(created_id)
+            service.update_learning_status(
+                created_id, "discarded",
+                expected_version=current_for_transition["version"],
+                actor=s["email"]
+            )
+            add("illegal_transition_rejected", False, {"reason": "discarded_transition_should_fail"})
+        except Exception as e:
+            add("illegal_transition_rejected", True, {"error_type": type(e).__name__})
+
+        # Limpieza final del registro sintético: consolidated -> obsolete.
+        try:
+            current_for_cleanup = service.get_learning(created_id)
+            service.update_learning_status(
+                created_id, "obsolete",
+                expected_version=current_for_cleanup["version"],
+                actor=s["email"]
+            )
+            add("selftest_cleanup", True, {"status": "obsolete"})
+        except Exception as e:
+            add("selftest_cleanup", False, {"error_type": type(e).__name__})
+    except Exception as e:
+        add("learning_e2e_contract", False, {"error_type": type(e).__name__, "message": str(e)[:200]})
+    # Contrato autónomo: una experiencia propia nace como candidate y no genera
+    # memoria semántica recuperable hasta que pase por evidencia/verificación.
+    auto_marker = "SELFTEST_AUTONOMOUS_" + uuid.uuid4().hex[:12]
+    auto_id = None
+    try:
+        auto_created = service.save_learning({
+            "source": "autonomous_experience",
+            "event": auto_marker,
+            "lesson": "SELFTEST: experiencia autónoma sintetizada; no debe tratarse como verdad todavía.",
+            "knowledge_nodes": [],
+            "relationships": [],
+            "confidence": 0.55,
+            "outcome": "failure",
+            "status": "candidate",
+            "evidence": [],
+        }, actor=s["email"], idempotency_key="learning_selftest:auto:" + auto_marker)
+        auto_id = auto_created["record"]["id"]
+        add(
+            "autonomous_candidate_created",
+            auto_created.get("record", {}).get("status") == "candidate"
+            and auto_created.get("record", {}).get("source") == "autonomous_experience",
+            {"id": auto_id},
+        )
+        auto_mem = service.search_memory({
+            "source": "learning_candidate",
+            "source_id": auto_id,
+        }, limit=10)
+        add(
+            "autonomous_candidate_has_no_memory",
+            len(auto_mem) == 0,
+            {"memory_count": len(auto_mem)},
+        )
+        recalled = _recall_memories(
+            service,
+            "SELFTEST experiencia autónoma sintetizada " + auto_marker,
+            limit=5,
+        )
+        add(
+            "autonomous_candidate_not_recalled",
+            len(recalled) == 0,
+            {"recalled_count": len(recalled)},
+        )
+        cleaned = service.update_learning_status(
+            auto_id, "discarded",
+            expected_version=auto_created["record"]["version"],
+            actor=s["email"],
+        )
+        add(
+            "autonomous_candidate_cleanup",
+            cleaned.get("status") == "discarded",
+            {"status": cleaned.get("status")},
+        )
+    except Exception as e:
+        add("autonomous_learning_contract", False, {
+            "error_type": type(e).__name__,
+            "message": str(e)[:200],
+        })
+        if auto_id:
+            try:
+                current_auto = service.get_learning(auto_id)
+                if current_auto and current_auto.get("status") == "candidate":
+                    service.update_learning_status(
+                        auto_id, "discarded",
+                        expected_version=current_auto["version"],
+                        actor=s["email"],
+                    )
+            except Exception:
+                pass
+
+    # Contracto de enseñanza explícita: candidate aislado hasta verificar.
+    teach_marker = "SELFTEST TEACHING " + uuid.uuid4().hex[:10]
+    teach_id = None
+    try:
+        taught, taught_memory, taught_node = _create_teaching_candidate(
+            service,
+            teach_marker,
+            s["email"],
+            context={"node_type": "concept", "label": teach_marker},
+        )
+        teach_id = taught.get("id")
+        add(
+            "explicit_teaching_candidate_isolated",
+            bool(teach_id)
+            and taught.get("status") == "candidate"
+            and taught_memory is None
+            and taught_node is None
+            and not (taught.get("knowledge_nodes") or []),
+            {"id": teach_id, "memory": bool(taught_memory), "node": bool(taught_node)},
+        )
+        if teach_id:
+            current_teach = service.get_learning(teach_id)
+            service.update_learning_status(
+                teach_id, "discarded",
+                expected_version=current_teach["version"],
+                actor=s["email"],
+            )
+    except Exception as e:
+        add(
+            "explicit_teaching_candidate_isolated",
+            False,
+            {"error_type": type(e).__name__, "message": str(e)[:200]},
+        )
+
+    return {"ok": all(t["status"] == "PASS" for t in tests), "tests": tests, "synthetic_only": True}
+
+
 @app.get("/api/v8/learning/{learning_id}")
 def v8_learning_get(request: Request, learning_id: str):
     s = get_session(request)
@@ -3258,233 +3486,6 @@ def _selftest_missions_run():
         "total": len(tests),
     }
     return {"summary": summary, "tests": tests}
-
-@app.get("/api/v8/learning/selftest")
-def v8_learning_selftest(request: Request):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
-    if not s.get("is_owner"): return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
-    service = _persistence_service()
-    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
-    tests = []
-    def add(name, ok, detail=None):
-        tests.append({"name": name, "status": "PASS" if ok else "FAIL", "detail": detail or {}})
-    import uuid
-    marker_id = "SELFTEST_LEARNING_" + uuid.uuid4().hex[:12]
-    try:
-        created = service.save_learning({
-            "source": "explicit_user_teaching",
-            "event": marker_id,
-            "lesson": "Dato sintetico de prueba del Learning Engine: el agua hierve a 100 C a nivel del mar.",
-            "knowledge_nodes": [],
-            "relationships": [],
-            "confidence": 0.5,
-            "outcome": "unknown",
-            "status": "candidate",
-            "evidence": [],
-        }, actor=s["email"], idempotency_key="learning_selftest:" + marker_id)
-        created_rec = created.get("record") if isinstance(created, dict) else None
-        if not isinstance(created_rec, dict):
-            raise ValidationError("save_learning selftest no devolvio record")
-        created_id = created_rec["id"]
-        created_version = created_rec["version"]
-        add("candidate_created", created_rec.get("status") == "candidate", {"id": created_id})
-        evidence = [{"type": "test", "title": "Fuente sintetica de selftest", "reference": "selftest://learning/" + marker_id, "note": "Evidencia controlada de prueba."}]
-        updated = service.add_learning_evidence(created_id, evidence, expected_version=created_version, actor=s["email"])
-        add("evidence_added", len(updated.get("evidence") or []) == 1, {"version": updated.get("version")})
-        verified = service.update_learning_status(created_id, "verified", expected_version=updated["version"], actor=s["email"])
-        add("candidate_to_verified", verified.get("status") == "verified" and bool(verified.get("verified_at")), {"status": verified.get("status")})
-        consolidated = service.update_learning_status(created_id, "consolidated", expected_version=verified["version"], actor=s["email"])
-        add("verified_to_consolidated", consolidated.get("status") == "consolidated", {"status": consolidated.get("status")})
-        fetched = service.get_learning(created_id)
-        add("persisted_after_consolidation", fetched is not None and fetched.get("status") == "consolidated", {"id": created_id})
-
-        # E2E real del Knowledge Gate: un aprendizaje consolidado debe
-        # materializar memoria/nodo/aristas de forma idempotente.
-        core = service.ensure_core_node(actor=s["email"])
-        if core:
-            current_before = service.get_learning(created_id)
-            context = {"node_type": "concept", "label": "SELFTEST Learning", "knowledge_node_ids": [core["id"]]}
-            promoted_learning = service.update_learning(
-                created_id, {"learning_context": context},
-                expected_version=current_before["version"], actor=s["email"]
-            )
-            promoted = service.promote_learning_to_graph(created_id, actor=s["email"])
-            promoted_node = promoted.get("node")
-            promoted_edges = promoted.get("edges") or []
-            add(
-                "verified_learning_promoted",
-                bool(promoted.get("promoted"))
-                and isinstance(promoted_node, dict)
-                and promoted_node.get("status") == "active",
-                {"node_id": (promoted_node or {}).get("id")}
-            )
-            add(
-                "verified_learning_has_real_edges",
-                len(promoted_edges) >= 1,
-                {"edge_count": len(promoted_edges)}
-            )
-            promoted_memory = promoted.get("memory") or {}
-            add(
-                "verified_learning_has_memory",
-                bool(promoted_memory.get("id"))
-                and promoted_memory.get("source_id") == created_id,
-                {"memory_id": promoted_memory.get("id")}
-            )
-            recalled_verified = _recall_memories(
-                service,
-                "Dato sintetico de prueba del Learning Engine SELFTEST Learning",
-                limit=5,
-            )
-            add(
-                "verified_learning_recalled",
-                any(m.get("source_id") == created_id for m in recalled_verified),
-                {"recalled_count": len(recalled_verified)}
-            )
-            after_recall = service.get_learning(created_id)
-            add(
-                "verified_learning_reuse_recorded",
-                int((after_recall or {}).get("reuse_count") or 0) >= 1,
-                {"reuse_count": int((after_recall or {}).get("reuse_count") or 0)}
-            )
-            cleanup_result = service.cleanup_learning_materialization(created_id, actor=s["email"])
-            add(
-                "learning_materialization_cleanup",
-                cleanup_result.get("archived_nodes", 0) >= 1
-                and cleanup_result.get("archived_memories", 0) >= 1,
-                cleanup_result,
-            )
-        else:
-            add("verified_learning_promotion", False, {"reason": "core_node_unavailable"})
-
-        try:
-            current_for_transition = service.get_learning(created_id)
-            service.update_learning_status(
-                created_id, "discarded",
-                expected_version=current_for_transition["version"],
-                actor=s["email"]
-            )
-            add("illegal_transition_rejected", False, {"reason": "discarded_transition_should_fail"})
-        except Exception as e:
-            add("illegal_transition_rejected", True, {"error_type": type(e).__name__})
-
-        # Limpieza final del registro sintético: consolidated -> obsolete.
-        try:
-            current_for_cleanup = service.get_learning(created_id)
-            service.update_learning_status(
-                created_id, "obsolete",
-                expected_version=current_for_cleanup["version"],
-                actor=s["email"]
-            )
-            add("selftest_cleanup", True, {"status": "obsolete"})
-        except Exception as e:
-            add("selftest_cleanup", False, {"error_type": type(e).__name__})
-    except Exception as e:
-        add("learning_e2e_contract", False, {"error_type": type(e).__name__, "message": str(e)[:200]})
-    # Contrato autónomo: una experiencia propia nace como candidate y no genera
-    # memoria semántica recuperable hasta que pase por evidencia/verificación.
-    auto_marker = "SELFTEST_AUTONOMOUS_" + uuid.uuid4().hex[:12]
-    auto_id = None
-    try:
-        auto_created = service.save_learning({
-            "source": "autonomous_experience",
-            "event": auto_marker,
-            "lesson": "SELFTEST: experiencia autónoma sintetizada; no debe tratarse como verdad todavía.",
-            "knowledge_nodes": [],
-            "relationships": [],
-            "confidence": 0.55,
-            "outcome": "failure",
-            "status": "candidate",
-            "evidence": [],
-        }, actor=s["email"], idempotency_key="learning_selftest:auto:" + auto_marker)
-        auto_id = auto_created["record"]["id"]
-        add(
-            "autonomous_candidate_created",
-            auto_created.get("record", {}).get("status") == "candidate"
-            and auto_created.get("record", {}).get("source") == "autonomous_experience",
-            {"id": auto_id},
-        )
-        auto_mem = service.search_memory({
-            "source": "learning_candidate",
-            "source_id": auto_id,
-        }, limit=10)
-        add(
-            "autonomous_candidate_has_no_memory",
-            len(auto_mem) == 0,
-            {"memory_count": len(auto_mem)},
-        )
-        recalled = _recall_memories(
-            service,
-            "SELFTEST experiencia autónoma sintetizada " + auto_marker,
-            limit=5,
-        )
-        add(
-            "autonomous_candidate_not_recalled",
-            len(recalled) == 0,
-            {"recalled_count": len(recalled)},
-        )
-        cleaned = service.update_learning_status(
-            auto_id, "discarded",
-            expected_version=auto_created["record"]["version"],
-            actor=s["email"],
-        )
-        add(
-            "autonomous_candidate_cleanup",
-            cleaned.get("status") == "discarded",
-            {"status": cleaned.get("status")},
-        )
-    except Exception as e:
-        add("autonomous_learning_contract", False, {
-            "error_type": type(e).__name__,
-            "message": str(e)[:200],
-        })
-        if auto_id:
-            try:
-                current_auto = service.get_learning(auto_id)
-                if current_auto and current_auto.get("status") == "candidate":
-                    service.update_learning_status(
-                        auto_id, "discarded",
-                        expected_version=current_auto["version"],
-                        actor=s["email"],
-                    )
-            except Exception:
-                pass
-
-    # Contracto de enseñanza explícita: candidate aislado hasta verificar.
-    teach_marker = "SELFTEST TEACHING " + uuid.uuid4().hex[:10]
-    teach_id = None
-    try:
-        taught, taught_memory, taught_node = _create_teaching_candidate(
-            service,
-            teach_marker,
-            s["email"],
-            context={"node_type": "concept", "label": teach_marker},
-        )
-        teach_id = taught.get("id")
-        add(
-            "explicit_teaching_candidate_isolated",
-            bool(teach_id)
-            and taught.get("status") == "candidate"
-            and taught_memory is None
-            and taught_node is None
-            and not (taught.get("knowledge_nodes") or []),
-            {"id": teach_id, "memory": bool(taught_memory), "node": bool(taught_node)},
-        )
-        if teach_id:
-            current_teach = service.get_learning(teach_id)
-            service.update_learning_status(
-                teach_id, "discarded",
-                expected_version=current_teach["version"],
-                actor=s["email"],
-            )
-    except Exception as e:
-        add(
-            "explicit_teaching_candidate_isolated",
-            False,
-            {"error_type": type(e).__name__, "message": str(e)[:200]},
-        )
-
-    return {"ok": all(t["status"] == "PASS" for t in tests), "tests": tests, "synthetic_only": True}
 
 @app.get("/api/v8/memory/semantic-selftest")
 def v8_memory_semantic_selftest(request: Request):
