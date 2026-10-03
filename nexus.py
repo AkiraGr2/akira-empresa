@@ -241,6 +241,8 @@ _IDENTITY_REPLACEMENT = (
 def enforce_akira_identity_global(text):
     if not text: return text
     low = text.lower()
+    if "he recibido la corrección y la he registrado" in low or "id de aprendizaje:" in low:
+        return "No ejecuté ninguna acción persistente de aprendizaje con este mensaje. La conversación solo está siendo observada."
     if any(b in low for b in _IDENTITY_BANNED_PHRASES):
         return _IDENTITY_REPLACEMENT
     text = text.replace("ChatGPT", "Akira").replace("OpenAI", "Grimm Hive").replace("Meta AI", "Akira")
