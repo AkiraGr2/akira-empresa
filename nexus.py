@@ -477,11 +477,11 @@ def _detect_github_read_request(msg):
         wants_3d = "3d" in low
         wants_2d = any(x in low for x in ("cerebro 2d", "cerebro2d", "2d", "membrane", "membrana"))
         if wants_3d:
-            paths.extend(["js/akira_brain_3d.js", "index.html"])
+            paths.append("js/akira_brain_3d.js")
         elif wants_2d or any(x in low for x in ("cerebro", "brain", "nodo", "nodos", "membrane", "membrana")):
-            # The 2D control path lives in Obsidian Membrane; the panel shell
-            # itself is declared in index.html. The chat client is not a Brain renderer.
-            paths.extend(["js/obsidian_membrane.js", "index.html"])
+            # The 2D control and node-information behavior are implemented in
+            # Obsidian Membrane. Do not add unrelated chat/client files as evidence.
+            paths.append("js/obsidian_membrane.js")
         if any(x in low for x in ("mision", "misiones", "mission")):
             paths.append("js/akira_missions_panel.js")
         if not paths:
@@ -5726,6 +5726,7 @@ async def chat(request: Request):
                 if github_error is None and isinstance(github_outputs, dict):
                     github_context = (
                         "\n[GitHub READ-ONLY EVIDENCE — SERVER RESULT]\n"
+                        + "EVIDENCE POLICY: prior chat text is not evidence. Only direct code evidence from the current server result may support a file-control claim. A script/import reference does not prove functional ownership. Prefer the most specific file whose code directly implements the requested behavior.\n"
                         + json_lib.dumps(
                             github_outputs.get("result", {}),
                             ensure_ascii=False,
@@ -5925,6 +5926,7 @@ async def chat_stream(request: Request):
                 if github_error is None and isinstance(github_outputs, dict):
                     github_context = (
                         "\n[GitHub READ-ONLY EVIDENCE — SERVER RESULT]\n"
+                        + "EVIDENCE POLICY: prior chat text is not evidence. Only direct code evidence from the current server result may support a file-control claim. A script/import reference does not prove functional ownership. Prefer the most specific file whose code directly implements the requested behavior.\n"
                         + json_lib.dumps(
                             github_outputs.get("result", {}),
                             ensure_ascii=False,
