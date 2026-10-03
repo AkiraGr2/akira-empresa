@@ -375,7 +375,7 @@ REGLAS ANTI-ALUCINACION (OBLIGATORIAS):
     return None
 
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse, JSONResponse, Response
+from fastapi.responses import StreamingResponse, JSONResponse, Response, RedirectResponse
 import json as json_lib
 app=FastAPI(title="Akira V7.3 Consciente")
 
@@ -2168,6 +2168,7 @@ def v8_learning_selftest(request: Request):
             service,
             "SELFTEST experiencia autónoma sintetizada " + auto_marker,
             limit=5,
+            include_semantic=False,
         )
         add(
             "autonomous_candidate_not_recalled",
@@ -2257,13 +2258,13 @@ def v8_learning_selftest(request: Request):
     selftest_payload = json.dumps(
         selftest_result, ensure_ascii=False, separators=(",", ":")
     ).encode("utf-8")
-    return Response(
-        content=selftest_payload,
-        status_code=200,
-        media_type="application/json",
+    # Redirige a una GET corta que contiene el resultado ya persistido en memoria.
+    # Esto evita depender del transporte del cuerpo de la petición larga del E2E.
+    return RedirectResponse(
+        url="/api/v8/learning/selftest/result",
+        status_code=307,
         headers={
             "Cache-Control": "no-store",
-            "Content-Length": str(len(selftest_payload)),
             "X-Akira-Selftest-Tests": str(len(tests)),
         },
     )
