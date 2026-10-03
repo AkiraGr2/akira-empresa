@@ -3143,6 +3143,68 @@ def _selftest_missions_run():
     if service is None:
         add("db_passive_read", "N/A", {"reason": "persistence_not_ready"})
     else:
+        # E2E persistente pero aislado del contrato graph_create_edge.
+        edge_nodes = []
+        edge_id = None
+        try:
+            stamp = uuid.uuid4().hex[:10]
+            a = service.create_node({
+                "node_type": "concept",
+                "label": f"SELFTEST edge A {stamp}",
+                "description": "Nodo origen de prueba.",
+                "tags": ["selftest_edge"],
+                "weight": 1.0,
+                "confidence": 1.0,
+                "privacy_level": "PRIVATE",
+            }, actor="mission-selftest", idempotency_key=f"mission_selftest_node_a:{stamp}")
+            b = service.create_node({
+                "node_type": "concept",
+                "label": f"SELFTEST edge B {stamp}",
+                "description": "Nodo destino de prueba.",
+                "tags": ["selftest_edge"],
+                "weight": 1.0,
+                "confidence": 1.0,
+                "privacy_level": "PRIVATE",
+            }, actor="mission-selftest", idempotency_key=f"mission_selftest_node_b:{stamp}")
+            node_a = a["record"]
+            node_b = b["record"]
+            edge_nodes = [node_a["id"], node_b["id"]]
+            edge = service.create_edge({
+                "from_node": node_a["id"],
+                "to_node": node_b["id"],
+                "relation_type": "related_to",
+                "weight": 0.5,
+                "confidence": 1.0,
+                "origin": "mission_selftest",
+            }, actor="mission-selftest", idempotency_key=f"mission_selftest_edge:{stamp}")
+            edge_id = edge["record"]["id"]
+            readback = service.get_edge(edge_id)
+            add(
+                "graph_edge_persistence_e2e",
+                bool(readback)
+                and readback.get("from_node") == node_a["id"]
+                and readback.get("to_node") == node_b["id"]
+                and readback.get("relation_type") == "related_to",
+                {"edge_id": edge_id, "from_node": node_a["id"], "to_node": node_b["id"]},
+            )
+        except Exception as e:
+            add("graph_edge_persistence_e2e", "FAIL", {"error": type(e).__name__, "message": str(e)[:200]})
+        finally:
+            if edge_id:
+                try:
+                    edge = service.get_edge(edge_id)
+                    if edge:
+                        service.archive_edge(edge_id, expected_version=edge["version"], actor="mission-selftest")
+                except Exception:
+                    pass
+            for node_id in edge_nodes:
+                try:
+                    node = service.get_node(node_id)
+                    if node:
+                        service.update_node(node_id, {"status": "archived"}, expected_version=node["version"], actor="mission-selftest")
+                except Exception:
+                    pass
+
         try:
             recent = service.list_missions(limit=5)
             add("db_passive_read", "PASS", {"missions_visible": len(recent)})
