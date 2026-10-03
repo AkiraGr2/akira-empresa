@@ -5303,6 +5303,8 @@ def _format_conversation_context(service, conversation_id, current_msg, limit=20
         if role not in ("user", "assistant") or not content:
             continue
         content = content[:4000]
+        from persistence.chat_context import sanitize_historical_assistant_message
+        content = sanitize_historical_assistant_message(role, r.get("model"), content)
         block = f"{'Usuario' if role == 'user' else 'Akira'}: {content}"
         if used + len(block) > max_chars:
             break
