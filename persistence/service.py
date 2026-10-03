@@ -1334,27 +1334,26 @@ class PersistenceService:
         return rows[0] if rows else None
 
     def _upsert_edge(self, from_node, to_node, relation_type, delta_weight=0.5, actor="auto-connect"):
-        """Upsert transaccional de una arista activa, seguro frente a concurrencia."""
-        if from_node == to_node: return None
+        """Actualiza o crea una sola arista activa, serializada por clave lógica."""
+        if from_node == to_node:
+            return None
         lock_key = f"graph-edge:{from_node}:{to_node}:{relation_type}"
 
         for _attempt in range(3):
             try:
                 with self.repo.transaction() as tx:
                     tx.advisory_xact_lock(lock_key)
-                    existing = tx._edge_exists(from_node, to_node, relation_type) if hasattr(tx, "_edge_exists") else None
-                    if existing is None:
-                        rows = tx.search(
-                            "graph_edges",
-                            {
-                                "from_node": from_node,
-                                "to_node": to_node,
-                                "relation_type": relation_type,
-                                "status": "active",
-                            },
-                            limit=1,
-                        )
-                        existing = rows[0] if rows else None
+                    rows = tx.search(
+                        "graph_edges",
+                        {
+                            "from_node": from_node,
+                            "to_node": to_node,
+                            "relation_type": relation_type,
+                            "status": "active",
+                        },
+                        limit=1,
+                    )
+                    existing = rows[0] if rows else None
 
                     if existing:
                         new_freq = int(existing.get("frequency") or 1) + 1
@@ -1362,15 +1361,19 @@ class PersistenceService:
                             _AUTO_EDGE_MAX_WEIGHT,
                             float(existing.get("weight") or 0.5) + delta_weight * 0.5,
                         )
-                        changes = {
-                            "frequency": new_freq,
-                            "weight": new_weight,
-                            "last_used_at": _now_iso(),
-                        }
-                        updated = tx.update("graph_edges", existing["id"], changes, existing["version"])
+                        updated = tx.update(
+                            "graph_edges",
+                            existing["id"],
+                            {
+                                "frequency": new_freq,
+                                "weight": new_weight,
+                                "last_used_at": _now_iso(),
+                            },
+                            existing["version"],
+                        )
                         tx.append_audit({
                             "actor": actor,
-                            "action": "graph.edge.create.already_synced",
+                            "action": "graph.edge.reinforce",
                             "resource": "graph_edges",
                             "resource_id": updated["id"],
                             "status": "success",
@@ -1411,20 +1414,16 @@ class PersistenceService:
                             "relation": relation_type,
                         },
                     })
-                    verified = tx.get("graph_edges", stored["id"])
-                    return verified or stored
+                    return stored
+
             except PersistenceError:
-                # A unique active-edge constraint is the final database-level
-                # guard. In case another transaction won the race, re-read it.
                 existing_after_race = self._edge_exists(from_node, to_node, relation_type)
                 if existing_after_race:
                     return existing_after_race
-                continue
             except Exception:
                 existing_after_race = self._edge_exists(from_node, to_node, relation_type)
                 if existing_after_race:
                     return existing_after_race
-                continue
         return None
 
     def auto_connect_node_tags(self, node_id, actor="auto-connect"):
@@ -1588,6 +1587,26 @@ class PersistenceService:
             }, actor=actor)
             return r["record"]
         except Exception as e:
+            # If another transaction won the single-core unique guard, reuse it.
+            try:
+                rows = self.repo.search(
+                    "graph_nodes",
+                    {"status": "active", "label": _CORE_NODE_LABEL},
+                    limit=20,
+                    order_by="created_at",
+                    descending=False,
+                )
+                for existing in rows:
+                    metadata = existing.get("node_metadata") if isinstance(existing.get("node_metadata"), dict) else {}
+                    tags = set(str(t).strip().lower() for t in (existing.get("tags") or []))
+                    if (
+                        str(existing.get("label", "")).strip() == _CORE_NODE_LABEL
+                        and not metadata.get("learning_id")
+                        and {"core", "akira", "nucleo"}.issubset(tags)
+                    ):
+                        return existing
+            except Exception:
+                pass
             print(f"[core] ensure_core_node fallo: {type(e).__name__}: {str(e)[:200]}")
             return None
 
