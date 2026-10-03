@@ -1695,7 +1695,6 @@ def v8_learning_teach(request: Request, payload: dict):
 
     source = str(payload.get("source") or "user_teaching").strip()[:64]
     event = str(payload.get("event") or "explicit_user_teaching").strip()[:500]
-   
 
     try:
         confidence = float(payload.get("confidence", 0.8))
@@ -1703,45 +1702,40 @@ def v8_learning_teach(request: Request, payload: dict):
         tags = payload.get("tags") or []
         if not isinstance(tags, list):
             raise ValidationError("tags debe ser una lista")
+        node_type = str(payload.get("node_type") or "concept").strip()
+        if node_type not in {"concept","person","project","tool","experience","document","skill","error","solution","mission"}:
+            raise ValidationError("invalid_node_type")
 
+        context = {
+            "knowledge_kind": str(payload.get("knowledge_kind") or "concept").strip()[:64],
+            "label": str(payload.get("label") or lesson[:120]).strip()[:200],
+            "node_type": node_type,
+            "tags": tags[:20],
+            "importance": importance,
+            "memory_type": "semantic",
+            "privacy_level": "PRIVATE",
+            "source_reference": source,
+        }
         lr = service.save_learning({
-            "source": source, "event": event, "lesson": lesson,
-            "knowledge_nodes": [], "relationships": [],
-            "confidence": confidence, "outcome": "unknown", "status": "candidate"
+            "source": source,
+            "event": event,
+            "lesson": lesson,
+            "knowledge_nodes": [],
+            "relationships": [],
+            "confidence": confidence,
+            "outcome": "unknown",
+            "status": "candidate",
+            "evidence": [],
+            "learning_context": context,
         }, actor=s["email"], idempotency_key=payload.get("idempotency_key"))
-
-        mr = service.save_memory({
-            "content": lesson, "memory_type": "semantic",
-            "importance": importance, "confidence": confidence,
-            "source": "learning_engine", "source_id": lr["record"]["id"],
-            "source_reference": source, "tags": tags, "privacy_level": "PRIVATE"
-        }, actor=s["email"], idempotency_key=f"teach_mem_{lr['record']['id']}")
-
-        nr = service.create_node({
-            "node_type": node_type, "label": label,
-            "description": lesson[:1000],
-            "node_metadata": {
-                "knowledge_kind": knowledge_kind,
-                "learning_id": lr["record"]["id"],
-                "memory_id": mr["record"]["id"],
-                "learning_status": "candidate"
-            },
-            "tags": tags, "weight": 1.0, "confidence": confidence,
-            "privacy_level": "PRIVATE"
-        }, actor=s["email"], idempotency_key=f"teach_node_{lr['record']['id']}")
-
-        updated_learning = service.update_learning(
-            lr["record"]["id"],
-            {"knowledge_nodes": [nr["record"]["id"]]},
-            expected_version=lr["record"]["version"],
-            actor=s["email"]
-        )
         return {
             "ok": True,
             "status": "candidate",
-            "learning": updated_learning,
-            "memory": mr["record"],
-            "node": nr["record"]
+            "learning": lr["record"],
+            "memory": None,
+            "node": None,
+            "materialized": False,
+            "message": "Enseñanza registrada como candidate; evidencia/verificacion requerida antes de materializar memoria y grafo."
         }
     except ValidationError as e:
         return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
