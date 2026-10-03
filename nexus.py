@@ -49,7 +49,7 @@ MISSION_MAX_DURATION_S = 480
 
 # Fase 2: el decisor se ejecuta en modo shadow. Analiza el chat real, pero
 # todavía NO crea learning candidates ni toca memoria/grafo.
-ABSORPTION_MODE = (os.getenv("AKIRA_ABSORPTION_MODE", "shadow") or "shadow").strip().lower()
+ABSORPTION_MODE = (os.getenv("AKIRA_ABSORPTION_MODE", "off") or "off").strip().lower()
 if ABSORPTION_MODE not in {"off", "shadow"}:
     ABSORPTION_MODE = "shadow"
 ABSORPTION_MIN_CHARS = 25
@@ -4655,10 +4655,8 @@ def _decide_absorption(message, memories=None, conversation_context=""):
     deadline = time.monotonic() + ABSORPTION_TIMEOUT_S
 
     raw = _groq_absorption_decide(prompt, deadline=deadline)
-    provider = "groq"
     if raw is None:
         raw = _gemini_absorption_decide(prompt, deadline=deadline)
-        provider = "gemini"
 
     if raw is None:
         return None
@@ -5266,9 +5264,10 @@ async def chat(request: Request):
         conversation_context = await asyncio.to_thread(
             _format_conversation_context, service, conversation_id, msg
         )
-        asyncio.create_task(
-            _run_absorption_shadow(msg, memories, conversation_context)
-        )
+        if persist:
+            asyncio.create_task(
+                _run_absorption_shadow(msg, memories, conversation_context)
+            )
         model_route, _ = select_model_route(msg, bool(data.get("image_base64","")))
         model_route, _ = validate_model_before_call(model_route, "chat")
         user_key = data.get("user_api_key","").strip()
@@ -5369,9 +5368,10 @@ async def chat_stream(request: Request):
         conversation_context = await asyncio.to_thread(
             _format_conversation_context, service, conversation_id, msg
         )
-        asyncio.create_task(
-            _run_absorption_shadow(msg, memories, conversation_context)
-        )
+        if persist:
+            asyncio.create_task(
+                _run_absorption_shadow(msg, memories, conversation_context)
+            )
         t0 = time.time()
 
         async def generate():
