@@ -406,10 +406,22 @@ class PersistenceService:
             raise NotFoundError(learning_id)
 
         status = learning.get("status") or "candidate"
-        if status not in ("verified", "consolidated"):
+        if status != "consolidated":
             return {"promoted": False, "reason": "status_not_eligible", "status": status}
         if not (learning.get("evidence") or []):
             return {"promoted": False, "reason": "evidence_required", "status": status}
+        analysis = learning.get("verification_analysis")
+        verdict = analysis.get("verdict") if isinstance(analysis, dict) else None
+        try:
+            eval_confidence = float(analysis.get("confidence", 0.0)) if isinstance(analysis, dict) else 0.0
+        except Exception:
+            eval_confidence = 0.0
+        if verdict != "supported" or eval_confidence < 0.70:
+            return {
+                "promoted": False,
+                "reason": "verification_not_sufficient",
+                "status": status,
+            }
 
         source = str(learning.get("source") or "learning").strip()[:64]
         outcome = str(learning.get("outcome") or "unknown").strip()[:32]
