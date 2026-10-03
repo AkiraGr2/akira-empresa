@@ -85,7 +85,7 @@ class ChatActionIntegrityGuardTests(unittest.TestCase):
         self.assertEqual(result["files"][0]["mode"], "targeted_snippets")
         self.assertGreaterEqual(len(result["files"][0]["matches"]), 1)
         snippets = " ".join(m["snippet"] for m in result["files"][0]["matches"])
-        self.assertIn("brainContext", snippets)
+        self.assertIn("openBrainContext", snippets)
 
     def test_github_readonly_gateway_rejects_untrusted_repo(self):
         from github_readonly import GitHubReadValidationError, read_repo_path
