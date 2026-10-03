@@ -456,9 +456,22 @@ class PersistenceService:
             value = str(value).strip()
             if value and value not in knowledge_nodes:
                 knowledge_nodes.append(value)
+        # Reuse only a node explicitly materialized for THIS learning.
+        # Context/source nodes (especially the permanent Akira core) are inputs,
+        # not the learning node itself.
         for node_id in knowledge_nodes:
             candidate = self.get_node(node_id)
-            if candidate and candidate.get("status") == "active":
+            metadata = (
+                candidate.get("node_metadata")
+                if isinstance(candidate, dict) and isinstance(candidate.get("node_metadata"), dict)
+                else {}
+            )
+            if (
+                candidate
+                and candidate.get("status") == "active"
+                and str(metadata.get("learning_id") or "") == str(learning_id)
+                and str(candidate.get("label") or "").strip() != _CORE_NODE_LABEL
+            ):
                 node = candidate
                 break
 
@@ -670,10 +683,40 @@ class PersistenceService:
         learning = self.get_learning(learning_id)
         if learning is None:
             raise NotFoundError(learning_id)
-        learning_node_ids = set(str(x) for x in (learning.get("knowledge_nodes") or []) if str(x).strip())
+        # Cleanup must only touch artifacts owned by THIS learning.
+        # Never archive context/source nodes such as the permanent Akira core.
+        learning_node_ids = set()
+        for value in (learning.get("knowledge_nodes") or []):
+            node_id = str(value).strip()
+            if not node_id:
+                continue
+            node = self.get_node(node_id)
+            metadata = (
+                node.get("node_metadata")
+                if isinstance(node, dict) and isinstance(node.get("node_metadata"), dict)
+                else {}
+            )
+            if (
+                node
+                and str(metadata.get("learning_id") or "") == str(learning_id)
+                and str(node.get("label") or "").strip() != _CORE_NODE_LABEL
+            ):
+                learning_node_ids.add(node_id)
         context = learning.get("learning_context") if isinstance(learning.get("learning_context"), dict) else {}
-        if context.get("promoted_node_id"):
-            learning_node_ids.add(str(context["promoted_node_id"]))
+        promoted_node_id = str(context.get("promoted_node_id") or "").strip()
+        if promoted_node_id:
+            promoted_node = self.get_node(promoted_node_id)
+            promoted_metadata = (
+                promoted_node.get("node_metadata")
+                if isinstance(promoted_node, dict) and isinstance(promoted_node.get("node_metadata"), dict)
+                else {}
+            )
+            if (
+                promoted_node
+                and str(promoted_metadata.get("learning_id") or "") == str(learning_id)
+                and str(promoted_node.get("label") or "").strip() != _CORE_NODE_LABEL
+            ):
+                learning_node_ids.add(promoted_node_id)
         archived_nodes = 0
         archived_memories = 0
         archived_edges = 0
