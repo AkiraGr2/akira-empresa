@@ -14,7 +14,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from .core import (ConflictError, NotFoundError, PersistenceRepository, StorageError,
-                   ValidationError, entity_spec, normalize_filters)
+                   ValidationError, entity_spec, new_id, normalize_filters)
 from .migrations import MIGRATIONS
 
 _MIGRATION_LOCK_ID = 8100001
