@@ -43,4 +43,11 @@ jobs:
           assert '@app.get("/api/v8/memory/semantic-selftest")' in text
           assert '@app.post("/api/v8/memory/semantic-reindex")' in text
           assert text.count('@app.get("/health")') == 1, "Health route must be registered exactly once"
-          print("route ordering and health registration OK")
+
+          stream_start = text.index('@app.post("/api/chat/stream")')
+          stream_body = text[stream_start:]
+          stream_teaching = stream_body.index('teaching_lesson, teaching_mode = _extract_teaching_lesson(msg)')
+          stream_shadow = stream_body.index('_run_absorption_shadow')
+          assert stream_teaching < stream_shadow, "Stream teaching branch must run before absorption shadow"
+          assert 'return StreamingResponse(generate_teaching(), media_type="text/event-stream")' in stream_body
+          print("route ordering, health registration, and stream teaching guard OK")
