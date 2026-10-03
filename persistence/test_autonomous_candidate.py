@@ -62,6 +62,38 @@ class AutonomousCandidateTests(unittest.IsolatedAsyncioTestCase):
             nexus.ABSORPTION_MODE = previous_mode
             nexus._decide_absorption = previous_decider
 
+    async def test_same_source_id_reuses_idempotency_key(self):
+        previous_mode = nexus.ABSORPTION_MODE
+        previous_decider = nexus._decide_absorption
+        try:
+            nexus.ABSORPTION_MODE = "candidate"
+            decision = {
+                "decision": "CANDIDATE",
+                "knowledge_kind": "semantic",
+                "value": "Mismo aprendizaje para comprobar idempotencia.",
+                "reason": "test",
+                "confidence": 0.9,
+                "novelty": 0.8,
+                "reusability": 0.9,
+                "evidence": [],
+                "source": "chat",
+                "source_id": "chat:stable-source",
+                "target_learning_id": "",
+                "safe_for_recall": False,
+            }
+            nexus._decide_absorption = lambda *args, **kwargs: dict(decision)
+            service = FakeService()
+            await nexus._run_absorption_candidate("mensaje", service, "owner@test")
+            await nexus._run_absorption_candidate("mensaje", service, "owner@test")
+            self.assertEqual(len(service.calls), 2)
+            self.assertEqual(
+                service.calls[0]["idempotency_key"],
+                service.calls[1]["idempotency_key"],
+            )
+        finally:
+            nexus.ABSORPTION_MODE = previous_mode
+            nexus._decide_absorption = previous_decider
+
     async def test_non_candidate_never_persists(self):
         previous_mode = nexus.ABSORPTION_MODE
         previous_decider = nexus._decide_absorption
