@@ -1471,8 +1471,7 @@ async def _on_startup():
     except Exception as e:
         print(f"[startup cleanup] error: {e}")
 
-@app.get("/health")
-async def _route_registered(path):
+def _route_registered(path):
     """Verdad runtime: inspecciona las rutas efectivamente registradas en FastAPI."""
     try:
         return any(getattr(route, "path", None) == path for route in app.routes)
