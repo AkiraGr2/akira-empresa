@@ -3009,6 +3009,20 @@ def _selftest_missions_run():
         add("graph_edge_plan_validation", "FAIL", {"error": str(e)[:200]})
 
     try:
+        invalid_relation_plan = dict(_edge_valid_plan)
+        invalid_relation_plan["steps"] = list(_edge_valid_plan["steps"])
+        invalid_relation_plan["steps"][2] = dict(_edge_valid_plan["steps"][2])
+        invalid_relation_plan["steps"][2]["relation_type"] = "supports"
+        ok, reason = _validate_mission_plan(invalid_relation_plan, _edge_validator_stub)
+        add(
+            "graph_edge_relation_type_whitelist",
+            "PASS" if (not ok and "invalid_relation_type" in str(reason)) else "FAIL",
+            {"reason": reason},
+        )
+    except Exception as e:
+        add("graph_edge_relation_type_whitelist", "FAIL", {"error": str(e)[:200]})
+
+    try:
         bad_edge_plan = dict(_edge_valid_plan)
         bad_edge_plan["steps"] = list(_edge_valid_plan["steps"])
         bad_edge_plan["steps"][2] = dict(_edge_valid_plan["steps"][2])
@@ -3315,6 +3329,40 @@ def v8_learning_selftest(request: Request):
                     )
             except Exception:
                 pass
+
+    # Contracto de enseñanza explícita: candidate aislado hasta verificar.
+    teach_marker = "SELFTEST TEACHING " + uuid.uuid4().hex[:10]
+    teach_id = None
+    try:
+        taught, taught_memory, taught_node = _create_teaching_candidate(
+            service,
+            teach_marker,
+            s["email"],
+            context={"node_type": "concept", "label": teach_marker},
+        )
+        teach_id = taught.get("id")
+        add(
+            "explicit_teaching_candidate_isolated",
+            bool(teach_id)
+            and taught.get("status") == "candidate"
+            and taught_memory is None
+            and taught_node is None
+            and not (taught.get("knowledge_nodes") or []),
+            {"id": teach_id, "memory": bool(taught_memory), "node": bool(taught_node)},
+        )
+        if teach_id:
+            current_teach = service.get_learning(teach_id)
+            service.update_learning_status(
+                teach_id, "discarded",
+                expected_version=current_teach["version"],
+                actor=s["email"],
+            )
+    except Exception as e:
+        add(
+            "explicit_teaching_candidate_isolated",
+            False,
+            {"error_type": type(e).__name__, "message": str(e)[:200]},
+        )
 
     return {"ok": all(t["status"] == "PASS" for t in tests), "tests": tests, "synthetic_only": True}
 
@@ -3924,6 +3972,9 @@ def _recall_memories(service, msg, limit=5):
                 except Exception:
                     learning = None
                 if not learning or learning.get("status") not in ("verified", "consolidated"):
+                    continue
+                context = learning.get("learning_context") if isinstance(learning.get("learning_context"), dict) else {}
+                if not context.get("promoted"):
                     continue
             rid = r.get("id")
             if rid and rid not in found:
