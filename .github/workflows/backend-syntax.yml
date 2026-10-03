@@ -38,4 +38,5 @@ jobs:
               assert selftest < dynamic, "Learning selftest route must be declared before dynamic learning_id route"
           assert '@app.get("/api/v8/memory/semantic-selftest")' in text
           assert '@app.post("/api/v8/memory/semantic-reindex")' in text
-          print("route ordering OK")
+          assert text.count('@app.get("/health")') == 1, "Health route must be registered exactly once"
+          print("route ordering and health registration OK")
