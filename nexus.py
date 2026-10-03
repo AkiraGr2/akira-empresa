@@ -4493,17 +4493,32 @@ def memory_search(request: Request, payload: dict):
     if not isinstance(payload, dict): return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
     query = str(payload.get("query") or "").strip()
     if not query: return JSONResponse({"ok": False, "reason": "query_required"}, status_code=400)
-    try: limit = int(payload.get("limit", 5))
-    except Exception: limit = 5
-    limit = max(1, min(20, limit))
     try:
-        rows = service.search_memory({"text_contains": query[:200]}, limit=limit)
-    except Exception as e:
-        return JSONResponse({"ok": False, "reason": "search_failed", "error_type": type(e).__name__}, status_code=503)
-    out = [{"id": r.get("id"), "content": r.get("content"), "created_at": r.get("created_at"),
-            "importance": r.get("importance"), "memory_type": r.get("memory_type"),
-            "source": r.get("source"), "tags": r.get("tags")} for r in rows]
-    return {"ok": True, "found": len(out), "results": out}
+        limit = int(payload.get("limit", 5))
+    except Exception:
+        limit = 5
+    limit = max(1, min(20, limit))
+    results = _recall_memories(service, query, limit=limit)
+    out = [{
+        "id": r.get("id"),
+        "content": r.get("content"),
+        "created_at": r.get("created_at"),
+        "importance": r.get("importance"),
+        "confidence": r.get("confidence"),
+        "memory_type": r.get("memory_type"),
+        "source": r.get("source"),
+        "source_id": r.get("source_id"),
+        "tags": r.get("tags"),
+    } for r in results]
+    return {
+        "ok": True,
+        "found": len(out),
+        "results": out,
+        "retrieval": "hybrid",
+        "semantic_model": MEMORY_EMBEDDING_MODEL,
+        "semantic_dimensions": MEMORY_EMBEDDING_DIMENSIONS,
+    }
+
 
 def _format_conversation_context(service, conversation_id, current_msg, limit=20, max_chars=18000):
     """Reconstruye contexto real de la conversación sin convertir el chat crudo en memoria."""
