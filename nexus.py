@@ -5363,6 +5363,40 @@ async def chat_stream(request: Request):
             except Exception as e:
                 print(f"[chat/stream] add_message user fallo: {type(e).__name__}: {str(e)[:200]}")
 
+        teaching_lesson, teaching_mode = _extract_teaching_lesson(msg)
+        if teaching_mode:
+            if not teaching_lesson:
+                teaching_response = "Claro. ¿Qué quieres enseñarme? Explícamelo con tus palabras y lo registraré como conocimiento candidato para después verificarlo."
+            elif not persist:
+                teaching_response = "Puedo recibir la enseñanza, pero no puedo registrarla de forma persistente en este momento."
+            else:
+                try:
+                    learning_rec, memory_rec, node_rec = await asyncio.to_thread(
+                        _create_teaching_candidate, service, teaching_lesson, session["email"]
+                    )
+                    teaching_response = (
+                        "🧠 Recibido. Lo registré como conocimiento candidato. "
+                        "Todavía no lo trataré como un hecho verificado; primero debe pasar por revisión/validación. "
+                        f"ID de aprendizaje: {learning_rec['id']}."
+                    )
+                except Exception as e:
+                    teaching_response = f"No pude registrar la enseñanza: {type(e).__name__}."
+
+            async def generate_teaching():
+                yield f'data: {json_lib.dumps({"text": teaching_response})}\\n\\n'
+                yield f'data: {json_lib.dumps({"done": True, "conversation_id": conversation_id})}\\n\\n'
+                if persist and teaching_response:
+                    try:
+                        await asyncio.to_thread(
+                            service.add_message,
+                            conversation_id, "assistant", teaching_response,
+                            "learning_engine", [], 0, None, session["email"]
+                        )
+                    except Exception as e:
+                        print(f"[chat/stream] add_message teaching response fallo: {type(e).__name__}")
+
+            return StreamingResponse(generate_teaching(), media_type="text/event-stream")
+
         memories = await asyncio.to_thread(_recall_memories, service, msg)
         recall_block = _format_recall_block(memories)
         conversation_context = await asyncio.to_thread(
