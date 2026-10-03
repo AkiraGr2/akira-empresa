@@ -474,10 +474,14 @@ def _detect_github_read_request(msg):
 
     paths = []
     if repo.endswith("akira-v3-frontend"):
-        if any(x in low for x in ("cerebro", "brain", "membrane", "nodo", "nodos", "2d")):
-            paths.extend(["js/akira_brain.js", "js/obsidian_membrane.js"])
-        if "3d" in low:
-            paths.append("js/akira_brain_3d.js")
+        wants_3d = "3d" in low
+        wants_2d = any(x in low for x in ("cerebro 2d", "cerebro2d", "2d", "membrane", "membrana"))
+        if wants_3d:
+            paths.extend(["js/akira_brain_3d.js", "index.html"])
+        elif wants_2d or any(x in low for x in ("cerebro", "brain", "nodo", "nodos", "membrane", "membrana")):
+            # The 2D control path lives in Obsidian Membrane; the panel shell
+            # itself is declared in index.html. The chat client is not a Brain renderer.
+            paths.extend(["js/obsidian_membrane.js", "index.html"])
         if any(x in low for x in ("mision", "misiones", "mission")):
             paths.append("js/akira_missions_panel.js")
         if not paths:
@@ -488,9 +492,16 @@ def _detect_github_read_request(msg):
     queries = []
     if repo.endswith("akira-v3-frontend"):
         if "3d" not in low:
-            queries.extend(["tap", "node", "zoom", "brainContext", "brain-select"])
+            queries.extend([
+                "cyMembrane.on",
+                '"tap"',
+                "brainContext",
+                "_updateMembraneContextPanel",
+                "brain-select",
+                '"dbltap"',
+            ])
         else:
-            queries.extend(["click", "node", "zoom", "camera", "brain"])
+            queries.extend(["onNodeClick", "click", "node", "zoom", "camera", "brain"])
         if any(x in low for x in ("panel", "información", "informacion", "nodo")):
             queries.extend(["brainContext", "context", "nodeId", "select"])
     else:
