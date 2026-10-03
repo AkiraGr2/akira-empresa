@@ -2105,6 +2105,18 @@ def v8_learning_selftest(request: Request):
                 and cleanup_result.get("archived_memories", 0) >= 1,
                 cleanup_result,
             )
+            core_after = service.get_node(core["id"])
+            add(
+                "core_node_protected",
+                bool(core_after)
+                and core_after.get("status") == "active"
+                and str(core_after.get("label") or "").strip() == "Akira"
+                and not (
+                    isinstance(core_after.get("node_metadata"), dict)
+                    and core_after["node_metadata"].get("learning_id")
+                ),
+                {"core_id": core["id"], "status": (core_after or {}).get("status")},
+            )
         else:
             add("verified_learning_promotion", False, {"reason": "core_node_unavailable"})
 
