@@ -1480,6 +1480,8 @@ async def health():
         "github_repo": os.getenv("GITHUB_REPO","AkiraGr2/akira-empresa"),
         "identity": "Akira V7.3 consciente - blindada anti-ChatGPT",
         "consciente": True,
+        "backend_contract": "learning-graph-promotion-v2",
+        "learning_selftest_route": True,
         "gemini_keys_count": len(get_gemini_keys()),
         "groq_keys_count": len(get_groq_keys()),
         "gemini_keys_failed": len([k for k in get_gemini_keys() if _failed_keys_until.get(k,0) > time.time()])
