@@ -3149,28 +3149,33 @@ def v8_learning_selftest(request: Request):
             "status": "candidate",
             "evidence": [],
         }, actor=s["email"], idempotency_key="learning_selftest:" + marker_id)
-        add("candidate_created", created.get("status") == "candidate", {"id": created.get("id")})
+        created_rec = created.get("record") if isinstance(created, dict) else None
+        if not isinstance(created_rec, dict):
+            raise ValidationError("save_learning selftest no devolvio record")
+        created_id = created_rec["id"]
+        created_version = created_rec["version"]
+        add("candidate_created", created_rec.get("status") == "candidate", {"id": created_id})
         evidence = [{"type": "test", "title": "Fuente sintetica de selftest", "reference": "selftest://learning/" + marker_id, "note": "Evidencia controlada de prueba."}]
-        updated = service.add_learning_evidence(created["id"], evidence, expected_version=created["version"], actor=s["email"])
+        updated = service.add_learning_evidence(created_id, evidence, expected_version=created_version, actor=s["email"])
         add("evidence_added", len(updated.get("evidence") or []) == 1, {"version": updated.get("version")})
-        verified = service.update_learning_status(created["id"], "verified", expected_version=updated["version"], actor=s["email"])
+        verified = service.update_learning_status(created_id, "verified", expected_version=updated["version"], actor=s["email"])
         add("candidate_to_verified", verified.get("status") == "verified" and bool(verified.get("verified_at")), {"status": verified.get("status")})
-        consolidated = service.update_learning_status(created["id"], "consolidated", expected_version=verified["version"], actor=s["email"])
+        consolidated = service.update_learning_status(created_id, "consolidated", expected_version=verified["version"], actor=s["email"])
         add("verified_to_consolidated", consolidated.get("status") == "consolidated", {"status": consolidated.get("status")})
-        fetched = service.get_learning(created["id"])
-        add("persisted_after_consolidation", fetched is not None and fetched.get("status") == "consolidated", {"id": created["id"]})
+        fetched = service.get_learning(created_id)
+        add("persisted_after_consolidation", fetched is not None and fetched.get("status") == "consolidated", {"id": created_id})
 
         # E2E real del Knowledge Gate: un aprendizaje consolidado debe
         # materializar memoria/nodo/aristas de forma idempotente.
         core = service.ensure_core_node(actor=s["email"])
         if core:
-            current_before = service.get_learning(created["id"])
+            current_before = service.get_learning(created_id)
             context = {"node_type": "concept", "label": "SELFTEST Learning", "knowledge_node_ids": [core["id"]]}
             promoted_learning = service.update_learning(
-                created["id"], {"learning_context": context},
+                created_id, {"learning_context": context},
                 expected_version=current_before["version"], actor=s["email"]
             )
-            promoted = service.promote_learning_to_graph(created["id"], actor=s["email"])
+            promoted = service.promote_learning_to_graph(created_id, actor=s["email"])
             promoted_node = promoted.get("node")
             promoted_edges = promoted.get("edges") or []
             add(
@@ -3189,7 +3194,7 @@ def v8_learning_selftest(request: Request):
             add(
                 "verified_learning_has_memory",
                 bool(promoted_memory.get("id"))
-                and promoted_memory.get("source_id") == created["id"],
+                and promoted_memory.get("source_id") == created_id,
                 {"memory_id": promoted_memory.get("id")}
             )
             recalled_verified = _recall_memories(
@@ -3199,16 +3204,16 @@ def v8_learning_selftest(request: Request):
             )
             add(
                 "verified_learning_recalled",
-                any(m.get("source_id") == created["id"] for m in recalled_verified),
+                any(m.get("source_id") == created_id for m in recalled_verified),
                 {"recalled_count": len(recalled_verified)}
             )
-            after_recall = service.get_learning(created["id"])
+            after_recall = service.get_learning(created_id)
             add(
                 "verified_learning_reuse_recorded",
                 int((after_recall or {}).get("reuse_count") or 0) >= 1,
                 {"reuse_count": int((after_recall or {}).get("reuse_count") or 0)}
             )
-            cleanup_result = service.cleanup_learning_materialization(created["id"], actor=s["email"])
+            cleanup_result = service.cleanup_learning_materialization(created_id, actor=s["email"])
             add(
                 "learning_materialization_cleanup",
                 cleanup_result.get("archived_nodes", 0) >= 1
@@ -3219,9 +3224,9 @@ def v8_learning_selftest(request: Request):
             add("verified_learning_promotion", False, {"reason": "core_node_unavailable"})
 
         try:
-            current_for_transition = service.get_learning(created["id"])
+            current_for_transition = service.get_learning(created_id)
             service.update_learning_status(
-                created["id"], "discarded",
+                created_id, "discarded",
                 expected_version=current_for_transition["version"],
                 actor=s["email"]
             )
@@ -3231,9 +3236,9 @@ def v8_learning_selftest(request: Request):
 
         # Limpieza final del registro sintético: consolidated -> obsolete.
         try:
-            current_for_cleanup = service.get_learning(created["id"])
+            current_for_cleanup = service.get_learning(created_id)
             service.update_learning_status(
-                created["id"], "obsolete",
+                created_id, "obsolete",
                 expected_version=current_for_cleanup["version"],
                 actor=s["email"]
             )
