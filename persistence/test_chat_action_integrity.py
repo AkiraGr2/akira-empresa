@@ -50,6 +50,43 @@ class ChatActionIntegrityGuardTests(unittest.TestCase):
         self.assertIn("[GitHub READ-ONLY EVIDENCE — SERVER RESULT]", stream_body)
         self.assertIn('conversation_context = (conversation_context + github_context)[:52000]', stream_body)
 
+    def test_oversized_file_returns_targeted_evidence_instead_of_failing(self):
+        import base64
+        from unittest.mock import patch
+        from github_readonly import inspect_repository
+
+        source = "// tap\n" + ("x" * 50000) + "\nfunction openBrainContext(nodeId) {}\n" + ("y" * 50000)
+        fake_root = [
+            {"name": "js", "path": "js", "type": "dir", "size": 0},
+        ]
+        fake_file = {
+            "type": "file",
+            "name": "obsidian_membrane.js",
+            "path": "js/obsidian_membrane.js",
+            "size": len(source.encode("utf-8")),
+            "content": base64.b64encode(source.encode("utf-8")).decode("ascii"),
+        }
+
+        def fake_get(url):
+            if url.endswith("/contents?ref=main"):
+                return fake_root
+            return fake_file
+
+        with patch("github_readonly._get_json", side_effect=fake_get):
+            result = inspect_repository(
+                "AkiraGr2/akira-v3-frontend",
+                paths=["js/obsidian_membrane.js"],
+                queries=["tap", "brainContext"],
+                max_files=8,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["files"][0]["status"], "ok")
+        self.assertEqual(result["files"][0]["mode"], "targeted_snippets")
+        self.assertGreaterEqual(len(result["files"][0]["matches"]), 1)
+        snippets = " ".join(m["snippet"] for m in result["files"][0]["matches"])
+        self.assertIn("brainContext", snippets)
+
     def test_github_readonly_gateway_rejects_untrusted_repo(self):
         from github_readonly import GitHubReadValidationError, read_repo_path
 
