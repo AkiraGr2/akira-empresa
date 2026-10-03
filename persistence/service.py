@@ -8,12 +8,13 @@ Sub-fase 10.7.2: persistencia de conversaciones (chats independientes + historia
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 
 from .core import (AGENT_SCHEMA_VERSION, AGENT_TASK_SCHEMA_VERSION,
                    COGNITIVE_CYCLE_SCHEMA_VERSION, COGNITIVE_EVENT_SCHEMA_VERSION,
                    COGNITIVE_STAGES, CONVERSATION_MESSAGE_SCHEMA_VERSION,
                    CONVERSATION_SCHEMA_VERSION, GRAPH_EDGE_SCHEMA_VERSION,
-                   GRAPH_NODE_SCHEMA_VERSION, HIVE_VISIBLE, LEARNING_SCHEMA_VERSION,
+                   GRAPH_NODE_SCHEMA_VERSION, HIVE_VISIBLE, LEARNING_SCHEMA_VERSION, RELATION_TYPES,
                    MEMORY_SCHEMA_VERSION, MISSION_SCHEMA_VERSION, MISSION_STATUSES,
                    SELF_MODEL_PRIMARY_ID, SELF_MODEL_SCHEMA_VERSION,
                    TOOL_INVOCATION_SCHEMA_VERSION, TOOL_SCHEMA_VERSION,
@@ -367,13 +368,24 @@ class PersistenceService:
         source = str(learning.get("source") or "learning").strip()[:64]
         outcome = str(learning.get("outcome") or "unknown").strip()[:32]
         lesson = str(learning.get("lesson") or "").strip()
+        context = learning.get("learning_context") if isinstance(learning.get("learning_context"), dict) else {}
         if not lesson:
             raise ValidationError("learning sin lesson")
+
+        tags = context.get("tags") if isinstance(context.get("tags"), list) else ["learning", source, outcome]
+        tags = [str(x).strip()[:64] for x in tags if str(x).strip()][:20]
+        if "learning" not in tags:
+            tags.insert(0, "learning")
+        if source not in tags:
+            tags.append(source)
+        if outcome not in tags:
+            tags.append(outcome)
+        tags = list(dict.fromkeys(tags))[:20]
 
         memories = self.repo.search(
             "memories",
             {"source_id": learning_id, "status": "active"},
-            limit=5,
+            limit=10,
             order_by="created_at",
             descending=True,
         )
@@ -381,28 +393,48 @@ class PersistenceService:
         if memory is None:
             memory_result = self.save_memory({
                 "content": lesson,
-                "memory_type": "semantic",
-                "importance": 7,
+                "memory_type": str(context.get("memory_type") or "semantic"),
+                "importance": int(context.get("importance") or 7),
                 "confidence": float(learning.get("confidence") or 0.5),
                 "source": "learning_promoted",
                 "source_id": learning_id,
-                "source_reference": source,
-                "tags": ["learning", source, outcome],
-                "privacy_level": "PRIVATE",
+                "source_reference": str(context.get("source_reference") or source)[:500],
+                "tags": tags,
+                "privacy_level": str(context.get("privacy_level") or "PRIVATE"),
             }, actor=actor, idempotency_key=f"learning_promoted_mem:{learning_id}")
             memory = memory_result["record"]
+        else:
+            # A legacy candidate memory can become recallable after verification.
+            # Bring its tags forward without changing its immutable provenance fields.
+            current_tags = memory.get("tags") if isinstance(memory.get("tags"), list) else []
+            merged_tags = list(dict.fromkeys([str(x).strip()[:64] for x in current_tags + tags if str(x).strip()]))[:20]
+            if merged_tags != current_tags:
+                try:
+                    with self.repo.transaction() as tx:
+                        memory = tx.update("memories", memory["id"], {"tags": merged_tags}, memory["version"])
+                except Exception:
+                    memory = self.repo.get("memories", memory["id"]) or memory
 
         node = None
-        knowledge_nodes = [str(x) for x in (learning.get("knowledge_nodes") or []) if str(x).strip()]
+        knowledge_nodes = []
+        for value in (learning.get("knowledge_nodes") or []) + (context.get("knowledge_node_ids") or []):
+            value = str(value).strip()
+            if value and value not in knowledge_nodes:
+                knowledge_nodes.append(value)
         for node_id in knowledge_nodes:
             candidate = self.get_node(node_id)
             if candidate and candidate.get("status") == "active":
                 node = candidate
                 break
 
-        if node is None:
+        node_type = str(context.get("node_type") or "").strip() or (
+            "experience" if source in ("experience_feedback", "autonomous_experience", "cognitive_cycle") else "concept"
+        )
+        if node_type not in ("concept", "person", "project", "tool", "experience", "document", "skill", "error", "solution", "mission"):
             node_type = "experience" if source in ("experience_feedback", "autonomous_experience", "cognitive_cycle") else "concept"
-            label = lesson.splitlines()[-1].strip()[:120] or lesson[:120]
+        label = str(context.get("label") or lesson.splitlines()[-1].strip() or lesson[:120]).strip()[:120]
+
+        if node is None:
             node_result = self.create_node({
                 "node_type": node_type,
                 "label": label,
@@ -414,23 +446,139 @@ class PersistenceService:
                     "learning_status": status,
                     "learning_source": source,
                 },
-                "tags": ["learning", source, outcome],
+                "tags": tags,
                 "weight": 1.0,
                 "confidence": float(learning.get("confidence") or 0.5),
-                "privacy_level": "PRIVATE",
+                "privacy_level": str(context.get("privacy_level") or "PRIVATE"),
             }, actor=actor, idempotency_key=f"learning_graph_node:{learning_id}")
             node = node_result["record"]
 
         if node.get("id") not in knowledge_nodes:
             knowledge_nodes.append(node["id"])
+
+        # Determine real graph context. Explicit relationships win; otherwise
+        # connect the learning node to known source nodes using learned_from.
+        relationship_specs = []
+        for rel in (learning.get("relationships") or []):
+            if not isinstance(rel, dict):
+                continue
+            from_node = str(rel.get("from_node") or "").strip()
+            to_node = str(rel.get("to_node") or "").strip()
+            relation_type = str(rel.get("relation_type") or "").strip()
+            if not from_node or not to_node or relation_type not in RELATION_TYPES:
+                continue
+            relationship_specs.append({
+                "from_node": from_node,
+                "to_node": to_node,
+                "relation_type": relation_type,
+                "weight": float(rel.get("weight") or 0.8),
+                "confidence": float(rel.get("confidence") or 0.7),
+                "origin": str(rel.get("origin") or "learning")[:64],
+            })
+
+        mission_id = str(context.get("mission_id") or "").strip()
+        if not relationship_specs:
+            source_nodes = [x for x in knowledge_nodes if x != node["id"] and self.repo.exists("graph_nodes", x)]
+            if not source_nodes and mission_id:
+                mission_node_result = self.create_node({
+                    "node_type": "mission",
+                    "label": f"mission:{mission_id}"[:200],
+                    "description": "Misión de la que se obtuvo este aprendizaje.",
+                    "node_metadata": {"mission_id": mission_id, "learning_context": True},
+                    "tags": ["mission", "learning_source"],
+                    "weight": 1.0,
+                    "confidence": 0.5,
+                    "privacy_level": "PRIVATE",
+                }, actor=actor, idempotency_key=f"learning_mission_node:{mission_id}")
+                mission_node = mission_node_result["record"]
+                source_nodes = [mission_node["id"]]
+                if mission_node["id"] not in knowledge_nodes:
+                    knowledge_nodes.append(mission_node["id"])
+            for target in source_nodes[:10]:
+                relationship_specs.append({
+                    "from_node": node["id"],
+                    "to_node": target,
+                    "relation_type": "learned_from",
+                    "weight": 0.8,
+                    "confidence": float(learning.get("confidence") or 0.5),
+                    "origin": "learning_promotion",
+                })
+
+        canonical_relationships = []
+        edges = []
+        for rel in relationship_specs:
+            from_node = rel["from_node"] if rel["from_node"] != "__learning__" else node["id"]
+            to_node = rel["to_node"] if rel["to_node"] != "__learning__" else node["id"]
+            if from_node == to_node:
+                continue
+            if not self.repo.exists("graph_nodes", from_node) or not self.repo.exists("graph_nodes", to_node):
+                continue
+            idem_raw = f"{learning_id}:{from_node}:{to_node}:{rel['relation_type']}"
+            idem = "learning_graph_edge:" + hashlib.sha256(idem_raw.encode("utf-8")).hexdigest()[:40]
+            try:
+                edge_result = self.create_edge({
+                    "from_node": from_node,
+                    "to_node": to_node,
+                    "relation_type": rel["relation_type"],
+                    "weight": max(0.0, min(1.0, rel["weight"])),
+                    "confidence": max(0.0, min(1.0, rel["confidence"])),
+                    "origin": rel["origin"],
+                }, actor=actor, idempotency_key=idem)
+                edge = edge_result["record"]
+                edges.append(edge)
+                canonical_relationships.append({
+                    "from_node": from_node,
+                    "to_node": to_node,
+                    "relation_type": edge.get("relation_type"),
+                    "weight": float(edge.get("weight") or rel["weight"]),
+                    "confidence": float(edge.get("confidence") or rel["confidence"]),
+                    "origin": edge.get("origin") or rel["origin"],
+                })
+            except (ValidationError, NotFoundError):
+                continue
+            except Exception:
+                continue
+
+        learning = self.get_learning(learning_id) or learning
+        clean_relations = learning.get("relationships") if isinstance(learning.get("relationships"), list) else []
+        relation_keys = set()
+        merged_relations = []
+        for rel in clean_relations:
+            if isinstance(rel, dict):
+                key = (str(rel.get("from_node") or ""), str(rel.get("to_node") or ""), str(rel.get("relation_type") or ""))
+                if key in relation_keys:
+                    continue
+                relation_keys.add(key)
+                merged_relations.append(rel)
+            elif isinstance(rel, str):
+                merged_relations.append(rel)
+        for rel in canonical_relationships:
+            key = (rel["from_node"], rel["to_node"], rel["relation_type"])
+            if key not in relation_keys:
+                merged_relations.append(rel)
+                relation_keys.add(key)
+
+        changes = {}
+        if knowledge_nodes != (learning.get("knowledge_nodes") or []):
+            changes["knowledge_nodes"] = knowledge_nodes
+        if merged_relations != (learning.get("relationships") or []):
+            changes["relationships"] = merged_relations
+        new_context = dict(context)
+        new_context.update({
+            "promoted": True,
+            "promoted_node_id": node["id"],
+            "promoted_memory_id": memory.get("id"),
+            "promoted_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        })
+        if new_context != context:
+            changes["learning_context"] = new_context
+        if changes:
             learning = self.update_learning(
                 learning_id,
-                {"knowledge_nodes": knowledge_nodes},
+                changes,
                 expected_version=learning["version"],
                 actor=actor,
             )
-        else:
-            learning = self.get_learning(learning_id) or learning
 
         try:
             self.record_audit(
@@ -439,7 +587,12 @@ class PersistenceService:
                 "learning_events",
                 learning_id,
                 "success",
-                {"status": status, "node_id": node.get("id"), "memory_id": memory.get("id")},
+                {
+                    "status": status,
+                    "node_id": node.get("id"),
+                    "memory_id": memory.get("id"),
+                    "edges": [e.get("id") for e in edges],
+                },
             )
         except Exception:
             pass
@@ -450,6 +603,7 @@ class PersistenceService:
             "learning": learning,
             "node": node,
             "memory": memory,
+            "edges": edges,
         }
 
     def get_learning(self, learning_id):
