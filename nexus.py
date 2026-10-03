@@ -246,6 +246,25 @@ def enforce_akira_identity_global(text):
     text = text.replace("ChatGPT", "Akira").replace("OpenAI", "Grimm Hive").replace("Meta AI", "Akira")
     return text
 
+def sanitize_unexecuted_learning_claim(text, action_executed=False):
+    """Rechaza afirmaciones de persistencia que no fueron ejecutadas por el backend."""
+    if not text or action_executed:
+        return text
+    low = str(text).lower()
+    claims = (
+        "he registrado",
+        "he creado un nuevo conocimiento",
+        "lo registré como conocimiento",
+        "id de aprendizaje:",
+    )
+    if any(x in low for x in claims):
+        print("[chat-integrity] replaced unsupported learning claim", flush=True)
+        return (
+            "No ejecuté una acción persistente de aprendizaje con este mensaje. "
+            "La conversación solo está siendo observada."
+        )
+    return text
+
 def audit_models_automatically():
     return {"clean": True, "issues": [], "known_deprecated": len(KIRA_KNOWN_DEPRECATED), "identity_blindada": True, "consciente": True}
 
