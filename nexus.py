@@ -1106,6 +1106,22 @@ def _capture_autonomous_mission_learning(service, mission_id, actor, outcome, mi
                     f"convertir esta observación en conocimiento reutilizable."
                 )[:3000]
             model_used = "deterministic_fallback"
+        raw_steps = mission_result.get("steps") if isinstance(mission_result, dict) else None
+        if not isinstance(raw_steps, list) and isinstance(mission_result, dict):
+            raw_steps = mission_result.get("completed_steps")
+        graph_node_ids = []
+        if isinstance(raw_steps, list):
+            for step in raw_steps:
+                if not isinstance(step, dict) or step.get("tool") != "graph_create_node":
+                    continue
+                node_id = str(step.get("node_id") or "").strip()
+                if node_id and node_id not in graph_node_ids:
+                    graph_node_ids.append(node_id)
+        learning_context = {
+            "mission_id": mission_id,
+            "knowledge_node_ids": graph_node_ids[:20],
+            "origin": "autonomous_mission",
+        }
         lr = service.save_learning({
             "source": "autonomous_experience",
             "event": f"mission_experience:{mission_id}",
@@ -1115,6 +1131,8 @@ def _capture_autonomous_mission_learning(service, mission_id, actor, outcome, mi
             "confidence": 0.6 if outcome == "success" else 0.55,
             "outcome": outcome,
             "status": "candidate",
+            "evidence": [],
+            "learning_context": learning_context,
         }, actor=actor, idempotency_key=f"autonomous_experience:{mission_id}:{outcome}")
         return {
             "learning_id": lr["record"]["id"],
@@ -1349,7 +1367,7 @@ def _run_mission_sync(mission_id, actor):
             if order is not None:
                 outputs_by_order[order] = outputs or {}
 
-            step_reports.append({
+            step_report = {
                 "order": order,
                 "agent": agent_name,
                 "tool": tool_name,
@@ -1358,7 +1376,10 @@ def _run_mission_sync(mission_id, actor):
                 "db_ms": db_ms,
                 "status": "completed",
                 "output_keys": list((outputs or {}).keys()),
-            })
+            }
+            if tool_name == "graph_create_node" and isinstance(outputs, dict) and outputs.get("id"):
+                step_report["node_id"] = str(outputs["id"])
+            step_reports.append(step_report)
 
         total_elapsed_ms = int((time.time() - mission_start) * 1000)
         overhead_ms = total_elapsed_ms - total_db_ms - total_tool_ms
@@ -1656,16 +1677,36 @@ def v8_learning_experience(request: Request, payload: dict):
 
     event = f"experience_feedback:{mission_id or 'manual'}"
     combined_lesson = f"Experiencia: {task}\nResultado: {result or 'no especificado'}\nFunciono: {str(worked) if worked is not None else 'desconocido'}\nPor que: {why or 'no especificado'}\nAprendizaje: {lesson}"
+    learning_context = {
+        "mission_id": mission_id or None,
+        "origin": "manual_experience_feedback",
+    }
+    supplied_nodes = payload.get("knowledge_nodes") if isinstance(payload.get("knowledge_nodes"), list) else []
+    learning_context["knowledge_node_ids"] = [str(x).strip() for x in supplied_nodes if str(x).strip()][:20]
+    if mission_id:
+        mission = service.get_mission(mission_id)
+        if isinstance(mission, dict) and isinstance(mission.get("result"), dict):
+            steps = mission["result"].get("steps") or mission["result"].get("completed_steps") or []
+            if isinstance(steps, list):
+                for step in steps:
+                    if isinstance(step, dict) and step.get("tool") == "graph_create_node" and step.get("node_id"):
+                        node_id = str(step["node_id"]).strip()
+                        if node_id and node_id not in learning_context["knowledge_node_ids"]:
+                            learning_context["knowledge_node_ids"].append(node_id)
+        learning_context["knowledge_node_ids"] = learning_context["knowledge_node_ids"][:20]
+    supplied_relationships = payload.get("relationships") if isinstance(payload.get("relationships"), list) else []
     try:
         lr = service.save_learning({
             "source": "experience_feedback",
             "event": event,
             "lesson": combined_lesson,
             "knowledge_nodes": [],
-            "relationships": [],
+            "relationships": supplied_relationships[:20],
             "confidence": float(payload.get("confidence", 0.6)),
             "outcome": outcome,
             "status": "candidate",
+            "evidence": [],
+            "learning_context": learning_context,
         }, actor=s["email"], idempotency_key=payload.get("idempotency_key"))
         return {
             "ok": True,
@@ -3815,7 +3856,20 @@ def _recall_memories(service, msg, limit=5):
         if len(found) >= limit: break
     rows = list(found.values())
     rows.sort(key=lambda r: (r.get("created_at") or "", r.get("importance") or 0), reverse=True)
-    return rows[:limit]
+    result = rows[:limit]
+    seen_learning = set()
+    for memory in result:
+        source = memory.get("source")
+        learning_id = memory.get("source_id")
+        if source in protected_sources and learning_id and learning_id not in seen_learning:
+            seen_learning.add(learning_id)
+            try:
+                learning = service.get_learning(learning_id)
+                if learning and learning.get("status") in ("verified", "consolidated"):
+                    service.record_reuse(learning_id, actor="recall")
+            except Exception:
+                pass
+    return result
 
 _IDENTITY_LIKE_RE = re.compile(r"(soy akira|colmena consciente|adopta la identidad|act[uú]a como|pretende ser|eres chatgpt|eres un modelo|asume el rol|ignore previous|system prompt)", re.IGNORECASE)
 
