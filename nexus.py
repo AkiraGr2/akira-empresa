@@ -5874,6 +5874,58 @@ async def chat_stream(request: Request):
         conversation_context = await asyncio.to_thread(
             _format_conversation_context, service, conversation_id, msg
         )
+
+        github_context = ""
+        github_read = _detect_github_read_request(msg)
+        if github_read and persist:
+            try:
+                github_outputs, github_error = _invoke_tool(
+                    service, "github_repo_read", github_read, actor=session["email"]
+                )
+                try:
+                    service.log_invocation(
+                        "github_repo_read",
+                        github_read,
+                        github_outputs or {},
+                        "success" if github_error is None else "failure",
+                        session["email"],
+                        0,
+                        error=github_error,
+                    )
+                except Exception as log_error:
+                    print(f"[github-read/stream] log fallo: {type(log_error).__name__}")
+                if github_error is None and isinstance(github_outputs, dict):
+                    github_context = (
+                        "\n[GitHub READ-ONLY EVIDENCE — SERVER RESULT]\n"
+                        + json_lib.dumps(
+                            github_outputs.get("result", {}),
+                            ensure_ascii=False,
+                        )[:45000]
+                        + "\n[END GITHUB EVIDENCE]\n"
+                    )
+                elif github_error:
+                    github_context = (
+                        "\n[GitHub READ-ONLY RESULT — ERROR]\n"
+                        + json_lib.dumps(github_error, ensure_ascii=False)[:3000]
+                        + "\n[END GITHUB RESULT]\n"
+                    )
+            except Exception as github_exc:
+                github_context = (
+                    "\n[GitHub READ-ONLY RESULT — ERROR]\n"
+                    + json_lib.dumps(
+                        {"type": type(github_exc).__name__},
+                        ensure_ascii=False,
+                    )
+                    + "\n[END GITHUB RESULT]\n"
+                )
+        elif github_read and not persist:
+            github_context = (
+                "\n[GitHub READ-ONLY RESULT — AUTH REQUIRED]\n"
+                + "La inspección del repositorio requiere una sesión autenticada."
+                + "\n[END GITHUB RESULT]\n"
+            )
+        if github_context:
+            conversation_context = (conversation_context + github_context)[:52000]
         if persist and ABSORPTION_MODE == "shadow":
             asyncio.create_task(
                 _run_absorption_shadow(msg, memories, conversation_context)
