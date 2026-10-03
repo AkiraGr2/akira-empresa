@@ -199,6 +199,62 @@ class PostgresRepository(PersistenceRepository):
             cur.execute(f"SELECT count(*) AS n FROM {spec['table']}{where}", params)
             return int(cur.fetchone()["n"])
 
+    @staticmethod
+    def _vector_literal(values):
+        if not isinstance(values, (list, tuple)) or not values:
+            raise ValidationError("embedding debe ser una lista no vacia")
+        return "[" + ",".join(f"{float(v):.9g}" for v in values) + "]"
+
+    def get_memory_embedding(self, memory_id):
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT memory_id, model, dimensions, source_hash, created_at, updated_at "
+                "FROM memory_embeddings WHERE memory_id = %s",
+                (memory_id,),
+            )
+            return _out(cur.fetchone())
+
+    def upsert_memory_embedding(self, memory_id, model, embedding, source_hash):
+        vector = self._vector_literal(embedding)
+        dimensions = len(embedding)
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO memory_embeddings
+                    (memory_id, model, dimensions, embedding, source_hash)
+                VALUES (%s, %s, %s, %s::vector, %s)
+                ON CONFLICT (memory_id) DO UPDATE SET
+                    model = EXCLUDED.model,
+                    dimensions = EXCLUDED.dimensions,
+                    embedding = EXCLUDED.embedding,
+                    source_hash = EXCLUDED.source_hash,
+                    updated_at = now()
+                RETURNING memory_id, model, dimensions, source_hash, created_at, updated_at
+                """,
+                (memory_id, model, dimensions, vector, source_hash),
+            )
+            row = cur.fetchone()
+        return _out(row)
+
+    def search_memory_embeddings(self, embedding, model, limit=20):
+        vector = self._vector_literal(embedding)
+        limit = max(1, min(int(limit), 100))
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                SELECT me.memory_id,
+                       1 - (me.embedding <=> %s::vector) AS semantic_score
+                FROM memory_embeddings me
+                JOIN memories m ON m.id = me.memory_id
+                WHERE me.model = %s
+                  AND m.status = 'active'
+                ORDER BY me.embedding <=> %s::vector
+                LIMIT %s
+                """,
+                (vector, model, vector, limit),
+            )
+            return [_out(row) for row in cur.fetchall()]
+
     # -- auditoria
     def append_audit(self, entry):
         with self._cursor() as cur:
