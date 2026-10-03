@@ -701,10 +701,23 @@ class PersistenceService:
                 pass
 
         if learning_node_ids:
-            edge_rows = self.repo.search("graph_edges", {"status": "active"}, limit=5000)
-            for edge in edge_rows:
-                if edge.get("from_node") not in learning_node_ids and edge.get("to_node") not in learning_node_ids:
-                    continue
+            # Consulta solo las aristas incidentes a los nodos de esta
+            # materializacion. Evita escanear todo el grafo activo durante
+            # cada SELFTEST/cleanup.
+            edge_map = {}
+            for node_id in sorted(learning_node_ids):
+                for field in ("from_node", "to_node"):
+                    try:
+                        rows = self.repo.search(
+                            "graph_edges",
+                            {"status": "active", field: node_id},
+                            limit=500,
+                        )
+                    except Exception:
+                        rows = []
+                    for edge in rows:
+                        edge_map[str(edge.get("id"))] = edge
+            for edge in edge_map.values():
                 if edge.get("origin") != "learning_promotion" and edge.get("origin") != "auto_connect":
                     continue
                 try:
