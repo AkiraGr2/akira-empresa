@@ -355,15 +355,13 @@ def run_logic_tests(service, fresh_service_factory=None):
                 "error_type": type(e).__name__,
             })
 
-    add(
-        "selftest_memory_cleanup",
-        not cleanup_failures,
-        {
-            "created_count": len(created_ids),
-            "deleted_count": cleanup_deleted,
-            "failed_count": len(cleanup_failures),
-            "failures": cleanup_failures[:10],
-        },
+    results.append(
+        _res(
+            "TEST_MEMORY_CLEANUP",
+            not cleanup_failures,
+            f"creadas={len(created_ids)} eliminadas={cleanup_deleted} "
+            f"fallos={len(cleanup_failures)}",
+        )
     )
     if cleanup_failures:
         print(
