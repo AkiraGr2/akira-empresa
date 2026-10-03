@@ -2438,31 +2438,94 @@ def v8_graph_reinforce(request: Request):
 @app.post("/api/v8/graph/cleanup_tests")
 def v8_graph_cleanup_tests(request: Request):
     s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
-    if not s.get("is_owner"): return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
+    if not s:
+        return JSONResponse({"authenticated": False}, status_code=401)
+    if not s.get("is_owner"):
+        return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
     service = _persistence_service()
-    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+
     try:
         nodes = service.repo.search("graph_nodes", {"status": "active"}, limit=2000)
     except Exception as e:
-        return JSONResponse({"ok": False, "reason": "search_failed",
-                             "error_type": type(e).__name__}, status_code=503)
-    archived = 0; errors = 0
+        return JSONResponse(
+            {"ok": False, "reason": "search_failed", "error_type": type(e).__name__},
+            status_code=503,
+        )
+
+    test_node_ids = []
+    archived = 0
+    archived_edges = 0
+    errors = 0
+
     for n in nodes:
         label = str(n.get("label") or "").strip().lower()
-        if label.startswith("test_") or label.startswith("test-"):
+        if not (label.startswith("test_") or label.startswith("test-")):
+            continue
+        test_node_ids.append(str(n["id"]))
+        try:
+            with service.repo.transaction() as tx:
+                tx.update("graph_nodes", n["id"], {"status": "archived"}, n["version"])
+                tx.append_audit({
+                    "actor": s["email"],
+                    "action": "graph.cleanup_tests.archive",
+                    "resource": "graph_nodes",
+                    "resource_id": n["id"],
+                    "status": "success",
+                    "detail": {"label": n.get("label")},
+                })
+            archived += 1
+        except Exception:
+            errors += 1
+
+    # No dejes aristas activas apuntando a nodos de prueba ya archivados.
+    # Solo se tocan relaciones incidentes a los test_* que esta misma
+    # operacion identifico y archivo.
+    edge_map = {}
+    for node_id in test_node_ids:
+        for field in ("from_node", "to_node"):
             try:
-                with service.repo.transaction() as tx:
-                    tx.update("graph_nodes", n["id"], {"status": "archived"}, n["version"])
-                    tx.append_audit({
-                        "actor": s["email"], "action": "graph.cleanup_tests.archive",
-                        "resource": "graph_nodes", "resource_id": n["id"], "status": "success",
-                        "detail": {"label": n.get("label")},
-                    })
-                archived += 1
+                rows = service.repo.search(
+                    "graph_edges",
+                    {"status": "active", field: node_id},
+                    limit=500,
+                )
             except Exception:
-                errors += 1
-    return {"ok": True, "archived": archived, "errors": errors}
+                rows = []
+            for edge in rows:
+                edge_map[str(edge.get("id"))] = edge
+
+    for edge in edge_map.values():
+        try:
+            with service.repo.transaction() as tx:
+                tx.update("graph_edges", edge["id"], {"status": "archived"}, edge["version"])
+                tx.append_audit({
+                    "actor": s["email"],
+                    "action": "graph.cleanup_tests.archive_edge",
+                    "resource": "graph_edges",
+                    "resource_id": edge["id"],
+                    "status": "success",
+                    "detail": {
+                        "from_node": edge.get("from_node"),
+                        "to_node": edge.get("to_node"),
+                        "relation_type": edge.get("relation_type"),
+                        "origin": edge.get("origin"),
+                    },
+                })
+            archived_edges += 1
+        except Exception:
+            errors += 1
+
+    return {
+        "ok": True,
+        "archived": archived,
+        "archived_edges": archived_edges,
+        "errors": errors,
+        "message": "Los nodos test_* y sus aristas incidentes fueron archivados. Refresca Cerebro Akira."
+            if archived or archived_edges
+            else "No se encontraron artefactos test_* activos.",
+    }
 
 def _run_reason_stage(message, memories):
     recall_block = _format_recall_block(memories)
