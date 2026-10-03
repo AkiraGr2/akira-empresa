@@ -1476,60 +1476,122 @@ class PersistenceService:
         return {"memory_node": memory_node["id"], "connected": connected}
 
     def reinforce_frequent_pairs(self, actor="auto-connect", limit_nodes=200):
+        """Refuerza pares frecuentes de forma acotada y eficiente."""
         core = self.ensure_core_node(actor=actor)
         core_id = core["id"] if core else None
         reinforced = 0
         frequent_pairs = 0
+        candidate_edges = 0
+        max_pairs = 40
+        max_edge_updates = 80
+
         try:
-            memories = self.repo.search("memories", {"status": "active"}, limit=500,
-                                        order_by="created_at", descending=True)
+            memories = self.repo.search(
+                "memories",
+                {"status": "active"},
+                limit=500,
+                order_by="created_at",
+                descending=True,
+            )
             from collections import Counter
             pair_counter = Counter()
             for m in memories:
-                tags = sorted(set(t.lower() for t in (m.get("tags") or [])))
+                tags = sorted(set(str(t).lower() for t in (m.get("tags") or [])))
                 for i in range(len(tags)):
                     for j in range(i + 1, len(tags)):
                         pair_counter[(tags[i], tags[j])] += 1
-            frecuentes = [(pair, n) for pair, n in pair_counter.items() if n >= _AUTO_REINFORCE_MIN_FREQ]
+
+            frecuentes = sorted(
+                ((pair, n) for pair, n in pair_counter.items()
+                 if n >= _AUTO_REINFORCE_MIN_FREQ),
+                key=lambda item: (-item[1], item[0][0], item[0][1]),
+            )[:max_pairs]
             frequent_pairs = len(frecuentes)
-            nodes = self.repo.search("graph_nodes", {"status": "active"}, limit=limit_nodes)
+
+            nodes = self.repo.search(
+                "graph_nodes",
+                {"status": "active"},
+                limit=max(1, min(int(limit_nodes), 200)),
+            )
             tags_index = {}
             for n in nodes:
                 for t in (n.get("tags") or []):
-                    tags_index.setdefault(t.lower(), []).append(n["id"])
+                    tags_index.setdefault(str(t).lower(), []).append(n["id"])
+
+            work = []
+            seen = set()
             for (tag_a, tag_b), freq in frecuentes:
                 for a in tags_index.get(tag_a, [])[:3]:
                     for b in tags_index.get(tag_b, [])[:3]:
-                        if a == b: continue
-                        edge = self._upsert_edge(a, b, "related_to",
-                                                 delta_weight=0.1 * (freq / _AUTO_REINFORCE_MIN_FREQ),
-                                                 actor=actor)
-                        if edge: reinforced += 1
+                        if a == b:
+                            continue
+                        key = (a, b, "related_to")
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        work.append((
+                            a, b,
+                            min(
+                                0.1 * (freq / _AUTO_REINFORCE_MIN_FREQ),
+                                _AUTO_EDGE_MAX_WEIGHT,
+                            ),
+                        ))
+                        if len(work) >= max_edge_updates:
+                            break
+                    if len(work) >= max_edge_updates:
+                        break
+                if len(work) >= max_edge_updates:
+                    break
+
+            candidate_edges = len(work)
+            if work:
+                with self.repo.transaction() as tx:
+                    for a, b, delta in work:
+                        tx.upsert_graph_edge(
+                            a,
+                            b,
+                            "related_to",
+                            delta_weight=delta,
+                            confidence=0.5,
+                            origin="auto_connect",
+                        )
+                        reinforced += 1
+
         except Exception as e:
             print(f"[reinforce] pares fallo: {type(e).__name__}: {str(e)[:200]}")
+
+        # REFORZAR no recorre todos los nodos para conectarlos al core.
+        # Las conexiones al core se resuelven en los flujos de autoconexion.
         connected_to_core = 0
-        if core_id:
-            try:
-                nodes = self.repo.search("graph_nodes", {"status": "active"}, limit=500)
-                for n in nodes:
-                    if n["id"] == core_id: continue
-                    if (self._edge_exists(n["id"], core_id, "part_of") or
-                        self._edge_exists(core_id, n["id"], "part_of")):
-                        continue
-                    r = self.connect_to_core(n["id"], actor=actor, weight=_CORE_EDGE_WEIGHT)
-                    if r: connected_to_core += 1
-            except Exception as e:
-                print(f"[reinforce] conexion al nucleo fallo: {type(e).__name__}: {str(e)[:200]}")
+
         try:
-            self.record_audit(actor, "graph.auto_connect.reinforce", "graph_edges",
-                              None, "success", {"reinforced": reinforced,
-                                                "frequent_pairs": frequent_pairs,
-                                                "connected_to_core": connected_to_core,
-                                                "core_id": core_id})
+            self.record_audit(
+                actor,
+                "graph.auto_connect.reinforce",
+                "graph_edges",
+                None,
+                "success",
+                {
+                    "reinforced": reinforced,
+                    "frequent_pairs": frequent_pairs,
+                    "candidate_edges": candidate_edges,
+                    "connected_to_core": connected_to_core,
+                    "core_id": core_id,
+                    "bounded": True,
+                    "max_pairs": max_pairs,
+                    "max_edge_updates": max_edge_updates,
+                },
+            )
         except Exception:
             pass
-        return {"reinforced": reinforced, "frequent_pairs": frequent_pairs,
-                "connected_to_core": connected_to_core, "core_id": core_id}
+
+        return {
+            "reinforced": reinforced,
+            "frequent_pairs": frequent_pairs,
+            "candidate_edges": candidate_edges,
+            "connected_to_core": connected_to_core,
+            "core_id": core_id,
+        }
 
     def ensure_core_node(self, actor="system"):
         # Exact lookup: the core must not disappear just because the graph has
