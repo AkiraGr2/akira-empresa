@@ -256,16 +256,16 @@ def inspect_repository(
         data = _get_json(_api_url(repo, path))
         if isinstance(data, dict) and data.get("type") == "file":
             size = int(data.get("size") or 0)
-            if total_bytes + size > MAX_TOTAL_BYTES:
-                files.append({
-                    "path": path,
-                    "status": "skipped_total_size_limit",
-                    "size_bytes": size,
-                })
-                continue
-            total_bytes += size
             if size <= MAX_FILE_BYTES:
+                if total_bytes + size > MAX_TOTAL_BYTES:
+                    files.append({
+                        "path": path,
+                        "status": "skipped_total_size_limit",
+                        "size_bytes": size,
+                    })
+                    continue
                 content = _decode_content(data)
+                total_bytes += size
                 files.append({
                     "path": path,
                     "status": "ok",
@@ -275,15 +275,27 @@ def inspect_repository(
                 })
             elif queries:
                 evidence = _search_oversized_file(data, queries)
+                matches = list(evidence.get("matches", []))
+                # For targeted inspection, the total-return budget counts the
+                # snippets exposed to the model, not the full source file.
+                used = total_bytes
+                kept = []
+                for match in matches:
+                    cost = len(str(match.get("snippet") or "").encode("utf-8"))
+                    if used + cost > MAX_TOTAL_BYTES:
+                        break
+                    kept.append(match)
+                    used += cost
                 files.append({
                     "path": path,
-                    "status": evidence.get("status", "ok"),
+                    "status": evidence.get("status", "ok") if kept else "no_targeted_evidence_within_limit",
                     "mode": evidence.get("mode", "targeted_snippets"),
                     "size_bytes": size,
                     "queries": evidence.get("queries", []),
-                    "matches": evidence.get("matches", []),
-                    "truncated": bool(evidence.get("truncated")),
+                    "matches": kept,
+                    "truncated": bool(evidence.get("truncated")) or len(kept) < len(matches),
                 })
+                total_bytes = used
             else:
                 files.append({
                     "path": path,
