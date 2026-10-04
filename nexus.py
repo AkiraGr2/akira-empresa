@@ -14,7 +14,9 @@
 # Sub-fase 1.5 (2026-10-01): anti-alucinacion extendida a capacidades del sistema
 #   (Akira no puede afirmar que verifico/confirmo estado de Supabase, backend, memoria, etc).
 # Sub-fase 1.6 (2026-10-04): failover multi-proveedor endurecido + rotacion de credenciales.
+# Sub-fase 1.7: migración del ciclo startup de FastAPI a lifespan, sin cambiar comportamiento.
 import os, json, datetime, threading, time, hashlib, base64, math, asyncio, random, re
+from contextlib import asynccontextmanager
 from pathlib import Path
 from collections import defaultdict
 from dotenv import load_dotenv
@@ -448,7 +450,7 @@ REGLAS ANTI-ALUCINACION (OBLIGATORIAS):
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse, Response, RedirectResponse
 import json as json_lib
-app=FastAPI(title="Akira V7.3 Consciente")
+app=FastAPI(title="Akira V7.3 Consciente", lifespan=_akira_lifespan)
 
 class CORSFixMiddleware:
     def __init__(self, app):
@@ -1600,8 +1602,8 @@ def _run_mission_sync(mission_id, actor):
             _mission_execution_ids.discard(mission_id)
             _mission_active_count = max(0, _mission_active_count - 1)
 
-@app.on_event("startup")
-async def _on_startup():
+@asynccontextmanager
+async def _akira_lifespan(_app):
     await asyncio.sleep(3)
     try:
         print(f"[providers] configured key counts: {provider_key_inventory()}")
@@ -1615,6 +1617,7 @@ async def _on_startup():
         _cleanup_orphan_missions(_persistence_service())
     except Exception as e:
         print(f"[startup cleanup] error: {e}")
+    yield
 
 def _route_registered(path):
     """Verdad runtime: inspecciona las rutas efectivamente registradas en FastAPI."""
