@@ -216,6 +216,15 @@ def _pick_mistral_keys():
     now = time.time()
     return [k for k in get_mistral_keys() if _failed_keys_until.get("mistral:" + k, 0) < now]
 
+def provider_key_inventory():
+    """Conteo seguro de credenciales configuradas; nunca devuelve secretos."""
+    return {
+        "gemini": len(get_gemini_keys()),
+        "groq": len(get_groq_keys()),
+        "openrouter": len(get_openrouter_keys()),
+        "mistral": len(get_mistral_keys()),
+    }
+
 def _mark_key_failed(key, seconds=3600, provider="gemini"):
     marker = f"{provider}:{key}"
     _failed_keys_until[marker] = time.time() + seconds
@@ -1594,6 +1603,10 @@ def _run_mission_sync(mission_id, actor):
 @app.on_event("startup")
 async def _on_startup():
     await asyncio.sleep(3)
+    try:
+        print(f"[providers] configured key counts: {provider_key_inventory()}")
+    except Exception as e:
+        print(f"[providers] inventory error: {type(e).__name__}")
     try:
         _seed_tools_and_agents()
     except Exception as e:
