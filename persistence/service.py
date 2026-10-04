@@ -1898,13 +1898,18 @@ class PersistenceService:
         if verified is None: raise VerificationError("conversacion no confirmada")
         return {"outcome": "created" if created else "already_synced", "record": verified}
 
-    def get_conversation(self, conversation_id):
-        """Fix Neon+pooler: WHERE id a veces falla. Fallback a search sin filtro."""
+    def get_conversation(self, conversation_id, owner=None):
+        """Obtiene una conversación y, si se indica owner, la acota al propietario."""
         rec = self.repo.get("conversations", conversation_id)
         if rec is not None:
+            if owner is not None and rec.get("created_by") != owner:
+                return None
             return rec
         try:
-            rows = self.repo.search("conversations", {}, limit=300)
+            filters = {}
+            if owner is not None:
+                filters["created_by"] = owner
+            rows = self.repo.search("conversations", filters, limit=300)
             for r in rows:
                 if r.get("id") == conversation_id:
                     return r
@@ -1927,9 +1932,12 @@ class PersistenceService:
     def count_conversations(self, filters=None):
         return self.repo.count("conversations", filters or {})
 
-    def update_conversation(self, conversation_id, changes, expected_version, actor="system"):
-        """Actualiza titulo o status. No se puede cambiar created_by."""
+    def update_conversation(self, conversation_id, changes, expected_version, actor="system", owner=None):
+        """Actualiza titulo o status, opcionalmente limitado al propietario."""
         clean = validate_conversation(changes, partial=True)
+        current = self.get_conversation(conversation_id, owner=owner)
+        if current is None:
+            raise NotFoundError(conversation_id)
         if isinstance(expected_version, bool) or not isinstance(expected_version, int) or expected_version < 1:
             raise ValidationError("expected_version debe ser un entero >= 1")
         try:
@@ -1951,12 +1959,14 @@ class PersistenceService:
             raise VerificationError("actualizacion de conversacion no confirmada")
         return verified
 
-    def archive_conversation(self, conversation_id, expected_version=None, actor="system"):
+    def archive_conversation(self, conversation_id, expected_version=None, actor="system", owner=None):
         if expected_version is None:
-            current = self.repo.get("conversations", conversation_id)
+            current = self.get_conversation(conversation_id, owner=owner)
             if current is None: raise NotFoundError(conversation_id)
             expected_version = current["version"]
-        return self.update_conversation(conversation_id, {"status": "archived"}, expected_version, actor)
+        return self.update_conversation(
+            conversation_id, {"status": "archived"}, expected_version, actor, owner=owner
+        )
 
     def add_message(self, conversation_id, role, content, model=None,
                     memories_used=None, duration_ms=0, error=None, actor="system",
@@ -1966,7 +1976,8 @@ class PersistenceService:
         - actualiza conversations.message_count +1
         - actualiza conversations.last_message_at al ahora
         Devuelve {"record": mensaje, "conversation": conversacion_actualizada}."""
-        current_conv = self.get_conversation(conversation_id)
+        scoped_owner = actor if actor and actor != "system" else None
+        current_conv = self.get_conversation(conversation_id, owner=scoped_owner)
         if current_conv is None:
             raise NotFoundError(f"conversacion no existe: {conversation_id}")
         if current_conv.get("status") != "active":
@@ -2010,12 +2021,16 @@ class PersistenceService:
         if verified_msg is None: raise VerificationError("mensaje no confirmado")
         return {"record": verified_msg, "conversation": updated_conv}
 
-    def list_messages(self, conversation_id, limit=200, offset=0):
-        """Mensajes de una conversacion, orden ascendente (cronologico)."""
+    def list_messages(self, conversation_id, limit=200, offset=0, owner=None):
+        """Mensajes de una conversación, opcionalmente acotados a su propietario."""
+        if owner is not None and self.get_conversation(conversation_id, owner=owner) is None:
+            raise NotFoundError(conversation_id)
         limit = max(1, min(int(limit), 500))
         offset = max(0, int(offset))
         return self.repo.search("conversation_messages", {"conversation_id": conversation_id},
                                 limit=limit, offset=offset, order_by="created_at", descending=False)
 
-    def count_messages(self, conversation_id):
+    def count_messages(self, conversation_id, owner=None):
+        if owner is not None and self.get_conversation(conversation_id, owner=owner) is None:
+            raise NotFoundError(conversation_id)
         return self.repo.count("conversation_messages", {"conversation_id": conversation_id})
