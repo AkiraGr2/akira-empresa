@@ -68,6 +68,12 @@ class ProviderFailoverRegressionTests(unittest.TestCase):
         workflow = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("python -m unittest test_provider_failover -v", workflow)
 
+    def test_fastapi_uses_lifespan_instead_of_deprecated_startup_event(self):
+        self.assertIn("from contextlib import asynccontextmanager", self.source)
+        self.assertIn('app=FastAPI(title="Akira V7.3 Consciente", lifespan=_akira_lifespan)', self.source)
+        self.assertIn("async def _akira_lifespan(_app):", self.source)
+        self.assertNotIn('@app.on_event("startup")', self.source)
+
 
 if __name__ == "__main__":
     unittest.main()
