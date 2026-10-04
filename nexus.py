@@ -3018,12 +3018,12 @@ def _run_reason_stage(message, memories):
             pass
     return answer, model_used
 
-def _execute_cognitive_cycle(service, trigger, input_data, actor):
-    start_result = service.start_cycle(trigger, input_data, actor=actor)
+def _execute_cognitive_cycle(service, trigger, input_data, actor, owner_scope=None):
+    start_result = service.start_cycle(trigger, input_data, actor=actor, owner_scope=owner_scope)
     cycle_id = start_result["record"]["id"]
     events = []
     def record(stage, data, status="success", error=None):
-        r = service.record_stage(cycle_id, stage, data=data, status=status, error=error, actor=actor)
+        r = service.record_stage(cycle_id, stage, data=data, status=status, error=error, actor=actor, owner_scope=owner_scope)
         events.append(r["event"])
 
     message = str((input_data or {}).get("message") or "")
@@ -3046,8 +3046,8 @@ def _execute_cognitive_cycle(service, trigger, input_data, actor):
         except Exception as e:
             record("reason", {"error": "reason_failed", "message": str(e)[:200]}, status="failure",
                    error={"type": type(e).__name__})
-            service.complete_cycle(cycle_id, "failed", actor=actor)
-            return {"cycle": service.get_cycle(cycle_id), "events": events, "answer": None, "learning_id": None}
+            service.complete_cycle(cycle_id, "failed", actor=actor, owner_scope=owner_scope)
+            return {"cycle": service.get_cycle(cycle_id, owner_scope=owner_scope), "events": events, "answer": None, "learning_id": None}
     record("reason", {"model_used": model_used, "memories_considered": len(memories),
                       "answer_generated": bool(answer), "answer_length": len(answer or "")})
 
@@ -3073,7 +3073,7 @@ def _execute_cognitive_cycle(service, trigger, input_data, actor):
                                      "lesson": lesson, "knowledge_nodes": [], "relationships": [],
                                      "confidence": 0.8 if answer else 0.3,
                                      "outcome": "success" if answer else "failure"},
-                                    actor=actor, idempotency_key=f"cycle_learn_{cycle_id}")
+                                    actor=actor, idempotency_key=f"cycle_learn_{cycle_id}", owner_scope=owner_scope)
         learning_id = lr["record"]["id"]
         record("learn", {"learning_id": learning_id, "lesson": lesson})
     except Exception as e:
@@ -3095,7 +3095,7 @@ def _execute_cognitive_cycle(service, trigger, input_data, actor):
                status="failure", error={"type": type(e).__name__})
 
     final_status = "completed" if answer else "failed"
-    final_cycle = service.complete_cycle(cycle_id, final_status, actor=actor)
+    final_cycle = service.complete_cycle(cycle_id, final_status, actor=actor, owner_scope=owner_scope)
     return {"cycle": final_cycle, "events": events, "answer": final_response, "learning_id": learning_id}
 @app.post("/api/v8/cognitive/cycle")
 def v8_cognitive_cycle(request: Request, payload: dict):
@@ -3108,7 +3108,7 @@ def v8_cognitive_cycle(request: Request, payload: dict):
     input_data = payload.get("input") or {}
     if not isinstance(input_data, dict): return JSONResponse({"ok": False, "reason": "input_must_be_object"}, status_code=400)
     try:
-        result = _execute_cognitive_cycle(service, trigger, input_data, actor=s["email"])
+        result = _execute_cognitive_cycle(service, trigger, input_data, actor=s["email"], owner_scope=s["owner_scope"])
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "cycle_failed", "error_type": type(e).__name__,
                              "detail": str(e)[:200]}, status_code=500)
@@ -3122,7 +3122,7 @@ def v8_cognitive_cycle_get(request: Request, cycle_id: str):
     if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
-    data = service.get_cycle_with_events(cycle_id)
+    data = service.get_cycle_with_events(cycle_id, owner_scope=s["owner_scope"])
     if data is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
     return {"ok": True, "cycle": data["cycle"], "events": data["events"], "events_count": len(data["events"])}
 
@@ -3133,7 +3133,7 @@ def v8_cognitive_cycles_list(request: Request, limit: int = 10):
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     limit = max(1, min(int(limit), 50))
-    cycles = service.repo.search("cognitive_cycles", {}, limit=limit, offset=0, order_by="created_at", descending=True)
+    cycles = service.list_cycles(limit=limit, owner_scope=s["owner_scope"])
     return {"ok": True, "cycles": cycles, "count": len(cycles)}
 
 @app.get("/api/v8/tools")
@@ -3205,7 +3205,7 @@ def v8_tools_get(request: Request, name: str):
     if tool is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
     return {"ok": True, "tool": tool}
 
-def _invoke_tool(service, tool_name, inputs, actor):
+def _invoke_tool(service, tool_name, inputs, actor, owner_scope=None):
     if tool_name == "github_repo_read":
         repo = str(inputs.get("repo") or "").strip()
         paths = inputs.get("paths")
@@ -3266,16 +3266,16 @@ def _invoke_tool(service, tool_name, inputs, actor):
         q = str(inputs.get("query") or "").strip()
         if not q: return None, {"type": "ValidationError", "message": "query requerida"}
         limit = int(inputs.get("limit") or 5)
-        rows = service.search_memory({"text_contains": q[:200]}, limit=min(limit, 20))
+        rows = service.search_memory({"text_contains": q[:200]}, limit=min(limit, 20), owner_scope=owner_scope)
         return {"results": [{"id": r["id"], "content": r["content"]} for r in rows], "found": len(rows)}, None
     if tool_name == "graph_create_node":
-        r = service.create_node(inputs, actor=actor)
+        r = service.create_node({**inputs, **({"owner_scope": owner_scope} if owner_scope is not None else {})}, actor=actor)
         return {"id": r["record"]["id"], "outcome": r["outcome"]}, None
     if tool_name == "graph_related":
         node_id = str(inputs.get("node_id") or "").strip()
         if not node_id: return None, {"type": "ValidationError", "message": "node_id requerido"}
-        if not service.get_node(node_id): return None, {"type": "NotFoundError", "message": "nodo no existe"}
-        edges = service.related_nodes(node_id)
+        if not service.get_node(node_id, owner_scope=owner_scope): return None, {"type": "NotFoundError", "message": "nodo no existe"}
+        edges = service.related_nodes(node_id, owner_scope=owner_scope)
         return {"edges": edges, "count": len(edges)}, None
     if tool_name == "graph_create_edge":
         from_node = str(inputs.get("from_node") or "").strip()
@@ -3285,12 +3285,12 @@ def _invoke_tool(service, tool_name, inputs, actor):
             return None, {"type": "ValidationError", "message": "from_node y to_node requeridos"}
         data = {"from_node": from_node, "to_node": to_node, "relation_type": relation_type, "weight": 1.0, "origin": "tool"}
         try:
-            r = service.create_edge(data, actor=actor)
+            r = service.create_edge(data, actor=actor, owner_scope=owner_scope)
         except Exception as e:
             return None, {"type": type(e).__name__, "message": str(e)[:200]}
         return {"id": r["record"]["id"], "outcome": r["outcome"]}, None
     if tool_name == "learning_save":
-        r = service.save_learning(inputs, actor=actor)
+        r = service.save_learning(inputs, actor=actor, owner_scope=owner_scope)
         return {"id": r["record"]["id"], "outcome": r["outcome"]}, None
     if tool_name == "self_model_read":
         sm = service.get_self_model()
@@ -3326,7 +3326,7 @@ def _invoke_tool(service, tool_name, inputs, actor):
         }
     if tool_name == "cognitive_cycle":
         msg = str(inputs.get("message") or "").strip()
-        result = _execute_cognitive_cycle(service, "tool_invoke", {"message": msg}, actor=actor)
+        result = _execute_cognitive_cycle(service, "tool_invoke", {"message": msg}, actor=actor, owner_scope=owner_scope)
         return {"cycle_id": result["cycle"]["id"], "events_count": len(result["events"]),
                 "answer": (result.get("answer") or "")[:300], "learning_id": result.get("learning_id")}, None
     return None, {"type": "NotFoundError", "message": f"tool no implementada: {tool_name}"}
@@ -3350,7 +3350,10 @@ def v8_tools_invoke(request: Request, name: str, payload: dict):
     t0 = time.time()
     outputs, error = None, None
     try:
-        outputs, error = _invoke_tool(service, name, inputs, actor=s["email"])
+        outputs, error = _invoke_tool(
+            service, name, inputs, actor=s["email"],
+            owner_scope=s["owner_scope"] if s.get("is_owner") else None,
+        )
     except Exception as e:
         error = {"type": type(e).__name__, "message": str(e)[:200]}
     duration_ms = int((time.time() - t0) * 1000)
