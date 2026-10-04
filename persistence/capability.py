@@ -5,6 +5,7 @@ transiciones, validacion de evidencia y calculo de estado efectivo.
 """
 from __future__ import annotations
 
+import datetime as _dt
 import json
 from typing import Any, Mapping
 
@@ -387,8 +388,9 @@ def validate_capability_verification(data: Mapping[str, Any], partial: bool = Fa
     actor = _text("actor", data.get("actor", "system"), 200)
     executor = _text("executor", data.get("executor", "system"), 200)
     evaluator = _text("evaluator", data.get("evaluator", "system"), 200)
-    started_at = _text("started_at", data.get("started_at", "unknown"), 80)
-    finished_at = _text("finished_at", data.get("finished_at", "unknown"), 80)
+    now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    started_at = _text("started_at", data.get("started_at", now_iso), 80)
+    finished_at = _text("finished_at", data.get("finished_at", now_iso), 80)
     error = data.get("error")
     if error is not None:
         error = _json_safe("error", error, max_items=20)
