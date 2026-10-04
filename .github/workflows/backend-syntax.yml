@@ -48,6 +48,10 @@ jobs:
         run: |
           python -m unittest test_authorization_contract -v
 
+      - name: Test route hardening contract
+        run: |
+          python -m unittest test_route_security_contract -v
+
       - name: Test conversation ownership contract
         run: |
           python -m unittest test_conversation_ownership -v
