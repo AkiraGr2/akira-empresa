@@ -29,6 +29,13 @@ from github_readonly import (
     inspect_repository,
 )
 
+from specialized_agent_tools import (
+    SpecializedAgentError,
+    propose_code_change,
+    review_code_change,
+    run_python_tests,
+)
+
 from persistence.absorption import (
     AbsorptionContractError,
     build_autonomous_candidate,
@@ -652,6 +659,9 @@ _TOOL_SEED = [
     {"name": "extract_pdf", "description": "Extrae texto de un PDF (base64).", "category": "documents", "permissions": ["auth"], "inputs_schema": {"filename": "str", "content_base64": "str"}, "outputs_schema": {"text": "str"}, "limits_json": {"max_size_mb": 5}, "risks": ["parseo de archivo externo"]},
     {"name": "image_generate", "description": "Generacion de imagen experimental desactivada bajo politica 100% gratuita.", "category": "image", "permissions": ["owner"], "inputs_schema": {"prompt": "str"}, "outputs_schema": {"image_url": "str"}, "limits_json": {"max_prompt": 500}, "risks": ["contenido generado por servicio externo"], "status": "disabled"},
     {"name": "cognitive_cycle", "description": "Ejecuta un ciclo cognitivo completo de 9 etapas.", "category": "internal", "permissions": ["owner"], "inputs_schema": {"message": "str"}, "outputs_schema": {"cycle_id": "str"}, "limits_json": {"max_message": 1500}, "risks": ["consume cuota LLM"]},
+    {"name": "developer_propose", "description": "Genera una propuesta de cambio de codigo sin escribir en GitHub.", "category": "code", "permissions": ["owner"], "inputs_schema": {"repo": "str", "paths": "list", "instruction": "str", "queries": "list"}, "outputs_schema": {"proposal": "dict"}, "limits_json": {"max_paths": 4, "max_instruction": 4000}, "risks": ["inferencia externa", "propuesta de codigo"]},
+    {"name": "python_test", "description": "Ejecuta pruebas Python seleccionadas sin shell.", "category": "code", "permissions": ["owner"], "inputs_schema": {"tests": "list", "compile_paths": "list"}, "outputs_schema": {"status": "str", "tests": "list"}, "limits_json": {"max_tests": 6, "timeout_s": 45}, "risks": ["ejecucion de pruebas del repositorio"]},
+    {"name": "code_review", "description": "Revisa una propuesta de codigo contra el repositorio y evidencia de pruebas; no escribe.", "category": "code", "permissions": ["owner"], "inputs_schema": {"repo": "str", "paths": "list", "proposal": "dict", "test_results": "dict"}, "outputs_schema": {"review": "dict"}, "limits_json": {"max_paths": 4, "max_proposal_chars": 24000}, "risks": ["inferencia externa", "revision de codigo"]},
 ]
 
 _AGENT_SEED = [
@@ -660,6 +670,9 @@ _AGENT_SEED = [
     {"name": "graph_builder", "role": "graph_builder", "description": "Construye y consulta el grafo neuronal.", "allowed_tools": ["graph_create_node", "graph_create_edge", "graph_related"]},
     {"name": "learner", "role": "learner", "description": "Registra aprendizajes persistentes.", "allowed_tools": ["learning_save", "memory_save"]},
     {"name": "internal", "role": "internal", "description": "Introspeccion y ciclos cognitivos.", "allowed_tools": ["self_model_read", "cognitive_cycle"]},
+    {"name": "developer", "role": "developer", "description": "Prepara propuestas de cambios de codigo sin escribir directamente en GitHub.", "allowed_tools": ["github_repo_read", "developer_propose"]},
+    {"name": "tester", "role": "tester", "description": "Ejecuta pruebas seleccionadas y reporta evidencia reproducible.", "allowed_tools": ["github_repo_read", "python_test"]},
+    {"name": "reviewer", "role": "reviewer", "description": "Revisa propuestas de codigo y evidencia de pruebas sin aplicar cambios.", "allowed_tools": ["github_repo_read", "python_test", "code_review"]},
 ]
 
 def _seed_tools_and_agents():
@@ -873,9 +886,23 @@ def _validate_mission_plan(plan, service):
                 ):
                     return False, f"step_{i}_invalid_relation_type:{relation_type.strip()}"
         else:
-            if isinstance(receives, list):
+            if tool_name == "code_review":
+                if not isinstance(receives, list):
+                    return False, f"step_{i}_review_requires_two_dependencies"
+                if len(receives) != 2:
+                    return False, f"step_{i}_review_requires_two_dependencies"
+                for dep in receives:
+                    try:
+                        dep = int(dep)
+                    except Exception:
+                        return False, f"step_{i}_receives_not_int"
+                    if isinstance(dep, bool) or dep >= order:
+                        return False, f"step_{i}_receives_not_previous"
+                    if dep not in orders_seen:
+                        return False, f"step_{i}_receives_unknown:{dep}"
+            elif isinstance(receives, list):
                 return False, f"step_{i}_receives_list_not_allowed"
-            if receives is not None:
+            elif receives is not None:
                 if isinstance(receives, str):
                     try:
                         receives = int(receives)
@@ -1212,6 +1239,50 @@ def _build_tool_inputs(tool_name, step, outputs_by_order, mission_id):
     if tool_name == "image_generate":
         if not task: return None
         return {"prompt": with_dependency(500, task)}
+    if tool_name == "developer_propose":
+        repo = str(step.get("repo") or "").strip()
+        paths = step.get("paths")
+        queries = step.get("queries")
+        if not repo or not isinstance(paths, list) or not paths or not task:
+            return None
+        instruction = with_dependency(3500, task)
+        if expected:
+            instruction = with_dependency(3500, f"{instruction}\nExpected output: {expected}")
+        return {
+            "repo": repo,
+            "paths": paths[:4],
+            "instruction": instruction,
+            "queries": queries if isinstance(queries, list) else [],
+        }
+    if tool_name == "python_test":
+        tests = step.get("tests")
+        compile_paths = step.get("compile_paths")
+        if tests is None and compile_paths is None:
+            return None
+        return {
+            "tests": tests if isinstance(tests, list) else [],
+            "compile_paths": compile_paths if isinstance(compile_paths, list) else [],
+        }
+    if tool_name == "code_review":
+        repo = str(step.get("repo") or "").strip()
+        paths = step.get("paths")
+        receives = step.get("receives_from")
+        if not repo or not isinstance(paths, list) or not paths:
+            return None
+        if not isinstance(receives, list) or len(receives) != 2:
+            return None
+        proposal_output = outputs_by_order.get(int(receives[0]))
+        test_output = outputs_by_order.get(int(receives[1]))
+        if not isinstance(proposal_output, dict) or "proposal" not in proposal_output:
+            return None
+        if not isinstance(test_output, dict):
+            return None
+        return {
+            "repo": repo,
+            "paths": paths[:4],
+            "proposal": proposal_output.get("proposal"),
+            "test_results": test_output,
+        }
     if tool_name == "cognitive_cycle":
         if not task: return None
         return {"message": with_dependency(1500, task)}
@@ -3283,8 +3354,56 @@ def v8_tools_get(request: Request, name: str):
     return {"ok": True, "tool": tool}
 
 def _invoke_tool(service, tool_name, inputs, actor, owner_scope=None):
+    if tool_name in {"developer_propose", "python_test", "code_review"} and owner_scope is None:
+        return None, {"type": "OwnerRequiredError", "message": "las tools de agentes especializados requieren owner_scope"}
     if tool_name in {"memory_save", "memory_search"} and owner_scope is None:
         return None, {"type": "OwnerRequiredError", "message": "las tools de memoria persistente requieren owner_scope"}
+    if tool_name == "developer_propose":
+        try:
+            result = propose_code_change(
+                inspect_repository,
+                str(inputs.get("repo") or "").strip(),
+                inputs.get("paths"),
+                str(inputs.get("instruction") or ""),
+                inputs.get("queries"),
+            )
+            return {"proposal": result}, None
+        except SpecializedAgentError as e:
+            return None, {"type": type(e).__name__, "message": str(e)[:200]}
+        except GitHubReadError as e:
+            return None, {"type": type(e).__name__, "message": str(e)[:200]}
+        except Exception as e:
+            return None, {"type": type(e).__name__, "message": "developer_propose failed"}
+
+    if tool_name == "python_test":
+        try:
+            result = run_python_tests(
+                tests=inputs.get("tests"),
+                compile_paths=inputs.get("compile_paths"),
+            )
+            return result, None
+        except SpecializedAgentError as e:
+            return None, {"type": type(e).__name__, "message": str(e)[:200]}
+        except Exception as e:
+            return None, {"type": type(e).__name__, "message": "python_test failed"}
+
+    if tool_name == "code_review":
+        try:
+            result = review_code_change(
+                inspect_repository,
+                str(inputs.get("repo") or "").strip(),
+                inputs.get("paths"),
+                inputs.get("proposal"),
+                inputs.get("test_results"),
+            )
+            return {"review": result}, None
+        except SpecializedAgentError as e:
+            return None, {"type": type(e).__name__, "message": str(e)[:200]}
+        except GitHubReadError as e:
+            return None, {"type": type(e).__name__, "message": str(e)[:200]}
+        except Exception as e:
+            return None, {"type": type(e).__name__, "message": "code_review failed"}
+
     if tool_name == "github_repo_read":
         repo = str(inputs.get("repo") or "").strip()
         paths = inputs.get("paths")
