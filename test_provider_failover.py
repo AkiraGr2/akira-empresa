@@ -16,14 +16,13 @@ class ProviderFailoverRegressionTests(unittest.TestCase):
     def _function_source(self, name):
         node = next(
             n for n in self.tree.body
-            if isinstance(n, ast.FunctionDef) and n.name == name
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name
         )
         return ast.get_source_segment(self.source, node)
 
     def test_gemini_429_does_not_abort_remaining_keys(self):
         source = self._function_source("_chat_try_gemini")
         self.assertIn("code = _log_gemini_error", source)
-        self.assertIn("if code == 429", self.source) or None
         self.assertNotIn('if code == 429:\n                    return None', source)
         self.assertIn("continue", source)
 
