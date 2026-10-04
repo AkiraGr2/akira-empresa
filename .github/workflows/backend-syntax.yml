@@ -44,6 +44,10 @@ jobs:
         run: |
           python -m unittest test_provider_failover -v
 
+      - name: Test multimedia contract and authenticated PDF flow
+        run: |
+          python -m unittest test_multimedia_contract -v
+
       - name: Guard route ordering
         run: |
           python - <<'PY'
