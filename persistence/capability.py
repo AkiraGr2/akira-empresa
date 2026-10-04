@@ -492,12 +492,149 @@ def derive_effective_state(record: Mapping[str, Any]) -> str:
     return "unavailable"
 
 
+_STATE_TRANSITIONS = {
+    "implementation_state": {
+        "not_implemented": {"partial", "implemented"},
+        "partial": {"implemented", "deprecated"},
+        "implemented": {"partial", "deprecated"},
+        "deprecated": {"partial", "implemented"},
+    },
+    "verification_state": {
+        "unverified": {"verified", "failed"},
+        "verified": {"stale", "failed"},
+        "stale": {"verified", "failed"},
+        "failed": {"verified", "stale"},
+    },
+    "availability_state": {
+        "available": {"degraded", "blocked", "unavailable"},
+        "degraded": {"available", "blocked", "unavailable"},
+        "blocked": {"available", "degraded", "unavailable"},
+        "unavailable": {"available", "degraded", "blocked"},
+    },
+    "maturity": {
+        "experimental": {"stable"},
+        "stable": {"experimental"},
+    },
+    "cost_compatibility": {
+        "free": {"conditional", "paid_required", "unknown"},
+        "conditional": {"free", "paid_required", "unknown"},
+        "paid_required": {"free", "conditional", "unknown"},
+        "unknown": {"free", "conditional", "paid_required"},
+    },
+}
+
+
 def validate_capability_transition(before: Mapping[str, Any], after: Mapping[str, Any]) -> dict:
     before_state = validate_capability_state(before)
     after_state = validate_capability_state(after)
-
-    if before_state["implementation_state"] == "deprecated" and after_state["implementation_state"] != "deprecated":
-        # Re-activacion is deliberately possible only as an explicit implementation transition.
-        pass
-
+    for field, allowed in _STATE_TRANSITIONS.items():
+        previous = before_state[field]
+        current = after_state[field]
+        if previous == current:
+            continue
+        if current not in allowed.get(previous, set()):
+            raise CapabilityContractError(
+                f"transicion no permitida en {field}: {previous} -> {current}"
+            )
     return after_state
+
+
+def _parse_iso(value: Any):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return _dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+def effective_verification_state(record: Mapping[str, Any], now=None) -> str:
+    state = validate_capability_state(capability_state_snapshot(record))
+    if state["verification_state"] != "verified":
+        return state["verification_state"]
+    spec = record.get("verification_spec")
+    if not isinstance(spec, Mapping):
+        return state["verification_state"]
+    policy = spec.get("freshness_policy")
+    if not isinstance(policy, Mapping):
+        return state["verification_state"]
+    try:
+        policy = validate_freshness_policy(policy)
+    except CapabilityContractError:
+        return "stale"
+    if policy["mode"] != "time_based":
+        return state["verification_state"]
+    max_age = policy["max_age_seconds"]
+    verified_at = _parse_iso(record.get("last_verified_at"))
+    if max_age is None or verified_at is None:
+        return "stale"
+    current = now or _dt.datetime.now(_dt.timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=_dt.timezone.utc)
+    return "stale" if (current - verified_at).total_seconds() > max_age else "verified"
+
+
+def apply_verification_result(current: Mapping[str, Any], event: Mapping[str, Any]) -> dict:
+    before = validate_capability_state(capability_state_snapshot(current))
+    event_type = _choice("event_type", event.get("event_type"), CAPABILITY_VERIFICATION_EVENTS)
+    result = _choice("result", event.get("result"), CAPABILITY_VERIFICATION_RESULTS)
+    evidence = event.get("evidence") or []
+    validate_verification_result_for_event(event_type, result, evidence)
+
+    after = dict(before)
+    if event_type in ("verification", "revalidation"):
+        if result == "pass":
+            after["verification_state"] = "verified"
+        elif result == "fail":
+            after["verification_state"] = "failed"
+        elif result == "inconclusive" and before["verification_state"] == "verified":
+            after["verification_state"] = "stale"
+    elif event_type == "invalidation":
+        if before["verification_state"] != "unverified":
+            after["verification_state"] = "stale"
+        else:
+            raise CapabilityContractError("una capability unverified no puede invalidarse como stale")
+    elif event_type == "availability_check":
+        observed = event.get("observed_availability_state")
+        if observed is None:
+            raise CapabilityContractError("availability_check requiere observed_availability_state")
+        after["availability_state"] = _choice(
+            "observed_availability_state", observed, CAPABILITY_AVAILABILITY_STATES
+        )
+
+    validate_capability_state(after)
+    validate_capability_transition(before, after)
+    return after
+
+
+def derive_effective_state(record: Mapping[str, Any]) -> str:
+    state = validate_capability_state(capability_state_snapshot(record))
+    impl = state["implementation_state"]
+    verification = effective_verification_state(record)
+    availability = state["availability_state"]
+
+    if impl == "deprecated":
+        return "deprecated"
+    if impl == "not_implemented":
+        return "not_implemented"
+    if verification == "failed":
+        return "failed"
+    if verification == "stale":
+        return "stale"
+    if impl == "partial":
+        if verification == "verified" and availability == "available":
+            return "partial_verified"
+        return "partial"
+    if verification == "verified":
+        if availability == "available":
+            return "verified"
+        if availability == "degraded":
+            return "verified_degraded"
+        return "verified_unavailable"
+    if availability == "available":
+        return "implemented_unverified_available"
+    if availability == "degraded":
+        return "implemented_unverified_degraded"
+    if availability == "blocked":
+        return "blocked"
+    return "unavailable"
