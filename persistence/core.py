@@ -203,7 +203,7 @@ ENTITIES = {
         "table": "cognitive_cycles",
         "columns": (
             "id", "trigger", "input", "current_stage", "status",
-            "completed_at", "schema_version", "idempotency_key",
+            "owner_scope", "completed_at", "schema_version", "idempotency_key",
         ),
         "json_columns": ("input",),
         "mutable": ("current_stage", "status", "completed_at"),
