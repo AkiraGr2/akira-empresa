@@ -2134,7 +2134,8 @@ def v8_learning_investigate(request: Request, learning_id: str, payload: dict):
             learning_id,
             evidence,
             payload.get("expected_version"),
-            actor=s["email"]
+            actor=s["email"],
+            owner_scope=s["owner_scope"]
         )
     else:
         rec = current
@@ -4875,7 +4876,7 @@ def _extract_teaching_lesson(message):
         return None, True
     return lesson[:5000], True
 
-def _create_teaching_candidate(service, lesson, actor, source="explicit_user_teaching", context=None):
+def _create_teaching_candidate(service, lesson, actor, source="explicit_user_teaching", context=None, owner_scope=None):
     """Registra una enseñanza como candidate; no materializa memoria/grafo hasta verificar."""
     if service is None:
         raise RuntimeError("persistence_not_ready")
@@ -4892,7 +4893,8 @@ def _create_teaching_candidate(service, lesson, actor, source="explicit_user_tea
         "status": "candidate",
         "evidence": [],
         "learning_context": learning_context,
-    }, actor=actor, idempotency_key="teach_candidate_" + hashlib.sha256(lesson.encode("utf-8")).hexdigest()[:32])
+    }, actor=actor, idempotency_key="teach_candidate_" + hashlib.sha256(lesson.encode("utf-8")).hexdigest()[:32],
+       owner_scope=owner_scope)
     return lr["record"], None, None
 
 
