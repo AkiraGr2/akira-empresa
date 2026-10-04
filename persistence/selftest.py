@@ -371,6 +371,7 @@ def run_logic_tests(service, fresh_service_factory=None):
         ("TEST_IDEMPOTENT_SYNC", t_idempotent),
         ("TEST_PRIVATE_MEMORY", t_private),
         ("TEST_VERSIONING_CONFLICT", t_versioning),
+        ("TEST_ARCHIVE_SOFT_DELETE", t_archive),
         ("TEST_VALIDATION_REJECTS", t_validation),
         ("TEST_TOOL_PERMISSION_CONTRACT", t_tool_permission_contract),
         ("TEST_TRANSACTION_ROLLBACK", t_rollback),
