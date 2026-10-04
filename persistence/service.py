@@ -1377,7 +1377,7 @@ class PersistenceService:
         return updated
 
     def create_task(self, agent_name, tool_name, inputs=None, model=None, mission_id=None,
-                    memory_used=None, actor="system", idempotency_key=None):
+                    memory_used=None, actor="system", idempotency_key=None, owner_scope=None, owner=None):
         agent = self.get_agent_by_name(agent_name)
         if agent is None: raise NotFoundError(f"agente no existe: {agent_name}")
         tool = self.get_tool_by_name(tool_name)
@@ -1387,8 +1387,15 @@ class PersistenceService:
             raise ValidationError(f"el agente {agent_name} no tiene permitido usar {tool_name}")
         data = {"agent_name": agent_name, "tool_name": tool_name, "status": "pending", "inputs": inputs or {}}
         if model is not None: data["model"] = model
-        if mission_id is not None: data["mission_id"] = mission_id
+        if mission_id is not None:
+            mission = self.get_mission(mission_id, owner=owner) if owner is not None else self.get_mission(mission_id)
+            if mission is None:
+                raise NotFoundError(f"mision no existe: {mission_id}")
+            data["mission_id"] = mission_id
         if memory_used is not None: data["memory_used"] = memory_used
+        data["owner_scope"] = str(owner_scope).strip() if owner_scope is not None else LEGACY_OWNER_SCOPE
+        if not data["owner_scope"]:
+            raise ValidationError("owner_scope requerido")
         fields = validate_agent_task(data)
         record = dict(fields, id=new_id("task"), schema_version=AGENT_TASK_SCHEMA_VERSION)
         if idempotency_key is not None:
@@ -1412,8 +1419,8 @@ class PersistenceService:
         if verified is None: raise VerificationError("task no confirmada")
         return {"outcome": "created" if created else "already_synced", "record": verified}
 
-    def start_task(self, task_id, actor="system"):
-        task = self.repo.get("agent_tasks", task_id)
+    def start_task(self, task_id, actor="system", owner_scope=None):
+        task = self.get_task(task_id, owner_scope=owner_scope)
         if task is None: raise NotFoundError(task_id)
         if task.get("status") != "pending": raise ValidationError(f"tarea ya esta {task['status']}")
         changes = {"status": "running", "started_at": _now_iso()}
@@ -1436,8 +1443,8 @@ class PersistenceService:
         except Exception as e: print(f"[auto-connect] agent_tool fallo: {type(e).__name__}: {str(e)[:200]}")
         return updated
 
-    def complete_task(self, task_id, outputs=None, duration_ms=0, memory_used=None, actor="system"):
-        task = self.repo.get("agent_tasks", task_id)
+    def complete_task(self, task_id, outputs=None, duration_ms=0, memory_used=None, actor="system", owner_scope=None):
+        task = self.get_task(task_id, owner_scope=owner_scope)
         if task is None: raise NotFoundError(task_id)
         if task.get("status") not in ("pending", "running"):
             raise ValidationError(f"tarea ya esta {task['status']}")
@@ -1461,8 +1468,8 @@ class PersistenceService:
         except Exception as e: raise StorageError(type(e).__name__) from e
         return updated
 
-    def fail_task(self, task_id, error, duration_ms=0, memory_used=None, actor="system"):
-        task = self.repo.get("agent_tasks", task_id)
+    def fail_task(self, task_id, error, duration_ms=0, memory_used=None, actor="system", owner_scope=None):
+        task = self.get_task(task_id, owner_scope=owner_scope)
         if task is None: raise NotFoundError(task_id)
         if task.get("status") not in ("pending", "running"):
             raise ValidationError(f"tarea ya esta {task['status']}")
@@ -1487,25 +1494,26 @@ class PersistenceService:
         except Exception as e: raise StorageError(type(e).__name__) from e
         return updated
 
-    def get_task(self, task_id):
-        """Fix Neon+pooler: WHERE id a veces falla. Fallback a search sin filtro."""
+    def get_task(self, task_id, owner_scope=None):
+        """Obtiene una tarea y la acota a su owner_scope cuando se indica."""
         rec = self.repo.get("agent_tasks", task_id)
         if rec is not None:
-            return rec
+            return rec if owner_scope is None or _scope_matches(rec.get("owner_scope"), owner_scope) else None
         try:
             rows = self.repo.search("agent_tasks", {}, limit=300)
             for r in rows:
-                if r.get("id") == task_id:
+                if r.get("id") == task_id and _scope_matches(r.get("owner_scope"), owner_scope):
                     return r
         except Exception:
             pass
         return None
 
-    def list_tasks(self, agent_name=None, status=None, mission_id=None, limit=50):
+    def list_tasks(self, agent_name=None, status=None, mission_id=None, limit=50, owner_scope=None):
         filters = {}
         if agent_name: filters["agent_name"] = agent_name
         if status: filters["status"] = status
         if mission_id: filters["mission_id"] = mission_id
+        if owner_scope is not None: filters["owner_scope"] = str(owner_scope).strip()
         limit = max(1, min(int(limit), 200))
         return self.repo.search("agent_tasks", filters, limit=limit, offset=0,
                                 order_by="created_at", descending=True)
@@ -1893,10 +1901,14 @@ class PersistenceService:
             raise ValidationError(f"transicion invalida: {current} -> {new} "
                                   f"(permitidos desde {current}: {list(allowed) or 'ninguno'})")
 
-    def create_mission(self, data, actor="system", idempotency_key=None):
+    def create_mission(self, data, actor="system", idempotency_key=None, owner=None):
         fields = validate_mission(data)
-        if "created_by" not in fields:
+        if owner is not None:
+            fields["created_by"] = str(owner).strip()
+        elif "created_by" not in fields:
             fields["created_by"] = actor
+        if not fields.get("created_by"):
+            raise ValidationError("created_by requerido")
         record = dict(fields, id=new_id("mission"), schema_version=MISSION_SCHEMA_VERSION)
         if idempotency_key is not None:
             if not isinstance(idempotency_key, str) or not 0 < len(idempotency_key.strip()) <= 200:
@@ -1919,13 +1931,14 @@ class PersistenceService:
         if verified is None: raise VerificationError("mision no confirmada")
         return {"outcome": "created" if created else "already_synced", "record": verified}
 
-    def get_mission(self, mission_id):
-        """Fix Neon+pooler: WHERE id a veces falla. Fallback a search sin filtro."""
+    def get_mission(self, mission_id, owner=None):
+        """Obtiene una misión, acotada por propietario cuando se indica."""
         rec = self.repo.get("missions", mission_id)
         if rec is not None:
-            return rec
+            return rec if owner is None or rec.get("created_by") == owner else None
         try:
-            rows = self.repo.search("missions", {}, limit=300)
+            filters = {"created_by": owner} if owner is not None else {}
+            rows = self.repo.search("missions", filters, limit=300)
             for r in rows:
                 if r.get("id") == mission_id:
                     return r
@@ -1947,8 +1960,8 @@ class PersistenceService:
     def count_missions(self, filters=None):
         return self.repo.count("missions", filters or {})
 
-    def update_mission_status(self, mission_id, new_status, expected_version, actor="system"):
-        current = self.repo.get("missions", mission_id)
+    def update_mission_status(self, mission_id, new_status, expected_version, actor="system", owner=None):
+        current = self.get_mission(mission_id, owner=owner)
         if current is None: raise NotFoundError(mission_id)
         if new_status not in MISSION_STATUSES:
             raise ValidationError(f"status invalido: {new_status!r}")
@@ -1971,16 +1984,16 @@ class PersistenceService:
         except Exception as e:
             self._audit_failure_generic(actor, f"mission.status.{new_status}", "missions", mission_id, e)
             raise StorageError(type(e).__name__) from e
-        verified = self.repo.get("missions", mission_id)
+        verified = self.get_mission(mission_id, owner=owner)
         if (verified is None or verified["version"] != expected_version + 1
                 or verified.get("status") != new_status):
             raise VerificationError("cambio de estado no confirmado al releer")
         return verified
 
-    def update_mission_plan(self, mission_id, plan, expected_version, actor="system"):
+    def update_mission_plan(self, mission_id, plan, expected_version, actor="system", owner=None):
         if not isinstance(plan, dict):
             raise ValidationError("plan debe ser un objeto (dict)")
-        current = self.repo.get("missions", mission_id)
+        current = self.get_mission(mission_id, owner=owner)
         if current is None: raise NotFoundError(mission_id)
         try:
             with self.repo.transaction() as tx:
@@ -1994,13 +2007,13 @@ class PersistenceService:
         except Exception as e:
             self._audit_failure_generic(actor, "mission.plan.update", "missions", mission_id, e)
             raise StorageError(type(e).__name__) from e
-        verified = self.repo.get("missions", mission_id)
+        verified = self.get_mission(mission_id, owner=owner)
         if verified is None or verified["version"] != expected_version + 1 or verified.get("plan") != plan:
             raise VerificationError("plan no confirmado al releer")
         return verified
 
-    def complete_mission(self, mission_id, result=None, learning_refs=None, actor="system"):
-        current = self.repo.get("missions", mission_id)
+    def complete_mission(self, mission_id, result=None, learning_refs=None, actor="system", owner=None):
+        current = self.get_mission(mission_id, owner=owner)
         if current is None: raise NotFoundError(mission_id)
         changes = {"status": "completed"}
         if result is not None:
@@ -2025,10 +2038,10 @@ class PersistenceService:
         except Exception as e:
             self._audit_failure_generic(actor, "mission.complete", "missions", mission_id, e)
             raise StorageError(type(e).__name__) from e
-        return self.repo.get("missions", mission_id)
+        return self.get_mission(mission_id, owner=owner)
 
-    def fail_mission(self, mission_id, error, actor="system"):
-        current = self.repo.get("missions", mission_id)
+    def fail_mission(self, mission_id, error, actor="system", owner=None):
+        current = self.get_mission(mission_id, owner=owner)
         if current is None: raise NotFoundError(mission_id)
         err_dict = error if isinstance(error, dict) else {"message": str(error)[:500]}
         changes = {"status": "failed", "result": {"error": err_dict}}
@@ -2046,10 +2059,10 @@ class PersistenceService:
         except Exception as e:
             self._audit_failure_generic(actor, "mission.fail", "missions", mission_id, e)
             raise StorageError(type(e).__name__) from e
-        return self.repo.get("missions", mission_id)
+        return self.get_mission(mission_id, owner=owner)
 
-    def cancel_mission(self, mission_id, reason=None, actor="system"):
-        current = self.repo.get("missions", mission_id)
+    def cancel_mission(self, mission_id, reason=None, actor="system", owner=None):
+        current = self.get_mission(mission_id, owner=owner)
         if current is None: raise NotFoundError(mission_id)
         changes = {"status": "cancelled"}
         if reason:
@@ -2068,7 +2081,7 @@ class PersistenceService:
         except Exception as e:
             self._audit_failure_generic(actor, "mission.cancel", "missions", mission_id, e)
             raise StorageError(type(e).__name__) from e
-        return self.repo.get("missions", mission_id)
+        return self.get_mission(mission_id, owner=owner)
 
     # ============================================================
     # V8-Fase10.7.2: CONVERSACIONES
