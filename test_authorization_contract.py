@@ -85,6 +85,11 @@ class AuthorizationContractTests(unittest.TestCase):
             self.assertIn("is_owner", source, name)
             self.assertIn("owner_required", source, name)
 
+    def test_legacy_self_repair_surfaces_are_owner_only(self):
+        for name in ("self_repair_status", "self_repair_propose"):
+            source = self._function_source(name)
+            self.assertIn("_require_owner(request)", source, name)
+
     def test_graph_owner_scope_is_server_derived(self):
         source = self._function_source("v8_graph_node_create")
         self.assertIn('data["owner_scope"] = s.get("owner_scope") or "owner"', source)
