@@ -950,9 +950,9 @@ MIGRATIONS = [
             'available',
             'experimental',
             'free',
-            $[{"id":"IdentityRoot","kind":"authority","required":true},{"id":"CapabilityEngine","kind":"registry","required":true},{"id":"PersistenceService.self_knowledge_snapshot","kind":"service","required":true},{"id":"PostgreSQL.capabilities","kind":"storage","required":true},{"id":"PostgreSQL.agents","kind":"storage","required":true},{"id":"PostgreSQL.tools","kind":"storage","required":true},{"id":"owner_scope","kind":"security","required":true}]$::jsonb,
-            $["No demuestra por sí sola ejecución E2E de los agentes especializados.","El self-model histórico puede contener declaraciones heredadas; el snapshot runtime prioriza fuentes autoritativas.","La métrica memory_active_count es un conteo del ámbito solicitado y no expone contenido de memoria."]$::jsonb,
-            ${
+            '[{"id":"IdentityRoot","kind":"authority","required":true},{"id":"CapabilityEngine","kind":"registry","required":true},{"id":"PersistenceService.self_knowledge_snapshot","kind":"service","required":true},{"id":"PostgreSQL.capabilities","kind":"storage","required":true},{"id":"PostgreSQL.agents","kind":"storage","required":true},{"id":"PostgreSQL.tools","kind":"storage","required":true},{"id":"owner_scope","kind":"security","required":true}]'::jsonb,
+            '["No demuestra por sí sola ejecución E2E de los agentes especializados.","El self-model histórico puede contener declaraciones heredadas y el snapshot runtime prioriza fuentes autoritativas.","La métrica memory_active_count es un conteo del ámbito solicitado y no expone contenido de memoria."]'::jsonb,
+            '{
                 "method":"selftest",
                 "test_key":"self_knowledge_runtime_contract",
                 "freshness_policy":{
@@ -967,8 +967,8 @@ MIGRATIONS = [
                         "owner_scope_change"
                     ]
                 }
-            }$::jsonb,
-            $ {"source":"architecture_rebaseline_v13","created_by":"system"} $::jsonb,
+            }'::jsonb,
+            '{"source":"architecture_rebaseline_v13","created_by":"system"}'::jsonb,
             'capability.v1',
             'bootstrap:capability:self_knowledge_runtime:v1'
         )
@@ -987,6 +987,6 @@ MIGRATIONS = [
             schema_version = EXCLUDED.schema_version,
             updated_at = now()
         """
-    ),
+    )
 
 ]
