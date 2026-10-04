@@ -523,7 +523,13 @@ def run_logic_tests(service, fresh_service_factory=None):
 
             ok = all(checks.values())
             snapshot_digest = hashlib.sha256(
-                json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                json.dumps(
+                    snapshot,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ).encode("utf-8")
             ).hexdigest()[:16]
             source_digest = hashlib.sha256(
                 inspect.getsource(PersistenceService.self_knowledge_snapshot).encode("utf-8")
