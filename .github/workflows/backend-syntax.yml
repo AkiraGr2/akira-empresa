@@ -40,6 +40,10 @@ jobs:
         run: |
           python -m unittest persistence.test_consolidation_gate -v
 
+      - name: Test provider failover
+        run: |
+          python -m unittest test_provider_failover -v
+
       - name: Guard route ordering
         run: |
           python - <<'PY'
