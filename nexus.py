@@ -1846,7 +1846,7 @@ def v8_learning_create(request: Request, payload: dict):
     data = {k: v for k, v in payload.items() if k != "idempotency_key"}
     from persistence.core import PersistenceError, ValidationError
     try:
-        result = service.save_learning(data, actor=s["email"], idempotency_key=idem)
+        result = service.save_learning(data, actor=s["email"], idempotency_key=idem, owner_scope=s["owner_scope"])
     except ValidationError as e:
         return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
     except PersistenceError as e:
@@ -1868,7 +1868,7 @@ def v8_learning_list(request: Request, status: str = None, source: str = None,
     if source: filters["source"] = source
     if outcome: filters["outcome"] = outcome
     try:
-        rows = service.search_learning(filters, limit=limit, offset=offset)
+        rows = service.search_learning(filters, limit=limit, offset=offset, owner_scope=s["owner_scope"])
     except ValidationError as e:
         return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
     except PersistenceError as e:
@@ -1944,7 +1944,7 @@ def v8_learning_experience(request: Request, payload: dict):
             "status": "candidate",
             "evidence": [],
             "learning_context": learning_context,
-        }, actor=s["email"], idempotency_key=payload.get("idempotency_key"))
+        }, actor=s["email"], idempotency_key=payload.get("idempotency_key"), owner_scope=s["owner_scope"])
         return {
             "ok": True,
             "status": "candidate",
@@ -2042,7 +2042,7 @@ def v8_learning_absorption_diagnose(request: Request, payload: dict):
     try:
         if service is not None:
             # Este endpoint es sincrono; recall directo evita persistencia nueva.
-            memories = _recall_memories(service, message)
+            memories = _recall_memories(service, message, owner_scope=s["owner_scope"])
             conversation_id = payload.get("conversation_id")
             if isinstance(conversation_id, str):
                 conversation_context = _format_conversation_context(
@@ -2089,7 +2089,8 @@ def v8_learning_evidence_add(request: Request, learning_id: str, payload: dict):
         evidence = [evidence]
     try:
         rec = service.add_learning_evidence(
-            learning_id, evidence, payload.get("expected_version"), actor=s["email"]
+            learning_id, evidence, payload.get("expected_version"), actor=s["email"],
+            owner_scope=s["owner_scope"]
         )
     except NotFoundError:
         return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
@@ -2110,7 +2111,7 @@ def v8_learning_investigate(request: Request, learning_id: str, payload: dict):
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     from persistence.core import ConflictError, NotFoundError, PersistenceError, ValidationError
-    current = service.get_learning(learning_id)
+    current = service.get_learning(learning_id, owner_scope=s["owner_scope"])
     if current is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
     payload = payload if isinstance(payload, dict) else {}
     query = str(payload.get("query") or current.get("lesson") or "").strip()
@@ -2352,7 +2353,7 @@ def v8_learning_evaluate(request: Request, learning_id: str, payload: dict):
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     from persistence.core import ConflictError, NotFoundError, PersistenceError, ValidationError
-    current = service.get_learning(learning_id)
+    current = service.get_learning(learning_id, owner_scope=owner_scope)
     if current is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
     evidence = current.get("evidence") or []
     if not evidence: return JSONResponse({"ok": False, "reason": "evidence_required"}, status_code=400)
@@ -2400,6 +2401,7 @@ EVIDENCIA:
             {"verification_analysis": analysis},
             expected_version=expected_version,
             actor=s["email"],
+            owner_scope=s["owner_scope"],
         )
         return {
             "ok": True,
@@ -2436,7 +2438,8 @@ def v8_learning_status_update(request: Request, learning_id: str, payload: dict)
     status = str(payload.get("status") or "").strip()
     try:
         rec = service.update_learning_status(
-            learning_id, status, payload.get("expected_version"), actor=s["email"]
+            learning_id, status, payload.get("expected_version"), actor=s["email"],
+            owner_scope=s["owner_scope"]
         )
     except NotFoundError:
         return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
@@ -2451,7 +2454,7 @@ def v8_learning_status_update(request: Request, learning_id: str, payload: dict)
     graph = None
     if status == "consolidated":
         try:
-            graph = service.promote_learning_to_graph(learning_id, actor=s["email"])
+            graph = service.promote_learning_to_graph(learning_id, actor=s["email"], owner_scope=s["owner_scope"])
             rec = graph.get("learning") or rec
         except (ValidationError, NotFoundError) as e:
             return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
@@ -2700,6 +2703,7 @@ def v8_learning_selftest(request: Request):
             teach_marker,
             s["email"],
             context={"node_type": "concept", "label": teach_marker},
+            owner_scope=s["owner_scope"],
         )
         teach_id = taught.get("id")
         add(
@@ -2782,7 +2786,7 @@ def v8_learning_get(request: Request, learning_id: str):
     if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
-    rec = service.get_learning(learning_id)
+    rec = service.get_learning(learning_id, owner_scope=s["owner_scope"])
     if rec is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
     return {"ok": True, "learning": rec}
 
@@ -2794,7 +2798,7 @@ def v8_learning_reuse(request: Request, learning_id: str):
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     from persistence.core import NotFoundError, PersistenceError
     try:
-        rec = service.record_reuse(learning_id, actor=s["email"])
+        rec = service.record_reuse(learning_id, actor=s["email"], owner_scope=s["owner_scope"])
     except NotFoundError:
         return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
     except PersistenceError as e:
@@ -3031,7 +3035,7 @@ def _execute_cognitive_cycle(service, trigger, input_data, actor):
         interpretation = "learning_query"
     record("interpret", {"interpretation": interpretation, "keywords": keywords, "message_length": len(message)})
 
-    memories = _recall_memories(service, message, limit=5) if message else []
+    memories = _recall_memories(service, message, limit=5, owner_scope=s["owner_scope"]) if message else []
     answer = None; model_used = "none"
     if message:
         try:
@@ -5319,7 +5323,7 @@ def _memory_recency_score(created_at):
     except Exception:
         return 0.0
 
-def _recall_memories(service, msg, limit=5, include_semantic=True):
+def _recall_memories(service, msg, limit=5, include_semantic=True, owner_scope=None):
     if service is None:
         return []
     query = str(msg or "").strip()
@@ -5373,12 +5377,12 @@ def _recall_memories(service, msg, limit=5, include_semantic=True):
     lexical_rows = []
     for kw in keywords:
         try:
-            lexical_rows.extend(service.search_memory({"text_contains": kw}, limit=max(10, limit * 4)))
+            lexical_rows.extend(service.search_memory({"text_contains": kw}, limit=max(10, limit * 4), owner_scope=owner_scope))
         except Exception:
             continue
     if query:
         try:
-            lexical_rows.extend(service.search_memory({"text_contains": query[:200]}, limit=max(10, limit * 4)))
+            lexical_rows.extend(service.search_memory({"text_contains": query[:200]}, limit=max(10, limit * 4), owner_scope=owner_scope))
         except Exception:
             pass
     for memory in lexical_rows:
@@ -5399,7 +5403,7 @@ def _recall_memories(service, msg, limit=5, include_semantic=True):
                 limit=max(20, limit * 6),
             )
             for row in semantic_rows:
-                memory = service.get_memory(row.get("memory_id"))
+                memory = service.get_memory(row.get("memory_id"), owner_scope=owner_scope)
                 accept(memory, row.get("semantic_score") or 0.0)
         except Exception as e:
             print(f"[semantic-recall] fallo: {type(e).__name__}: {str(e)[:160]}")
@@ -5541,7 +5545,7 @@ def memory_search(request: Request, payload: dict):
     except Exception:
         limit = 5
     limit = max(1, min(20, limit))
-    results = _recall_memories(service, query, limit=limit)
+    results = _recall_memories(service, query, limit=limit, owner_scope=s["owner_scope"])
     out = [{
         "id": r.get("id"),
         "content": r.get("content"),
