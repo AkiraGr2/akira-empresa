@@ -929,4 +929,64 @@ MIGRATIONS = [
         """
     ),
 
+
+    (
+        "031_self_knowledge_runtime_capability",
+        """
+        INSERT INTO capabilities (
+            id, name, description, category, kind,
+            implementation_state, verification_state, availability_state,
+            maturity, cost_compatibility, dependencies, limitations,
+            verification_spec, provenance, schema_version, idempotency_key
+        )
+        VALUES (
+            'cap_self_knowledge_runtime',
+            'self_knowledge_runtime',
+            'Autoconocimiento operativo reproducible derivado de Identity Root, Capability Engine y registros autoritativos de agentes y tools.',
+            'knowledge',
+            'composite',
+            'implemented',
+            'unverified',
+            'available',
+            'experimental',
+            'free',
+            '[{"id":"IdentityRoot","kind":"authority","required":true},{"id":"CapabilityEngine","kind":"registry","required":true},{"id":"PersistenceService.self_knowledge_snapshot","kind":"service","required":true},{"id":"PostgreSQL.capabilities","kind":"storage","required":true},{"id":"PostgreSQL.agents","kind":"storage","required":true},{"id":"PostgreSQL.tools","kind":"storage","required":true},{"id":"owner_scope","kind":"security","required":true}]'::jsonb,
+            '["No demuestra por sí sola ejecución E2E de los agentes especializados.","El self-model histórico puede contener declaraciones heredadas; el snapshot runtime prioriza fuentes autoritativas.","La métrica memory_active_count es un conteo del ámbito solicitado y no expone contenido de memoria."]'::jsonb,
+            '{
+                "method":"selftest",
+                "test_key":"self_knowledge_runtime_contract",
+                "freshness_policy":{
+                    "mode":"on_change",
+                    "max_age_seconds":null,
+                    "invalidate_on":[
+                        "build_change",
+                        "identity_root_change",
+                        "capability_registry_change",
+                        "agent_registry_change",
+                        "tool_registry_change",
+                        "owner_scope_change"
+                    ]
+                }
+            }'::jsonb,
+            '{"source":"architecture_rebaseline_v13","created_by":"system"}'::jsonb,
+            'capability.v1',
+            'bootstrap:capability:self_knowledge_runtime:v1'
+        )
+        ON CONFLICT (name) DO UPDATE SET
+            description = EXCLUDED.description,
+            category = EXCLUDED.category,
+            kind = EXCLUDED.kind,
+            implementation_state = EXCLUDED.implementation_state,
+            availability_state = EXCLUDED.availability_state,
+            maturity = EXCLUDED.maturity,
+            cost_compatibility = EXCLUDED.cost_compatibility,
+            dependencies = EXCLUDED.dependencies,
+            limitations = EXCLUDED.limitations,
+            verification_spec = EXCLUDED.verification_spec,
+            provenance = EXCLUDED.provenance,
+            schema_version = EXCLUDED.schema_version,
+            updated_at = now()
+        """
+    ),
+
 ]
