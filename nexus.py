@@ -616,19 +616,29 @@ def resolve_is_owner(request, _data=None):
     s = get_session(request)
     return bool(s and s["is_owner"])
 
+
+def _require_owner(request):
+    """Protección uniforme: las superficies cognitivas persistentes son solo del propietario."""
+    s = get_session(request)
+    if not s:
+        return None, JSONResponse({"authenticated": False}, status_code=401)
+    if not s.get("is_owner"):
+        return None, JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
+    return s, None
+
 _TOOL_SEED = [
     {"name": "web_search", "description": "Busqueda web via DuckDuckGo.", "category": "web", "permissions": ["auth"], "inputs_schema": {"query": "str"}, "outputs_schema": {"result": "str"}, "limits_json": {"timeout_s": 10}, "risks": ["dependencia de red"],},
     {"name": "github_repo_read", "description": "Inspeccion de solo lectura de repositorios GitHub allow-listados.", "category": "code", "permissions": ["auth"], "inputs_schema": {"repo": "str", "path": "str", "paths": "list", "queries": "list", "max_files": "int"}, "outputs_schema": {"result": "dict"}, "limits_json": {"timeout_s": 8, "max_files": 24, "max_file_bytes": 40000, "max_total_bytes": 120000, "max_search_source_bytes": 800000, "max_search_matches_per_file": 8}, "risks": ["dependencia de red", "lectura de codigo"]},
-    {"name": "memory_save", "description": "Guarda una memoria persistente.", "category": "memory", "permissions": ["auth"], "inputs_schema": {"content": "str", "memory_type": "str"}, "outputs_schema": {"id": "str"}, "limits_json": {"max_content": 20000}, "risks": []},
-    {"name": "memory_search", "description": "Busca memorias por texto.", "category": "memory", "permissions": ["auth"], "inputs_schema": {"query": "str"}, "outputs_schema": {"results": "list"}, "limits_json": {"max_results": 20}, "risks": []},
-    {"name": "graph_create_node", "description": "Crea un nodo en el grafo neuronal.", "category": "knowledge", "permissions": ["auth"], "inputs_schema": {"node_type": "str", "label": "str"}, "outputs_schema": {"id": "str"}, "limits_json": {}, "risks": []},
-    {"name": "graph_create_edge", "description": "Crea una arista entre dos nodos del grafo. En Misiones requiere dos nodos previos.", "category": "knowledge", "permissions": ["auth"], "inputs_schema": {"from_node": "str", "to_node": "str", "relation_type": "str"}, "outputs_schema": {"id": "str"}, "limits_json": {}, "risks": ["puede crear ruido si se abusa"]},
-    {"name": "graph_related", "description": "Devuelve las relaciones de un nodo.", "category": "knowledge", "permissions": ["auth"], "inputs_schema": {"node_id": "str"}, "outputs_schema": {"edges": "list"}, "limits_json": {"max_edges": 200}, "risks": []},
-    {"name": "learning_save", "description": "Guarda un aprendizaje persistente.", "category": "knowledge", "permissions": ["auth"], "inputs_schema": {"source": "str", "event": "str", "lesson": "str"}, "outputs_schema": {"id": "str"}, "limits_json": {"max_lesson": 5000}, "risks": []},
-    {"name": "self_model_read", "description": "Lee el self-model persistente.", "category": "internal", "permissions": ["auth"], "inputs_schema": {}, "outputs_schema": {"self_model": "dict"}, "limits_json": {}, "risks": []},
+    {"name": "memory_save", "description": "Guarda una memoria persistente.", "category": "memory", "permissions": ["owner"], "inputs_schema": {"content": "str", "memory_type": "str"}, "outputs_schema": {"id": "str"}, "limits_json": {"max_content": 20000}, "risks": []},
+    {"name": "memory_search", "description": "Busca memorias por texto.", "category": "memory", "permissions": ["owner"], "inputs_schema": {"query": "str"}, "outputs_schema": {"results": "list"}, "limits_json": {"max_results": 20}, "risks": []},
+    {"name": "graph_create_node", "description": "Crea un nodo en el grafo neuronal.", "category": "knowledge", "permissions": ["owner"], "inputs_schema": {"node_type": "str", "label": "str"}, "outputs_schema": {"id": "str"}, "limits_json": {}, "risks": []},
+    {"name": "graph_create_edge", "description": "Crea una arista entre dos nodos del grafo. En Misiones requiere dos nodos previos.", "category": "knowledge", "permissions": ["owner"], "inputs_schema": {"from_node": "str", "to_node": "str", "relation_type": "str"}, "outputs_schema": {"id": "str"}, "limits_json": {}, "risks": ["puede crear ruido si se abusa"]},
+    {"name": "graph_related", "description": "Devuelve las relaciones de un nodo.", "category": "knowledge", "permissions": ["owner"], "inputs_schema": {"node_id": "str"}, "outputs_schema": {"edges": "list"}, "limits_json": {"max_edges": 200}, "risks": []},
+    {"name": "learning_save", "description": "Guarda un aprendizaje persistente.", "category": "knowledge", "permissions": ["owner"], "inputs_schema": {"source": "str", "event": "str", "lesson": "str"}, "outputs_schema": {"id": "str"}, "limits_json": {"max_lesson": 5000}, "risks": []},
+    {"name": "self_model_read", "description": "Lee el self-model persistente.", "category": "internal", "permissions": ["owner"], "inputs_schema": {}, "outputs_schema": {"self_model": "dict"}, "limits_json": {}, "risks": []},
     {"name": "extract_pdf", "description": "Extrae texto de un PDF (base64).", "category": "documents", "permissions": ["auth"], "inputs_schema": {"filename": "str", "content_base64": "str"}, "outputs_schema": {"text": "str"}, "limits_json": {"max_size_mb": 5}, "risks": ["parseo de archivo externo"]},
-    {"name": "image_generate", "description": "Genera URL de imagen via Pollinations.", "category": "image", "permissions": ["auth"], "inputs_schema": {"prompt": "str"}, "outputs_schema": {"image_url": "str"}, "limits_json": {"max_prompt": 500}, "risks": ["contenido generado por servicio externo"]},
-    {"name": "cognitive_cycle", "description": "Ejecuta un ciclo cognitivo completo de 9 etapas.", "category": "internal", "permissions": ["auth"], "inputs_schema": {"message": "str"}, "outputs_schema": {"cycle_id": "str"}, "limits_json": {"max_message": 1500}, "risks": ["consume cuota LLM"]},
+    {"name": "image_generate", "description": "Generacion de imagen experimental desactivada bajo politica 100% gratuita.", "category": "image", "permissions": ["owner"], "inputs_schema": {"prompt": "str"}, "outputs_schema": {"image_url": "str"}, "limits_json": {"max_prompt": 500}, "risks": ["contenido generado por servicio externo"], "status": "disabled"},
+    {"name": "cognitive_cycle", "description": "Ejecuta un ciclo cognitivo completo de 9 etapas.", "category": "internal", "permissions": ["owner"], "inputs_schema": {"message": "str"}, "outputs_schema": {"cycle_id": "str"}, "limits_json": {"max_message": 1500}, "risks": ["consume cuota LLM"]},
 ]
 
 _AGENT_SEED = [
@@ -1828,8 +1838,8 @@ def v8_self_update(request: Request, payload: dict):
 
 @app.post("/api/v8/learning")
 def v8_learning_create(request: Request, payload: dict):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     if not isinstance(payload, dict): return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
@@ -1849,8 +1859,8 @@ def v8_learning_create(request: Request, payload: dict):
 @app.get("/api/v8/learning")
 def v8_learning_list(request: Request, status: str = None, source: str = None,
                      outcome: str = None, limit: int = 50, offset: int = 0):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     from persistence.core import PersistenceError, ValidationError
@@ -1870,8 +1880,8 @@ def v8_learning_list(request: Request, status: str = None, source: str = None,
 
 @app.post("/api/v8/learning/experience")
 def v8_learning_experience(request: Request, payload: dict):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     if not isinstance(payload, dict): return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
@@ -1952,8 +1962,8 @@ def v8_learning_experience(request: Request, payload: dict):
 
 @app.post("/api/v8/learning/teach")
 def v8_learning_teach(request: Request, payload: dict):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     if not isinstance(payload, dict): return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
@@ -2780,8 +2790,8 @@ def v8_learning_selftest_result(request: Request):
 
 @app.get("/api/v8/learning/{learning_id}")
 def v8_learning_get(request: Request, learning_id: str):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     rec = service.get_learning(learning_id)
@@ -2790,8 +2800,8 @@ def v8_learning_get(request: Request, learning_id: str):
 
 @app.post("/api/v8/learning/{learning_id}/reuse")
 def v8_learning_reuse(request: Request, learning_id: str):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     from persistence.core import NotFoundError, PersistenceError
@@ -2807,13 +2817,14 @@ def v8_learning_reuse(request: Request, learning_id: str):
 
 @app.post("/api/v8/graph/node")
 def v8_graph_node_create(request: Request, payload: dict):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     if not isinstance(payload, dict): return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
     idem = payload.get("idempotency_key")
     data = {k: v for k, v in payload.items() if k != "idempotency_key"}
+    data["owner_scope"] = s.get("owner_scope") or "owner"
     from persistence.core import PersistenceError, ValidationError
     try:
         result = service.create_node(data, actor=s["email"], idempotency_key=idem)
@@ -2827,8 +2838,8 @@ def v8_graph_node_create(request: Request, payload: dict):
 
 @app.get("/api/v8/graph/node/{node_id}")
 def v8_graph_node_get(request: Request, node_id: str):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     rec = service.get_node(node_id)
@@ -2837,8 +2848,8 @@ def v8_graph_node_get(request: Request, node_id: str):
 
 @app.post("/api/v8/graph/edge")
 def v8_graph_edge_create(request: Request, payload: dict):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     if not isinstance(payload, dict): return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
@@ -2859,8 +2870,8 @@ def v8_graph_edge_create(request: Request, payload: dict):
 
 @app.get("/api/v8/graph/related/{node_id}")
 def v8_graph_related(request: Request, node_id: str, direction: str = "both", limit: int = 50):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     if direction not in ("from", "to", "both"):
@@ -3097,8 +3108,8 @@ def _execute_cognitive_cycle(service, trigger, input_data, actor):
     return {"cycle": final_cycle, "events": events, "answer": final_response, "learning_id": learning_id}
 @app.post("/api/v8/cognitive/cycle")
 def v8_cognitive_cycle(request: Request, payload: dict):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     if not isinstance(payload, dict): return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
@@ -3116,8 +3127,8 @@ def v8_cognitive_cycle(request: Request, payload: dict):
 
 @app.get("/api/v8/cognitive/cycle/{cycle_id}")
 def v8_cognitive_cycle_get(request: Request, cycle_id: str):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     data = service.get_cycle_with_events(cycle_id)
@@ -3126,8 +3137,8 @@ def v8_cognitive_cycle_get(request: Request, cycle_id: str):
 
 @app.get("/api/v8/cognitive/cycles")
 def v8_cognitive_cycles_list(request: Request, limit: int = 10):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     limit = max(1, min(int(limit), 50))
@@ -3248,10 +3259,10 @@ def _invoke_tool(service, tool_name, inputs, actor):
             "importance": 5,
             "confidence": 0.5,
             "source": "tool_registry",
-            "source_id": mission_id[:256],
-            "source_reference": f"mission:{mission_id}"[:256],
+            "source_id": "tool_registry",
+            "source_reference": f"tool:{actor}"[:256],
             "privacy_level": "PRIVATE",
-            "tags": ["mission_memory", str(mission_id)[:64]],
+            "tags": ["mission_memory"],
         }, actor=actor)
         _index_memory_embedding(service, r["record"], actor=actor)
         return {
@@ -3318,11 +3329,10 @@ def _invoke_tool(service, tool_name, inputs, actor):
             return None, {"type": type(e).__name__, "message": "pdf parse fallo"}
         return {"text": text[:50000], "length": len(text)}, None
     if tool_name == "image_generate":
-        prompt = str(inputs.get("prompt") or "").strip()
-        if not prompt: return None, {"type": "ValidationError", "message": "prompt requerido"}
-        safe = prompt[:500].replace(" ", "%20")
-        return {"image_url": f"https://image.pollinations.ai/prompt/{safe}?width=1024&height=1024&nologo=true",
-                "prompt": prompt[:500]}, None
+        return None, {
+            "type": "CapabilityDisabled",
+            "message": "La generacion de imagen experimental esta desactivada bajo la politica 100% gratuita.",
+        }
     if tool_name == "cognitive_cycle":
         msg = str(inputs.get("message") or "").strip()
         result = _execute_cognitive_cycle(service, "tool_invoke", {"message": msg}, actor=actor)
@@ -3366,8 +3376,8 @@ def v8_tools_invoke(request: Request, name: str, payload: dict):
 
 @app.get("/api/v8/agents")
 def v8_agents_list(request: Request, role: str = None, status: str = None):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     agents = service.list_agents(role=role, status=status)
@@ -3375,8 +3385,8 @@ def v8_agents_list(request: Request, role: str = None, status: str = None):
 
 @app.get("/api/v8/agents/{name}")
 def v8_agents_get(request: Request, name: str):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     agent = service.get_agent_by_name(name)
@@ -3387,8 +3397,8 @@ def v8_agents_get(request: Request, name: str):
 @app.get("/api/v8/tasks")
 def v8_tasks_list(request: Request, agent_name: str = None, status: str = None,
                   mission_id: str = None, limit: int = 20):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     limit = max(1, min(int(limit), 100))
@@ -3397,8 +3407,8 @@ def v8_tasks_list(request: Request, agent_name: str = None, status: str = None,
 
 @app.get("/api/v8/tasks/{task_id}")
 def v8_tasks_get(request: Request, task_id: str):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     task = service.get_task(task_id)
@@ -3407,8 +3417,8 @@ def v8_tasks_get(request: Request, task_id: str):
 
 @app.post("/api/v8/agents/{name}/task")
 def v8_agents_run_task(request: Request, name: str, payload: dict):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     if not isinstance(payload, dict): return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
@@ -3484,8 +3494,8 @@ def v8_agents_run_task(request: Request, name: str, payload: dict):
 
 @app.get("/api/v8/graph/overview")
 def v8_graph_overview(request: Request, limit_nodes: int = 500, limit_edges: int = 1000):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     try:
@@ -3557,8 +3567,8 @@ def v8_graph_overview(request: Request, limit_nodes: int = 500, limit_edges: int
 # ============================================================
 @app.post("/api/v8/missions")
 def v8_create_mission(request: Request, payload: dict):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     if not isinstance(payload, dict): return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
@@ -3659,8 +3669,8 @@ def v8_create_mission(request: Request, payload: dict):
 @app.get("/api/v8/missions")
 def v8_list_missions(request: Request, status: str = None, flow_type: str = None,
                      limit: int = 20, offset: int = 0):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     try:
@@ -3677,8 +3687,8 @@ def v8_list_missions(request: Request, status: str = None, flow_type: str = None
 
 @app.get("/api/v8/missions/recent")
 def v8_recent_missions(request: Request, limit: int = 10):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     try:
@@ -3733,8 +3743,8 @@ def _check_progress_coherent(steps_total, tasks_by_status, tasks_count):
 
 @app.get("/api/v8/missions/{mission_id}/progress")
 def v8_mission_progress(request: Request, mission_id: str):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
 
@@ -4253,14 +4263,14 @@ def v8_memory_semantic_selftest(request: Request):
 
 @app.get("/api/v8/missions/selftest")
 def v8_missions_selftest(request: Request):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     return {"ok": True, "selftest": _selftest_missions_run()}
 
 @app.get("/api/v8/missions/{mission_id}/diagnose")
 def v8_mission_diagnose(request: Request, mission_id: str):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
 
@@ -4384,8 +4394,8 @@ def v8_mission_diagnose(request: Request, mission_id: str):
 
 @app.get("/api/v8/missions/{mission_id}")
 def v8_get_mission(request: Request, mission_id: str):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     m = service.get_mission(mission_id)
@@ -4394,8 +4404,8 @@ def v8_get_mission(request: Request, mission_id: str):
 
 @app.post("/api/v8/missions/{mission_id}/approve")
 def v8_approve_mission(request: Request, mission_id: str):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
 
@@ -4428,8 +4438,8 @@ def v8_approve_mission(request: Request, mission_id: str):
 
 @app.post("/api/v8/missions/{mission_id}/reject")
 async def v8_reject_mission(request: Request, mission_id: str):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
 
@@ -4470,8 +4480,8 @@ async def v8_reject_mission(request: Request, mission_id: str):
 
 @app.post("/api/v8/missions/{mission_id}/execute")
 async def v8_execute_mission(request: Request, mission_id: str):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
 
@@ -4525,8 +4535,8 @@ async def v8_execute_mission(request: Request, mission_id: str):
 
 @app.post("/api/v8/missions/{mission_id}/cancel")
 def v8_cancel_mission(request: Request, mission_id: str):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
 
