@@ -497,7 +497,15 @@ class PersistenceService:
             with self.repo.transaction() as tx:
                 stored, created = tx.create("capability_verifications", record)
                 if not created:
-                    return {"outcome": "already_synced", "record": stored}
+                    current = tx.get("capabilities", capability_id)
+                    if current is None:
+                        raise VerificationError("capability no encontrada al sincronizar verification")
+                    return {
+                        "outcome": "already_synced",
+                        "record": stored,
+                        "capability": current,
+                        "effective_state": derive_effective_state(current),
+                    }
                 changes = {
                     "verification_state": after["verification_state"],
                     "availability_state": after["availability_state"],
