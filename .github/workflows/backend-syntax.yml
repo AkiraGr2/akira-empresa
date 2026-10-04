@@ -44,6 +44,10 @@ jobs:
         run: |
           python -m unittest test_provider_failover -v
 
+      - name: Test identity root contract
+        run: |
+          python -m unittest test_identity_root_contract -v
+
       - name: Test authentication and authorization contract
         run: |
           python -m unittest test_authorization_contract -v

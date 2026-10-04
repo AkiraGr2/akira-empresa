@@ -70,12 +70,13 @@ class ProviderFailoverRegressionTests(unittest.TestCase):
 
     def test_fastapi_uses_lifespan_instead_of_deprecated_startup_event(self):
         self.assertIn("from contextlib import asynccontextmanager", self.source)
-        self.assertIn('app=FastAPI(title="Akira V7.3 Consciente", lifespan=_akira_lifespan)', self.source)
+        self.assertIn("app=FastAPI(title=PUBLIC_IDENTITY, lifespan=_akira_lifespan)", self.source)
+        self.assertIn("from identity_root import IDENTITY_ROOT_VERSION, PUBLIC_IDENTITY, get_identity_root", self.source)
         self.assertIn("async def _akira_lifespan(_app):", self.source)
         self.assertNotIn('@app.on_event("startup")', self.source)
         self.assertLess(
             self.source.index("async def _akira_lifespan(_app):"),
-            self.source.index('app=FastAPI(title="Akira V7.3 Consciente", lifespan=_akira_lifespan)'),
+            self.source.index("app=FastAPI(title=PUBLIC_IDENTITY, lifespan=_akira_lifespan)"),
         )
 
     def test_runtime_capability_contract_is_explicit_and_free_only(self):
