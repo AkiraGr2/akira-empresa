@@ -3212,6 +3212,8 @@ def v8_tools_get(request: Request, name: str):
     return {"ok": True, "tool": tool}
 
 def _invoke_tool(service, tool_name, inputs, actor, owner_scope=None):
+    if tool_name in {"memory_save", "memory_search"} and owner_scope is None:
+        return None, {"type": "OwnerRequiredError", "message": "las tools de memoria persistente requieren owner_scope"}
     if tool_name == "github_repo_read":
         repo = str(inputs.get("repo") or "").strip()
         paths = inputs.get("paths")
@@ -3474,7 +3476,7 @@ def v8_agents_run_task(request: Request, name: str, payload: dict):
     if error is None:
         try:
             service.complete_task(task_id, outputs=outputs or {}, duration_ms=duration_ms,
-                                  memory_used=memory_used, actor=s["email"])
+                                  memory_used=memory_used, actor=s["email"], owner_scope=s["owner_scope"])
         except Exception as e:
             print(f"[agent] complete_task fallo: {e}")
         return {"ok": True, "agent_name": name, "task_id": task_id, "tool_name": tool_name,
