@@ -34,6 +34,20 @@ class LearningPersistentContractTests(unittest.TestCase):
             fn_source,
         )
 
+    def test_runtime_selftest_persists_capability_verification(self):
+        source = Path("persistence/selftest.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        fn = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "t_learning_persistent_capability"
+        )
+        fn_source = ast.get_source_segment(source, fn) or ""
+        self.assertIn("record_capability_verification", fn_source)
+        self.assertIn('"test_key": "learning_persistent_contract"', fn_source)
+        self.assertIn('"result": "pass" if ok else "fail"', fn_source)
+        self.assertIn('effective_state") == "verified"', fn_source)
+
     def test_canonical_capability_metadata(self):
         source = Path("persistence/capability_catalog.py").read_text(encoding="utf-8")
         self.assertIn('"name": "learning_persistent"', source)

@@ -429,10 +429,12 @@ def run_logic_tests(service, fresh_service_factory=None):
         rows = service.list_capabilities(filters={"name": "learning_persistent"}, limit=1)
         if not rows:
             return _res(name, False, "capacidad learning_persistent no fue registrada por el bootstrap")
+        capability = rows[0]
         scope_a = "selftest:learning-persistent:A"
         scope_b = "selftest:learning-persistent:B"
         created_ids_local = []
         checks = {}
+        cleanup_failures = []
         idem = "selftest:learning_persistent:v1:" + uuid.uuid4().hex
         try:
             a = service.save_learning({
@@ -543,14 +545,93 @@ def run_logic_tests(service, fresh_service_factory=None):
             checks["consolidated_with_supported_analysis"] = consolidated.get("status") == "consolidated"
             checks["reuse_persisted"] = reused.get("reuse_count") == 1 and reused.get("last_reused_at") is not None
 
-            ok = all(checks.values())
-            detail = "checks=" + str(checks)
             for learning_id in created_ids_local:
                 try:
-                    service.repo.delete("learning_events", learning_id)
-                except Exception:
-                    pass
-            return _res(name, ok, detail)
+                    deleted = service.repo.delete("learning_events", learning_id)
+                    if service.repo.exists("learning_events", learning_id):
+                        cleanup_failures.append({
+                            "learning_id": learning_id,
+                            "delete_returned": bool(deleted),
+                        })
+                except Exception as cleanup_exc:
+                    cleanup_failures.append({
+                        "learning_id": learning_id,
+                        "error_type": type(cleanup_exc).__name__,
+                    })
+            checks["cleanup"] = not cleanup_failures
+
+            ok = all(checks.values())
+            source_digest = hashlib.sha256(
+                inspect.getsource(service.__class__).encode("utf-8")
+                + inspect.getsource(validate_learning_event).encode("utf-8")
+            ).hexdigest()[:16]
+            verification_event = {
+                "event_type": "verification",
+                "test_key": "learning_persistent_contract",
+                "test_version": "v1",
+                "result": "pass" if ok else "fail",
+                "evidence": [{
+                    "type": "selftest",
+                    "title": "Learning persistent lifecycle and ownership",
+                    "reference": "selftest:learning_persistent:v1",
+                    "summary": (
+                        "Persistencia, owner_scope, reinicio suave, idempotencia, "
+                        "evidencia, transiciones, gate de consolidacion, reuse y cleanup."
+                        if ok else
+                        "El contrato de learning persistente no supero todos los controles."
+                    ),
+                    "hash": source_digest,
+                }],
+                "environment": {
+                    "runtime": "selftest",
+                    "learning_schema": LEARNING_SCHEMA_VERSION,
+                },
+                "dependency_snapshot": [
+                    {
+                        "kind": "service",
+                        "id": "PersistenceService.learning",
+                        "version": source_digest,
+                    },
+                    {
+                        "kind": "storage",
+                        "id": "PostgreSQL.learning_events",
+                        "version": "runtime",
+                    },
+                    {
+                        "kind": "security",
+                        "id": "owner_scope",
+                        "version": "runtime",
+                    },
+                ],
+                "runtime_version": "selftest",
+                "build_ref": source_digest,
+                "actor": "selftest",
+                "executor": "selftest",
+                "evaluator": "system",
+                "error": None if ok else {
+                    "checks": checks,
+                    "cleanup_failures": cleanup_failures,
+                },
+            }
+            verification = service.record_capability_verification(
+                capability["id"],
+                verification_event,
+                actor="selftest",
+                idempotency_key="selftest:learning_persistent:verification:v1:" + source_digest,
+            )
+            verification_ok = (
+                verification.get("effective_state") == "verified"
+                if ok else
+                verification.get("effective_state") in ("failed", "stale")
+            )
+            detail = (
+                f"resultado={verification.get('outcome')}; "
+                f"effective_state={verification.get('effective_state')}; "
+                f"checks={checks}"
+            )
+            if cleanup_failures:
+                detail += f"; cleanup_failures={cleanup_failures}"
+            return _res(name, bool(ok and verification_ok), detail)
         except Exception as exc:
             for learning_id in created_ids_local:
                 try:
