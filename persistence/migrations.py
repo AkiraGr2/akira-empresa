@@ -653,4 +653,17 @@ MIGRATIONS = [
         WHERE id = 'akira_primary'
         """
     ),
+    (
+        "027_identity_root_db_guard",
+        """
+        ALTER TABLE identity_root
+        ADD CONSTRAINT identity_root_singleton CHECK (id = 'akira_primary');
+        CREATE RULE identity_root_no_update
+        AS ON UPDATE TO identity_root
+        DO INSTEAD NOTHING;
+        CREATE RULE identity_root_no_delete
+        AS ON DELETE TO identity_root
+        DO INSTEAD NOTHING
+        """
+    ),
 ]

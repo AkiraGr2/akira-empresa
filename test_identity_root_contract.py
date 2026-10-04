@@ -18,6 +18,11 @@ class IdentityRootContractTests(unittest.TestCase):
         self.assertIn("MappingProxyType", self.root)
         self.assertIn('"name": PUBLIC_IDENTITY', self.root)
         self.assertIn('"creator": "Jhon Grimm"', self.root)
+        migrations = Path("persistence/migrations.py").read_text(encoding="utf-8")
+        self.assertIn('"027_identity_root_db_guard"', migrations)
+        self.assertIn("identity_root_singleton", migrations)
+        self.assertIn("identity_root_no_update", migrations)
+        self.assertIn("identity_root_no_delete", migrations)
 
     def test_self_model_cannot_mutate_identity(self):
         self.assertIn('_SELF_MODEL_PROTECTED_FIELDS = frozenset({"identity"})', self.core)
