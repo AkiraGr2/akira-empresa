@@ -575,4 +575,12 @@ MIGRATIONS = [
         CREATE POLICY "akira_deny_anon_authenticated_delete" ON public.tools AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false)
         """
     ),
+
+    (
+        "021_learning_owner_scope",
+        """
+        ALTER TABLE learning_events ADD COLUMN owner_scope TEXT NOT NULL DEFAULT 'owner';
+        CREATE INDEX learning_events_owner_scope_idx ON learning_events (owner_scope, status, created_at DESC)
+        """
+    ),
 ]
