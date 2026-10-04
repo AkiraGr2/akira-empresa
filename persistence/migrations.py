@@ -695,7 +695,8 @@ MIGRATIONS = [
             FOREIGN KEY (last_verification_id)
             REFERENCES capability_verifications(id)
             ON DELETE RESTRICT;
-        ALTER TABLE public.capabilities, public.capability_verifications ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE public.capabilities ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE public.capability_verifications ENABLE ROW LEVEL SECURITY;
         REVOKE ALL ON TABLE public.capabilities, public.capability_verifications FROM anon, authenticated;
         CREATE POLICY "akira_deny_anon_authenticated_select" ON public.capabilities AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
         CREATE POLICY "akira_deny_anon_authenticated_insert" ON public.capabilities AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
