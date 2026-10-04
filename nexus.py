@@ -1216,16 +1216,16 @@ def _clear_mission_cancelled(mission_id):
     with _mission_cancelled_lock:
         _mission_cancelled_ids.discard(mission_id)
 
-def _fail_running_tasks_of_mission(service, mission_id, reason):
+def _fail_running_tasks_of_mission(service, mission_id, reason, owner_scope=None):
     try:
-        pending = service.list_tasks(mission_id=mission_id, status="pending", limit=50)
+        pending = service.list_tasks(mission_id=mission_id, status="pending", limit=50, owner_scope=owner_scope)
         for t in pending:
             try:
-                service.fail_task(t["id"], {"type": "cascade_fail", "message": reason}, actor="orchestrator")
+                service.fail_task(t["id"], {"type": "cascade_fail", "message": reason}, actor="orchestrator", owner_scope=owner_scope)
             except Exception: pass
     except Exception: pass
     try:
-        running = service.list_tasks(mission_id=mission_id, status="running", limit=50)
+        running = service.list_tasks(mission_id=mission_id, status="running", limit=50, owner_scope=owner_scope)
         for t in running:
             try:
                 service.fail_task(t["id"], {"type": "cascade_fail", "message": reason}, actor="orchestrator")
@@ -1263,7 +1263,7 @@ def _autonomous_learning_output_excerpt(outputs, max_chars=1800):
         return "[output_unavailable]"
 
 
-def _capture_autonomous_mission_learning(service, mission_id, actor, outcome, mission_result):
+def _capture_autonomous_mission_learning(service, mission_id, actor, outcome, mission_result, owner_scope=None):
     """Extract a supervised learning candidate from a real mission outcome."""
     try:
         prompt = (
@@ -1322,7 +1322,7 @@ def _capture_autonomous_mission_learning(service, mission_id, actor, outcome, mi
             "status": "candidate",
             "evidence": [],
             "learning_context": learning_context,
-        }, actor=actor, idempotency_key=f"autonomous_experience:{mission_id}:{outcome}")
+        }, actor=actor, idempotency_key=f"autonomous_experience:{mission_id}:{outcome}", owner_scope=owner_scope)
         return {
             "learning_id": lr["record"]["id"],
             "lesson": lesson,
@@ -1334,18 +1334,18 @@ def _capture_autonomous_mission_learning(service, mission_id, actor, outcome, mi
         return None
 
 
-def _fail_mission_with_autonomous_learning(service, mission_id, actor, failure_result):
+def _fail_mission_with_autonomous_learning(service, mission_id, actor, failure_result, owner_scope=None):
     """Persist a terminal mission failure, then extract one supervised learning candidate."""
     persisted = False
     try:
-        service.fail_mission(mission_id, failure_result, actor="orchestrator")
+        service.fail_mission(mission_id, failure_result, actor="orchestrator", owner=actor)
         persisted = True
     except Exception as e:
         print(f"[learning] mission failure persistence failed: {type(e).__name__}: {str(e)[:200]}")
     if not persisted:
         return None
     autonomous_learning = _capture_autonomous_mission_learning(
-        service, mission_id, actor, "failure", failure_result
+        service, mission_id, actor, "failure", failure_result, owner_scope=owner_scope
     )
     _set_mission_runtime(
         mission_id, "autonomous_learning_candidate",
@@ -1354,7 +1354,7 @@ def _fail_mission_with_autonomous_learning(service, mission_id, actor, failure_r
     )
     return autonomous_learning
 
-def _run_mission_sync(mission_id, actor):
+def _run_mission_sync(mission_id, actor, owner_scope=None):
     global _mission_active_count
     _set_mission_runtime(mission_id, "orchestrator_entered", actor=actor)
     try:
@@ -1363,7 +1363,7 @@ def _run_mission_sync(mission_id, actor):
             _set_mission_runtime(mission_id, "persistence_unavailable")
             return
         _set_mission_runtime(mission_id, "persistence_ready")
-        m = service.get_mission(mission_id)
+        m = service.get_mission(mission_id, owner=actor)
         if m is None:
             _set_mission_runtime(mission_id, "mission_not_found")
             return
@@ -1411,7 +1411,7 @@ def _run_mission_sync(mission_id, actor):
 
             elapsed_s = time.time() - mission_start
             if elapsed_s > MISSION_MAX_DURATION_S:
-                _fail_running_tasks_of_mission(service, mission_id, "mission_timeout")
+                _fail_running_tasks_of_mission(service, mission_id, "mission_timeout", owner_scope=owner_scope)
                 _fail_mission_with_autonomous_learning(
                     service, mission_id, actor,
                     {"type": "mission_timeout", "elapsed_s": int(elapsed_s),
@@ -1450,7 +1450,8 @@ def _run_mission_sync(mission_id, actor):
             try:
                 create_result = service.create_task(
                     agent_name, tool_name, inputs=inputs,
-                    model=None, mission_id=mission_id, actor="orchestrator"
+                    model=None, mission_id=mission_id, actor="orchestrator",
+                    owner_scope=owner_scope, owner=actor
                 )
                 task_id = create_result["record"]["id"]
                 task_ids.append(task_id)
@@ -1465,7 +1466,7 @@ def _run_mission_sync(mission_id, actor):
 
             _set_mission_runtime(mission_id, "starting_task", step=order, task_id=task_id)
             try:
-                service.start_task(task_id, actor="orchestrator")
+                service.start_task(task_id, actor="orchestrator", owner_scope=owner_scope)
                 _set_mission_runtime(mission_id, "task_started", step=order, task_id=task_id)
             except Exception as e:
                 _fail_mission_with_autonomous_learning(
@@ -1480,7 +1481,7 @@ def _run_mission_sync(mission_id, actor):
             tool_t0 = time.time()
             outputs, error = None, None
             try:
-                outputs, error = _invoke_tool(service, tool_name, inputs, actor=f"agent:{agent_name}")
+                outputs, error = _invoke_tool(service, tool_name, inputs, actor=f"agent:{agent_name}", owner_scope=owner_scope)
             except Exception as e:
                 error = {"type": type(e).__name__, "message": str(e)[:300]}
             duration_ms = int((time.time() - tool_t0) * 1000)
@@ -1509,10 +1510,10 @@ def _run_mission_sync(mission_id, actor):
                 )
                 db_t1 = time.time()
                 try:
-                    service.fail_task(task_id, error, duration_ms=duration_ms, actor="orchestrator")
+                    service.fail_task(task_id, error, duration_ms=duration_ms, actor="orchestrator", owner_scope=owner_scope)
                 except Exception: pass
                 total_db_ms += int((time.time() - db_t1) * 1000)
-                _fail_running_tasks_of_mission(service, mission_id, "prior_step_failed")
+                _fail_running_tasks_of_mission(service, mission_id, "prior_step_failed", owner_scope=owner_scope)
                 _fail_mission_with_autonomous_learning(
                     service, mission_id, actor,
                     {"type": "step_failed", "step": order,
@@ -1536,7 +1537,7 @@ def _run_mission_sync(mission_id, actor):
             db_t2 = time.time()
             try:
                 service.complete_task(task_id, outputs=outputs or {},
-                    duration_ms=duration_ms, actor="orchestrator")
+                    duration_ms=duration_ms, actor="orchestrator", owner_scope=owner_scope)
             except Exception as e:
                 total_db_ms += int((time.time() - db_t2) * 1000)
                 _set_mission_runtime(
@@ -1544,7 +1545,7 @@ def _run_mission_sync(mission_id, actor):
                     step=order, task_id=task_id,
                     error_type=type(e).__name__, error=str(e)[:200],
                 )
-                _fail_running_tasks_of_mission(service, mission_id, "task_completion_persist_failed")
+                _fail_running_tasks_of_mission(service, mission_id, "task_completion_persist_failed", owner_scope=owner_scope)
                 _fail_mission_with_autonomous_learning(
                     service, mission_id, actor,
                     {"type": "task_completion_persist_failed", "step": order,
@@ -1588,10 +1589,10 @@ def _run_mission_sync(mission_id, actor):
                         "overhead_ms": overhead_ms,
                     },
                 },
-                actor="orchestrator"
+                actor="orchestrator", owner=actor
             )
             autonomous_learning = _capture_autonomous_mission_learning(
-                service, mission_id, actor, "success",
+                service, mission_id, actor, "success", owner_scope=owner_scope,
                 {
                     "steps_executed": len(step_reports),
                     "steps": step_reports,
@@ -3387,7 +3388,7 @@ def v8_agents_get(request: Request, name: str):
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     agent = service.get_agent_by_name(name)
     if agent is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
-    tasks = service.list_tasks(agent_name=name, limit=20)
+    tasks = service.list_tasks(agent_name=name, limit=20, owner_scope=s["owner_scope"])
     return {"ok": True, "agent": agent, "recent_tasks": tasks}
 
 @app.get("/api/v8/tasks")
@@ -3398,7 +3399,7 @@ def v8_tasks_list(request: Request, agent_name: str = None, status: str = None,
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     limit = max(1, min(int(limit), 100))
-    tasks = service.list_tasks(agent_name=agent_name, status=status, mission_id=mission_id, limit=limit)
+    tasks = service.list_tasks(agent_name=agent_name, status=status, mission_id=mission_id, limit=limit, owner_scope=s["owner_scope"])
     return {"ok": True, "tasks": tasks, "count": len(tasks)}
 
 @app.get("/api/v8/tasks/{task_id}")
@@ -3407,7 +3408,7 @@ def v8_tasks_get(request: Request, task_id: str):
     if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
-    task = service.get_task(task_id)
+    task = service.get_task(task_id, owner_scope=s["owner_scope"])
     if task is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
     return {"ok": True, "task": task}
 
@@ -3438,7 +3439,7 @@ def v8_agents_run_task(request: Request, name: str, payload: dict):
     try:
         create_result = service.create_task(name, tool_name, inputs=inputs,
                                             model=model, mission_id=mission_id,
-                                            actor=s["email"])
+                                            actor=s["email"], owner_scope=s["owner_scope"], owner=s["email"])
     except NotFoundError as e:
         return JSONResponse({"ok": False, "reason": "not_found", "detail": str(e)[:200]}, status_code=404)
     except ValidationError as e:
@@ -3450,13 +3451,13 @@ def v8_agents_run_task(request: Request, name: str, payload: dict):
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
     task_id = create_result["record"]["id"]
     try:
-        service.start_task(task_id, actor=s["email"])
+        service.start_task(task_id, actor=s["email"], owner_scope=s["owner_scope"])
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "start_failed", "detail": str(e)[:200]}, status_code=500)
     t0 = time.time()
     outputs, error = None, None
     try:
-        outputs, error = _invoke_tool(service, tool_name, inputs, actor=f"agent:{name}")
+        outputs, error = _invoke_tool(service, tool_name, inputs, actor=f"agent:{name}", owner_scope=s["owner_scope"])
     except Exception as e:
         error = {"type": type(e).__name__, "message": str(e)[:200]}
     duration_ms = int((time.time() - t0) * 1000)
@@ -3480,7 +3481,7 @@ def v8_agents_run_task(request: Request, name: str, payload: dict):
     else:
         try:
             service.fail_task(task_id, error, duration_ms=duration_ms,
-                              memory_used=memory_used, actor=s["email"])
+                              memory_used=memory_used, actor=s["email"], owner_scope=s["owner_scope"])
         except Exception as e:
             print(f"[agent] fail_task fallo: {e}")
         return JSONResponse({"ok": False, "agent_name": name, "task_id": task_id,
@@ -3600,7 +3601,7 @@ def v8_create_mission(request: Request, payload: dict):
     try:
         created = service.create_mission({
             "title": title, "objective": objective, "priority": priority, "flow_type": "generic",
-        }, actor=s["email"])
+        }, actor=s["email"], owner=s["email"])
     except ValidationError as e:
         return JSONResponse({"ok": False, "reason": "validation", "detail": str(e)[:200]}, status_code=400)
     except PersistenceError as e:
@@ -3614,7 +3615,7 @@ def v8_create_mission(request: Request, payload: dict):
 
     try:
         _set_mission_planning_runtime(mission_id, "transitioning_to_planning")
-        rec = service.update_mission_status(mission_id, "planning", version, actor=s["email"])
+        rec = service.update_mission_status(mission_id, "planning", version, actor=s["email"], owner=s["email"])
         version = rec["version"]
     except Exception as e:
         try:
@@ -3639,7 +3640,7 @@ def v8_create_mission(request: Request, payload: dict):
 
     try:
         _set_mission_planning_runtime(mission_id, "saving_plan", model=model_used)
-        updated = service.update_mission_plan(mission_id, plan, version, actor=s["email"])
+        updated = service.update_mission_plan(mission_id, plan, version, actor=s["email"], owner=s["email"])
         version = updated["version"]
     except ConflictError:
         return JSONResponse({"ok": False, "reason": "conflict", "mission_id": mission_id}, status_code=409)
@@ -3651,7 +3652,7 @@ def v8_create_mission(request: Request, payload: dict):
 
     try:
         _set_mission_planning_runtime(mission_id, "transitioning_to_waiting_approval")
-        final = service.update_mission_status(mission_id, "waiting_approval", version, actor=s["email"])
+        final = service.update_mission_status(mission_id, "waiting_approval", version, actor=s["email"], owner=s["email"])
     except Exception as e:
         try:
             service.fail_mission(mission_id, {"type": "approval_transition_failed", "message": str(e)[:200]}, actor=s["email"])
@@ -3745,7 +3746,7 @@ def v8_mission_progress(request: Request, mission_id: str):
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
 
-    m = service.get_mission(mission_id)
+    m = service.get_mission(mission_id, owner=s["email"])
     if m is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
 
     plan = m.get("plan") or {}
@@ -3753,7 +3754,7 @@ def v8_mission_progress(request: Request, mission_id: str):
     steps_total = len(steps) if isinstance(steps, list) else 0
 
     try:
-        tasks = service.list_tasks(mission_id=mission_id, limit=100)
+        tasks = service.list_tasks(mission_id=mission_id, limit=100, owner_scope=s["owner_scope"])
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
 
@@ -4272,7 +4273,7 @@ def v8_mission_diagnose(request: Request, mission_id: str):
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
 
-    m = service.get_mission(mission_id)
+    m = service.get_mission(mission_id, owner=s["email"])
     if m is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
 
     plan = m.get("plan") or {}
@@ -4418,7 +4419,7 @@ def v8_approve_mission(request: Request, mission_id: str):
                                    ValidationError)
     try:
         updated = service.update_mission_status(mission_id, "running", m["version"],
-                                                actor=s["email"])
+                                                actor=s["email"], owner=s["email"])
     except NotFoundError:
         return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
     except ValidationError as e:
@@ -4460,7 +4461,7 @@ async def v8_reject_mission(request: Request, mission_id: str):
             return JSONResponse({"ok": False, "reason": "invalid_status",
                                  "current_status": m.get("status"),
                                  "expected": "waiting_approval"}, status_code=409)
-        updated = await asyncio.to_thread(service.cancel_mission, mission_id, reason, s["email"])
+        updated = await asyncio.to_thread(service.cancel_mission, mission_id, reason, s["email"], s["email"])
     except NotFoundError:
         return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
     except ValidationError as e:
@@ -4510,7 +4511,7 @@ async def v8_execute_mission(request: Request, mission_id: str):
         _mission_active_count += 1
 
     try:
-        task = asyncio.create_task(asyncio.to_thread(_run_mission_sync, mission_id, s["email"]))
+        task = asyncio.create_task(asyncio.to_thread(_run_mission_sync, mission_id, s["email"], s["owner_scope"]))
         _set_mission_runtime(mission_id, "orchestrator_scheduled", active_count=_mission_active_count)
         task.add_done_callback(
             lambda t: _set_mission_runtime(
@@ -4552,7 +4553,7 @@ def v8_cancel_mission(request: Request, mission_id: str):
 
     try:
         paused = service.update_mission_status(mission_id, "paused", m["version"],
-                                                actor=s["email"])
+                                                actor=s["email"], owner=s["email"])
     except ValidationError as e:
         _clear_mission_cancelled(mission_id)
         return JSONResponse({"ok": False, "reason": "invalid_transition_paused",
@@ -4574,7 +4575,7 @@ def v8_cancel_mission(request: Request, mission_id: str):
 
     try:
         cancelled = service.update_mission_status(mission_id, "cancelled", paused["version"],
-                                                   actor=s["email"])
+                                                   actor=s["email"], owner=s["email"])
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "cancelled_transition_failed",
                              "current_status": "paused",
