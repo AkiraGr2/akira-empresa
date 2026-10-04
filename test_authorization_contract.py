@@ -220,5 +220,25 @@ class AuthorizationContractTests(unittest.TestCase):
 
 
 
+    def test_mission_task_routes_propagate_owner_scope(self):
+        mission_names = [
+            "v8_create_mission", "v8_list_missions", "v8_recent_missions",
+            "v8_mission_progress", "v8_missions_selftest", "v8_mission_diagnose",
+            "v8_get_mission", "v8_approve_mission", "v8_reject_mission",
+            "v8_execute_mission", "v8_cancel_mission",
+        ]
+        task_names = [
+            "v8_agents_get", "v8_tasks_list", "v8_tasks_get",
+            "v8_agents_run_task",
+        ]
+        for name in mission_names:
+            source = self._function_source(name)
+            self.assertTrue('s["email"]' in source or 's["owner_scope"]' in source, name)
+        for name in task_names:
+            source = self._function_source(name)
+            self.assertIn('s["owner_scope"]', source, name)
+
+
+
 if __name__ == "__main__":
     unittest.main()
