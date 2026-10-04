@@ -2050,7 +2050,7 @@ def v8_learning_absorption_diagnose(request: Request, payload: dict):
             conversation_id = payload.get("conversation_id")
             if isinstance(conversation_id, str):
                 conversation_context = _format_conversation_context(
-                    service, conversation_id, message
+                    service, conversation_id, message, owner=s["email"]
                 )
     except Exception:
         memories = []
@@ -5872,7 +5872,7 @@ async def chat(request: Request):
         )
         recall_block = _format_recall_block(memories)
         conversation_context = await asyncio.to_thread(
-            _format_conversation_context, service, conversation_id, msg
+            _format_conversation_context, service, conversation_id, msg, session["email"]
         )
 
         github_context = ""
