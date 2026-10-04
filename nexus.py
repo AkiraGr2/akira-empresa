@@ -1923,7 +1923,7 @@ def v8_learning_experience(request: Request, payload: dict):
     supplied_nodes = payload.get("knowledge_nodes") if isinstance(payload.get("knowledge_nodes"), list) else []
     learning_context["knowledge_node_ids"] = [str(x).strip() for x in supplied_nodes if str(x).strip()][:20]
     if mission_id:
-        mission = service.get_mission(mission_id)
+        mission = service.get_mission(mission_id, owner=s["email"])
         if isinstance(mission, dict) and isinstance(mission.get("result"), dict):
             steps = mission["result"].get("steps") or mission["result"].get("completed_steps") or []
             if isinstance(steps, list):
@@ -3620,7 +3620,7 @@ def v8_create_mission(request: Request, payload: dict):
         version = rec["version"]
     except Exception as e:
         try:
-            service.fail_mission(mission_id, {"type": "planning_transition_failed", "message": str(e)[:200]}, actor=s["email"])
+            service.fail_mission(mission_id, {"type": "planning_transition_failed", "message": str(e)[:200]}, actor=s["email"], owner=s["email"])
         except Exception: pass
         return JSONResponse({"ok": False, "reason": "planning_failed", "mission_id": mission_id,
                              "error_type": type(e).__name__}, status_code=500)
@@ -3634,7 +3634,7 @@ def v8_create_mission(request: Request, payload: dict):
     if err or not plan:
         _set_mission_planning_runtime(mission_id, "planning_failed", reason=err or "unknown", model=model_used)
         try:
-            service.fail_mission(mission_id, {"type": "plan_failed", "reason": err or "unknown", "model": model_used}, actor=s["email"])
+            service.fail_mission(mission_id, {"type": "plan_failed", "reason": err or "unknown", "model": model_used}, actor=s["email"], owner=s["email"])
         except Exception: pass
         return JSONResponse({"ok": False, "reason": "plan_failed", "detail": err,
                              "mission_id": mission_id, "model": model_used}, status_code=422)
@@ -3647,7 +3647,7 @@ def v8_create_mission(request: Request, payload: dict):
         return JSONResponse({"ok": False, "reason": "conflict", "mission_id": mission_id}, status_code=409)
     except Exception as e:
         try:
-            service.fail_mission(mission_id, {"type": "plan_save_failed", "message": str(e)[:200]}, actor=s["email"])
+            service.fail_mission(mission_id, {"type": "plan_save_failed", "message": str(e)[:200]}, actor=s["email"], owner=s["email"])
         except Exception: pass
         return JSONResponse({"ok": False, "reason": "plan_save_failed", "mission_id": mission_id}, status_code=500)
 
@@ -3656,7 +3656,7 @@ def v8_create_mission(request: Request, payload: dict):
         final = service.update_mission_status(mission_id, "waiting_approval", version, actor=s["email"], owner=s["email"])
     except Exception as e:
         try:
-            service.fail_mission(mission_id, {"type": "approval_transition_failed", "message": str(e)[:200]}, actor=s["email"])
+            service.fail_mission(mission_id, {"type": "approval_transition_failed", "message": str(e)[:200]}, actor=s["email"], owner=s["email"])
         except Exception: pass
         return JSONResponse({"ok": False, "reason": "approval_transition_failed",
                              "mission_id": mission_id}, status_code=500)
@@ -4157,7 +4157,7 @@ def _selftest_missions_run():
                 plan = m.get("plan") or {}
                 steps = plan.get("steps") or []
                 steps_total = len(steps) if isinstance(steps, list) else 0
-                tasks = service.list_tasks(mission_id=m["id"], limit=100)
+                tasks = service.list_tasks(mission_id=m["id"], limit=100, owner_scope=s["owner_scope"])
                 by_status = {}
                 for t in tasks:
                     st = t.get("status") or "unknown"
@@ -4282,7 +4282,7 @@ def v8_mission_diagnose(request: Request, mission_id: str):
     steps_total = len(steps) if isinstance(steps, list) else 0
 
     try:
-        tasks = service.list_tasks(mission_id=mission_id, limit=100)
+        tasks = service.list_tasks(mission_id=mission_id, limit=100, owner_scope=s["owner_scope"])
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
 
@@ -4398,7 +4398,7 @@ def v8_get_mission(request: Request, mission_id: str):
     if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
-    m = service.get_mission(mission_id)
+    m = service.get_mission(mission_id, owner=s["email"])
     if m is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
     return {"ok": True, "mission": m}
 
