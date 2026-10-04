@@ -108,6 +108,10 @@ jobs:
         run: |
           python -m unittest test_specialized_agents_contract -v
 
+      - name: Test specialized mission wiring contract
+        run: |
+          python -m unittest test_specialized_agent_mission_wiring -v
+
       - name: Test mission route ownership contract
         run: |
           python -m unittest test_authorization_contract -v
