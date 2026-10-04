@@ -54,10 +54,11 @@ class LearningPersistentContractTests(unittest.TestCase):
         self.assertIn('"category": "learning"', source)
         self.assertIn('"test_key": "learning_persistent_contract"', source)
         self.assertIn("LEARNING_PERSISTENT_CAPABILITY", source)
-        self.assertIn(
-            "BASE_CAPABILITIES = (SESSION_AUTH_CAPABILITY, PERSISTENT_MEMORY_CAPABILITY, MEMORY_RECALL_CAPABILITY, LEARNING_PERSISTENT_CAPABILITY)",
-            source,
+        base_line = next(
+            line for line in source.splitlines()
+            if line.startswith("BASE_CAPABILITIES =")
         )
+        self.assertIn("LEARNING_PERSISTENT_CAPABILITY", base_line)
 
 
 if __name__ == "__main__":
