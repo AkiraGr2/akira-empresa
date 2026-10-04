@@ -78,6 +78,20 @@ class ProviderFailoverRegressionTests(unittest.TestCase):
             self.source.index('app=FastAPI(title="Akira V7.3 Consciente", lifespan=_akira_lifespan)'),
         )
 
+    def test_runtime_capability_contract_is_explicit_and_free_only(self):
+        self.assertIn('@app.get("/api/v8/runtime/capabilities")', self.source)
+        self.assertIn('"free_only_policy": True', self.source)
+        self.assertIn('"paid_api_enabled": False', self.source)
+        self.assertIn('"status": "experimental"', self.source)
+        self.assertIn('"status": "not_implemented"', self.source)
+
+    def test_media_endpoints_require_session_and_have_independent_rate_limit(self):
+        for fn in ("extract_file", "generate_image"):
+            source = self._function_source(fn)
+            self.assertIn("session = get_session(request)", source)
+            self.assertIn("auth_required", source)
+            self.assertIn("check_media_rate_limit", source)
+
 
 if __name__ == "__main__":
     unittest.main()

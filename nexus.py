@@ -15,6 +15,7 @@
 #   (Akira no puede afirmar que verifico/confirmo estado de Supabase, backend, memoria, etc).
 # Sub-fase 1.6 (2026-10-04): failover multi-proveedor endurecido + rotacion de credenciales.
 # Sub-fase 1.7: migración del ciclo startup de FastAPI a lifespan, sin cambiar comportamiento.
+# Sub-fase 1.8: contrato de capacidades + endurecimiento de endpoints multimedia en modo gratuito.
 import os, json, datetime, threading, time, hashlib, base64, math, asyncio, random, re
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -503,6 +504,14 @@ class CORSFixMiddleware:
 app.add_middleware(CORSFixMiddleware)
 
 rate_store=defaultdict(list)
+media_rate_store=defaultdict(list)
+
+def check_media_rate_limit(ip,is_owner=False):
+    if is_owner: return True
+    now=time.time()
+    media_rate_store[ip]=[t for t in media_rate_store[ip] if now-t<3600]
+    if len(media_rate_store[ip])>=10: return False
+    media_rate_store[ip].append(now); return True
 def check_rate_limit(ip,is_owner=False):
     if is_owner: return True
     now=time.time()
@@ -1637,6 +1646,40 @@ async def runtime_contract():
         "learning_selftest_route": _route_registered("/api/v8/learning/selftest"),
         "semantic_selftest_route": _route_registered("/api/v8/memory/semantic-selftest"),
         "semantic_reindex_route": _route_registered("/api/v8/memory/semantic-reindex"),
+    }
+
+@app.get("/api/v8/runtime/capabilities")
+async def runtime_capabilities():
+    """Contrato de capacidades reales, sin secretos ni promesas de cuota gratuita."""
+    try:
+        inventory = provider_key_inventory()
+        chat_ready = any(inventory.values())
+    except Exception:
+        chat_ready = False
+    return {
+        "ok": True,
+        "free_only_policy": True,
+        "paid_api_enabled": False,
+        "chat": {
+            "status": "ready" if chat_ready else "unconfigured",
+            "architecture": "multi_provider_fallback",
+        },
+        "pdf": {
+            "status": "ready" if _fitz is not None else "unavailable",
+            "mode": "local",
+            "engine": "PyMuPDF",
+            "max_size_mb": 5,
+        },
+        "image": {
+            "status": "experimental",
+            "mode": "external_url",
+            "provider": "Pollinations",
+            "free_guaranteed": False,
+        },
+        "video": {
+            "status": "not_implemented",
+            "free_guaranteed": False,
+        },
     }
 
 @app.get("/health")
@@ -6208,6 +6251,12 @@ except Exception:
 
 @app.post("/api/extract-file")
 async def extract_file(request: Request):
+    session = get_session(request)
+    if not session:
+        return JSONResponse({"ok": False, "reason": "auth_required"}, status_code=401)
+    ip = request.client.host if request.client else "0.0.0.0"
+    if not check_media_rate_limit(ip, session["is_owner"]):
+        return JSONResponse({"ok": False, "reason": "media_rate_limit"}, status_code=429)
     try:
         data = await request.json()
     except Exception:
@@ -6233,11 +6282,27 @@ async def extract_file(request: Request):
 
 @app.post("/api/generate/image")
 async def generate_image(request: Request):
+    session = get_session(request)
+    if not session:
+        return JSONResponse({"ok": False, "reason": "auth_required"}, status_code=401)
+    ip = request.client.host if request.client else "0.0.0.0"
+    if not check_media_rate_limit(ip, session["is_owner"]):
+        return JSONResponse({"ok": False, "reason": "media_rate_limit"}, status_code=429)
     try:
         data = await request.json()
-        prompt = data.get("prompt","")[:500]
-        safe = prompt.replace(" ", "%20")
-        return {"image_url": f"https://image.pollinations.ai/prompt/{safe}?width=1024&height=1024&nologo=true", "prompt": prompt}
+        prompt = str(data.get("prompt") or "").strip()[:500]
+        if not prompt:
+            return JSONResponse({"ok": False, "reason": "prompt_required"}, status_code=400)
+        from urllib.parse import quote
+        safe = quote(prompt, safe="")
+        return {
+            "ok": True,
+            "image_url": f"https://image.pollinations.ai/prompt/{safe}?width=1024&height=1024&nologo=true",
+            "prompt": prompt,
+            "provider": "pollinations",
+            "experimental": True,
+            "free_guaranteed": False,
+        }
     except Exception as e:
         return JSONResponse({"error": str(e)[:200]}, status_code=500)
 
