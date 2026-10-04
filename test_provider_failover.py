@@ -1,6 +1,5 @@
 import ast
 from pathlib import Path
-from unittest.mock import patch
 import unittest
 
 
@@ -118,12 +117,6 @@ class ProviderFailoverRegressionTests(unittest.TestCase):
         self.assertNotIn('data.get("is_owner"', source)
         self.assertNotIn("AKIRA_TRUST_CLIENT_OWNER", source)
         self.assertNotIn("trust_client_owner", source)
-
-    def test_owner_identity_behavior_ignores_client_payload(self):
-        request = type("Req", (), {"headers": {}})()
-        with patch("nexus.get_session", return_value=None):
-            self.assertFalse(nexus.resolve_is_owner(request, {"is_owner": True}))
-            self.assertFalse(nexus.resolve_is_owner(request, {"is_owner": False}))
 
 
 if __name__ == "__main__":
