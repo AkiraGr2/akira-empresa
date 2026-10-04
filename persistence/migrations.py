@@ -908,4 +908,25 @@ MIGRATIONS = [
         """
     ),
 
+
+    (
+        "030_identity_root_rls_hardening",
+        """
+        ALTER TABLE public.identity_root ENABLE ROW LEVEL SECURITY;
+        REVOKE ALL ON TABLE public.identity_root FROM anon, authenticated;
+        CREATE POLICY "akira_deny_anon_authenticated_select"
+            ON public.identity_root AS RESTRICTIVE FOR SELECT TO anon, authenticated
+            USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert"
+            ON public.identity_root AS RESTRICTIVE FOR INSERT TO anon, authenticated
+            WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update"
+            ON public.identity_root AS RESTRICTIVE FOR UPDATE TO anon, authenticated
+            USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete"
+            ON public.identity_root AS RESTRICTIVE FOR DELETE TO anon, authenticated
+            USING (false)
+        """
+    ),
+
 ]
