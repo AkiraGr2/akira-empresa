@@ -129,6 +129,17 @@ def _scope_matches(record_scope, owner_scope):
     stored = str(record_scope or "").strip()
     return bool(requested) and (stored == requested or stored == LEGACY_OWNER_SCOPE)
 
+def _task_scope_filters(owner_scope):
+    if owner_scope is None:
+        return {}
+    scope = str(owner_scope).strip()
+    if not scope:
+        raise ValidationError("owner_scope requerido")
+    scopes = [scope]
+    if scope != LEGACY_OWNER_SCOPE:
+        scopes.append(LEGACY_OWNER_SCOPE)
+    return {"owner_scope__in": scopes}
+
 class PersistenceService:
     def __init__(self, repo):
         self.repo = repo
@@ -1708,7 +1719,11 @@ class PersistenceService:
         except Exception as e:
             self._audit_failure_generic(actor, "agent.task.create", "agent_tasks", None, e)
             raise StorageError(type(e).__name__) from e
-        verified = self.repo.get("agent_tasks", stored["id"])
+        verification_filters = {"id": stored["id"]}
+        verification_filters.update(_task_scope_filters(owner_scope))
+        verification_rows = self.repo.search("agent_tasks", verification_filters, limit=1,
+                                             offset=0, order_by="created_at", descending=True)
+        verified = verification_rows[0] if verification_rows else None
         if verified is None: raise VerificationError("task no confirmada")
         return {"outcome": "created" if created else "already_synced", "record": verified}
 
@@ -1788,15 +1803,16 @@ class PersistenceService:
         return updated
 
     def get_task(self, task_id, owner_scope=None):
-        """Obtiene una tarea y la acota a su owner_scope cuando se indica."""
+        """Obtiene una tarea y aplica el owner_scope en consulta cuando es posible."""
         rec = self.repo.get("agent_tasks", task_id)
         if rec is not None:
             return rec if owner_scope is None or _scope_matches(rec.get("owner_scope"), owner_scope) else None
         try:
-            rows = self.repo.search("agent_tasks", {}, limit=300)
-            for r in rows:
-                if r.get("id") == task_id and _scope_matches(r.get("owner_scope"), owner_scope):
-                    return r
+            filters = {"id": task_id}
+            filters.update(_task_scope_filters(owner_scope))
+            rows = self.repo.search("agent_tasks", filters, limit=1, offset=0,
+                                    order_by="created_at", descending=True)
+            return rows[0] if rows else None
         except Exception:
             pass
         return None

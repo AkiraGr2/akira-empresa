@@ -32,6 +32,7 @@ class FakeTx:
 
 class FakeRepo:
     def __init__(self):
+        self.search_calls = []
         self.rows = {
             "missions": [
                 {"id": "m_a", "created_by": "a@example.test", "status": "waiting_approval", "version": 2,
@@ -62,9 +63,15 @@ class FakeRepo:
         return None
 
     def search(self, entity, filters=None, limit=50, offset=0, order_by="created_at", descending=True):
+        filters = dict(filters or {})
+        self.search_calls.append((entity, dict(filters)))
         rows = [dict(r) for r in self.rows.get(entity, [])]
-        for key, value in (filters or {}).items():
-            rows = [r for r in rows if r.get(key) == value]
+        for key, value in filters.items():
+            if key.endswith("__in"):
+                field = key[:-4]
+                rows = [r for r in rows if r.get(field) in value]
+            else:
+                rows = [r for r in rows if r.get(key) == value]
         return rows[offset:offset + limit]
 
     def count(self, entity, filters=None):
@@ -100,6 +107,53 @@ class MissionTaskOwnershipTests(unittest.TestCase):
         self.assertIsNone(self.service.get_task("t_a", owner_scope="scope:B"))
         with self.assertRaises(NotFoundError):
             self.service.start_task("t_a", actor="b@example.test", owner_scope="scope:B")
+
+    def test_get_task_fallback_is_query_scoped(self):
+        repo = FakeRepo()
+        original_get = repo.get
+
+        def get_without_task_reads(entity, record_id):
+            if entity == "agent_tasks":
+                return None
+            return original_get(entity, record_id)
+
+        repo.get = get_without_task_reads
+        service = PersistenceService(repo)
+
+        self.assertIsNotNone(service.get_task("t_a", owner_scope="scope:A"))
+        self.assertIsNone(service.get_task("t_a", owner_scope="scope:B"))
+
+        task_queries = [filters for entity, filters in repo.search_calls if entity == "agent_tasks"]
+        self.assertIn(
+            {"id": "t_a", "owner_scope__in": ["scope:A", "owner"]},
+            task_queries,
+        )
+        self.assertIn(
+            {"id": "t_a", "owner_scope__in": ["scope:B", "owner"]},
+            task_queries,
+        )
+
+    def test_create_task_verification_readback_is_scoped(self):
+        repo = FakeRepo()
+        service = PersistenceService(repo)
+
+        result = service.create_task(
+            "researcher",
+            "web_search",
+            inputs={"query": "test"},
+            actor="scope:A",
+            owner_scope="scope:A",
+        )
+
+        self.assertTrue(result["record"]["id"].startswith("task_"))
+        task_queries = [filters for entity, filters in repo.search_calls if entity == "agent_tasks"]
+        self.assertIn(
+            {
+                "id": result["record"]["id"],
+                "owner_scope__in": ["scope:A", "owner"],
+            },
+            task_queries,
+        )
 
     def test_task_creation_requires_owned_mission(self):
         with self.assertRaises(NotFoundError):
