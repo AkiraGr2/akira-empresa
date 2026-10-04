@@ -476,7 +476,7 @@ def run_logic_tests(service, fresh_service_factory=None):
     def t_capability_persistence():
         name = "TEST_CAPABILITY_PERSISTENCE"
         key = "selftest:capability:v1"
-        r = service.create_capability({
+        payload = {
             "name": "selftest_capability",
             "description": "Fixture estable del Capability Engine.",
             "category": "general",
@@ -498,69 +498,66 @@ def run_logic_tests(service, fresh_service_factory=None):
                 },
             },
             "provenance": {"source": "selftest", "created_by": "selftest"},
-        }, actor="selftest", idempotency_key=key)
+        }
+        try:
+            r = service.create_capability(payload, actor="selftest", idempotency_key=key)
+        except Exception as e:
+            return _res(name, False, f"create_capability fallo: {type(e).__name__}: {str(e)[:300]}")
         cap = r["record"]
-        vr = service.record_capability_verification(
-            cap["id"],
-            {
-                "event_type": "verification",
-                "test_key": "capability_persistence",
-                "test_version": "v1",
-                "result": "pass",
-                "evidence": [{
-                    "type": "selftest",
-                    "title": "Capability persistence roundtrip",
-                    "reference": "selftest:capability:v1",
-                    "summary": "Capability y verification persistidas y releidas.",
-                    "hash": "",
-                }],
-                "environment": {"runtime": "selftest"},
-                "dependency_snapshot": [],
-                "runtime_version": "selftest",
-                "build_ref": "selftest",
-                "actor": "selftest",
-                "executor": "selftest",
-                "evaluator": "system",
-            },
-            actor="selftest",
-            idempotency_key="selftest:capability:verification:v1",
-        )
+        evidence = [{
+            "type": "selftest",
+            "title": "Capability persistence roundtrip",
+            "reference": "selftest:capability:v1",
+            "summary": "Capability y verification persistidas y releidas.",
+            "hash": "",
+        }]
+        event = {
+            "event_type": "verification",
+            "test_key": "capability_persistence",
+            "test_version": "v1",
+            "result": "pass",
+            "evidence": evidence,
+            "environment": {"runtime": "selftest"},
+            "dependency_snapshot": [],
+            "runtime_version": "selftest",
+            "build_ref": "selftest",
+            "actor": "selftest",
+            "executor": "selftest",
+            "evaluator": "system",
+        }
+        try:
+            vr = service.record_capability_verification(
+                cap["id"], event, actor="selftest",
+                idempotency_key="selftest:capability:verification:v1",
+            )
+        except Exception as e:
+            return _res(
+                name,
+                False,
+                f"record_capability_verification fallo: {type(e).__name__}: {str(e)[:300]}",
+            )
         cap2 = service.get_capability(cap["id"])
         rows = service.get_capability_verifications(cap["id"], limit=10)
-        repeat = service.record_capability_verification(
-            cap["id"],
-            {
-                "event_type": "verification",
-                "test_key": "capability_persistence",
-                "test_version": "v1",
-                "result": "pass",
-                "evidence": [{
-                    "type": "selftest",
-                    "title": "Capability persistence roundtrip",
-                    "reference": "selftest:capability:v1",
-                    "summary": "Capability y verification persistidas y releidas.",
-                    "hash": "",
-                }],
-                "environment": {"runtime": "selftest"},
-                "dependency_snapshot": [],
-                "runtime_version": "selftest",
-                "build_ref": "selftest",
-                "actor": "selftest",
-                "executor": "selftest",
-                "evaluator": "system",
-            },
-            actor="selftest",
-            idempotency_key="selftest:capability:verification:v1",
-        )
+        try:
+            repeat = service.record_capability_verification(
+                cap["id"], event, actor="selftest",
+                idempotency_key="selftest:capability:verification:v1",
+            )
+        except Exception as e:
+            return _res(name, False, f"reintento idempotente fallo: {type(e).__name__}: {str(e)[:300]}")
         ok = (
             cap2 is not None
             and cap2["verification_state"] == "verified"
-            and service.get_capability_verifications(cap["id"], limit=10)
+            and bool(rows)
             and rows[0]["state_after"]["verification_state"] == "verified"
             and repeat["outcome"] == "already_synced"
             and vr["effective_state"] == "verified"
         )
-        return _res(name, bool(ok), f"verificationes persistidas={len(rows)}; repeticion={repeat['outcome']}")
+        detail = (
+            f"verificationes persistidas={len(rows)}; "
+            f"repeticion={repeat['outcome']}; estado={cap2 and cap2.get('verification_state')}"
+        )
+        return _res(name, ok, detail)
 
     def t_capability_verification_append_only():
         name = "TEST_CAPABILITY_VERIFICATION_APPEND_ONLY"
