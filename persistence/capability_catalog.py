@@ -149,4 +149,55 @@ MEMORY_RECALL_CAPABILITY = {
     },
 }
 
-BASE_CAPABILITIES = (SESSION_AUTH_CAPABILITY, PERSISTENT_MEMORY_CAPABILITY, MEMORY_RECALL_CAPABILITY)
+
+LEARNING_PERSISTENT_CAPABILITY = {
+    "name": "learning_persistent",
+    "description": "Persistencia verificable del aprendizaje de AKIRA: candidatos, evidencia, evaluacion, transiciones de estado, reutilizacion y aislamiento por owner_scope.",
+    "category": "learning",
+    "kind": "composite",
+    "implementation_state": "implemented",
+    "verification_state": "unverified",
+    "availability_state": "available",
+    "maturity": "experimental",
+    "cost_compatibility": "conditional",
+    "dependencies": [
+        {"kind": "service", "id": "PersistenceService.save_learning", "required": True},
+        {"kind": "service", "id": "PersistenceService.add_learning_evidence", "required": True},
+        {"kind": "service", "id": "PersistenceService.update_learning_status", "required": True},
+        {"kind": "service", "id": "PersistenceService.record_reuse", "required": True},
+        {"kind": "storage", "id": "PostgreSQL.learning_events", "required": True},
+        {"kind": "security", "id": "owner_scope", "required": True},
+    ],
+    "limitations": [
+        "La evaluacion factual puede depender de proveedores externos; la persistencia y las reglas de estado no dependen de ellos.",
+        "Los registros historicos learning.v1 y learning.v2 se conservan como compatibilidad; las nuevas escrituras usan learning.v3.",
+        "La consolidacion exige evidencia y una evaluacion supported con confianza >= 0.70.",
+        "La materializacion posterior en memoria y grafo es una integracion separada y debe verificarse por su propio contrato.",
+    ],
+    "verification_spec": {
+        "method": "selftest",
+        "test_key": "learning_persistent_contract",
+        "freshness_policy": {
+            "mode": "on_change",
+            "max_age_seconds": None,
+            "invalidate_on": [
+                "build_change",
+                "dependency_change",
+                "learning_schema_change",
+                "ownership_change",
+            ],
+        },
+    },
+    "provenance": {
+        "source": "architecture_rebaseline",
+        "created_by": "system",
+        "basis": [
+            "persistence/core.py",
+            "persistence/service.py",
+            "persistence/selftest.py",
+            "nexus.py",
+        ],
+    },
+}
+
+BASE_CAPABILITIES = (SESSION_AUTH_CAPABILITY, PERSISTENT_MEMORY_CAPABILITY, MEMORY_RECALL_CAPABILITY, LEARNING_PERSISTENT_CAPABILITY)
