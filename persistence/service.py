@@ -287,9 +287,12 @@ class PersistenceService:
         current = self.repo.get("self_model", SELF_MODEL_PRIMARY_ID)
         return None if current is None else current.get("version")
 
-    def save_learning(self, data, actor="system", idempotency_key=None):
+    def save_learning(self, data, actor="system", idempotency_key=None, owner_scope=None):
         fields = validate_learning_event(data)
-        record = dict(fields, id=new_id("learn"), schema_version=LEARNING_SCHEMA_VERSION)
+        scope = str(owner_scope).strip() if owner_scope is not None else LEGACY_OWNER_SCOPE
+        if not scope:
+            raise ValidationError("owner_scope requerido")
+        record = dict(fields, owner_scope=scope, id=new_id("learn"), schema_version=LEARNING_SCHEMA_VERSION)
         if idempotency_key is not None:
             if not isinstance(idempotency_key, str) or not 0 < len(idempotency_key.strip()) <= 200:
                 raise ValidationError("idempotency_key debe ser texto de 1 a 200 caracteres")
@@ -309,12 +312,12 @@ class PersistenceService:
         verified = self.repo.get("learning_events", stored["id"])
         if verified is None: raise VerificationError("learning no confirmado")
         if created:
-            try: self.auto_connect_learning(verified["id"], actor=actor)
+            try: self.auto_connect_learning(verified["id"], actor=actor, owner_scope=verified.get("owner_scope"))
             except Exception as e: print(f"[auto-connect] learning fallo: {type(e).__name__}: {str(e)[:200]}")
         return {"outcome": "created" if created else "already_synced", "record": verified}
 
-    def update_learning(self, learning_id, changes, expected_version=None, actor="system"):
-        current = self.get_learning(learning_id)
+    def update_learning(self, learning_id, changes, expected_version=None, actor="system", owner_scope=None):
+        current = self.get_learning(learning_id, owner_scope=owner_scope)
         if current is None:
             raise NotFoundError(learning_id)
         clean = validate_learning_event(changes, partial=True)
@@ -332,13 +335,13 @@ class PersistenceService:
             raise
         except Exception as e:
             raise StorageError(type(e).__name__) from e
-        verified = self.repo.get("learning_events", learning_id)
+        verified = self.get_learning(learning_id, owner_scope=owner_scope)
         if verified is None or verified["version"] != expected_version + 1:
             raise VerificationError("learning update no confirmado")
         return verified
 
-    def add_learning_evidence(self, learning_id, evidence, expected_version=None, actor="system"):
-        current = self.get_learning(learning_id)
+    def add_learning_evidence(self, learning_id, evidence, expected_version=None, actor="system", owner_scope=None):
+        current = self.get_learning(learning_id, owner_scope=owner_scope)
         if current is None:
             raise NotFoundError(learning_id)
         clean = validate_learning_event({"evidence": evidence}, partial=True)
@@ -350,10 +353,11 @@ class PersistenceService:
         if expected_version is None:
             expected_version = current["version"]
         return self.update_learning(learning_id, {"evidence": merged},
-                                     expected_version=expected_version, actor=actor)
+                                     expected_version=expected_version, actor=actor,
+                                     owner_scope=owner_scope)
 
-    def update_learning_status(self, learning_id, status, expected_version=None, actor="system"):
-        current = self.get_learning(learning_id)
+    def update_learning_status(self, learning_id, status, expected_version=None, actor="system", owner_scope=None):
+        current = self.get_learning(learning_id, owner_scope=owner_scope)
         if current is None:
             raise NotFoundError(learning_id)
         clean = validate_learning_event({"status": status}, partial=True)
@@ -403,14 +407,14 @@ class PersistenceService:
             raise
         except Exception as e:
             raise StorageError(type(e).__name__) from e
-        verified = self.repo.get("learning_events", learning_id)
+        verified = self.get_learning(learning_id, owner_scope=owner_scope)
         if verified is None or verified.get("status") != clean["status"]:
             raise VerificationError("learning status no confirmado")
         return verified
 
-    def promote_learning_to_graph(self, learning_id, actor="learning-promotion"):
+    def promote_learning_to_graph(self, learning_id, actor="learning-promotion", owner_scope=None):
         """Materializa un aprendizaje verificado/consolidado en memoria + grafo de forma idempotente."""
-        learning = self.get_learning(learning_id)
+        learning = self.get_learning(learning_id, owner_scope=owner_scope)
         if learning is None:
             raise NotFoundError(learning_id)
 
@@ -432,6 +436,7 @@ class PersistenceService:
                 "status": status,
             }
 
+        effective_scope = str(owner_scope or learning.get("owner_scope") or LEGACY_OWNER_SCOPE).strip()
         source = str(learning.get("source") or "learning").strip()[:64]
         outcome = str(learning.get("outcome") or "unknown").strip()[:32]
         lesson = str(learning.get("lesson") or "").strip()
@@ -468,6 +473,7 @@ class PersistenceService:
                 "source_reference": str(context.get("source_reference") or source)[:500],
                 "tags": tags,
                 "privacy_level": str(context.get("privacy_level") or "PRIVATE"),
+                "owner_scope": effective_scope,
             }, actor=actor, idempotency_key=f"learning_promoted_mem:{learning_id}")
             memory = memory_result["record"]
         else:
@@ -531,6 +537,7 @@ class PersistenceService:
                 "weight": 1.0,
                 "confidence": float(learning.get("confidence") or 0.5),
                 "privacy_level": str(context.get("privacy_level") or "PRIVATE"),
+                "owner_scope": effective_scope,
             }, actor=actor, idempotency_key=f"learning_graph_node:{learning_id}")
             node = node_result["record"]
         else:
@@ -548,6 +555,7 @@ class PersistenceService:
                     {"node_metadata": metadata, "tags": tags},
                     expected_version=node["version"],
                     actor=actor,
+                    owner_scope=effective_scope,
                 )
                 node = updated_node
             except (ConflictError, ValidationError):
@@ -627,7 +635,7 @@ class PersistenceService:
                     "weight": max(0.0, min(1.0, rel["weight"])),
                     "confidence": max(0.0, min(1.0, rel["confidence"])),
                     "origin": rel["origin"],
-                }, actor=actor, idempotency_key=idem)
+                }, actor=actor, idempotency_key=idem, owner_scope=effective_scope)
                 edge = edge_result["record"]
                 edges.append(edge)
                 canonical_relationships.append({
@@ -682,6 +690,7 @@ class PersistenceService:
                 changes,
                 expected_version=learning["version"],
                 actor=actor,
+                owner_scope=effective_scope,
             )
 
         try:
@@ -722,7 +731,7 @@ class PersistenceService:
             node_id = str(value).strip()
             if not node_id:
                 continue
-            node = self.get_node(node_id)
+            node = self.get_node(node_id, owner_scope=effective_scope)
             metadata = (
                 node.get("node_metadata")
                 if isinstance(node, dict) and isinstance(node.get("node_metadata"), dict)
@@ -808,22 +817,22 @@ class PersistenceService:
             "archived_edges": archived_edges,
         }
 
-    def get_learning(self, learning_id):
-        """Fix Neon+pooler: WHERE id a veces falla. Fallback a search sin filtro."""
+    def get_learning(self, learning_id, owner_scope=None):
+        """Lee un aprendizaje respetando el ámbito del propietario cuando se suministra."""
         rec = self.repo.get("learning_events", learning_id)
         if rec is not None:
-            return rec
+            return rec if _scope_matches(rec.get("owner_scope"), owner_scope) else None
         try:
             rows = self.repo.search("learning_events", {}, limit=300)
             for r in rows:
-                if r.get("id") == learning_id:
+                if r.get("id") == learning_id and _scope_matches(r.get("owner_scope"), owner_scope):
                     return r
         except Exception:
             pass
         return None
 
-    def record_reuse(self, learning_id, actor="system"):
-        current = self.repo.get("learning_events", learning_id)
+    def record_reuse(self, learning_id, actor="system", owner_scope=None):
+        current = self.get_learning(learning_id, owner_scope=owner_scope)
         if current is None: raise NotFoundError(learning_id)
         changes = {"reuse_count": int(current.get("reuse_count") or 0) + 1, "last_reused_at": _now_iso()}
         try:
@@ -835,10 +844,16 @@ class PersistenceService:
         except PersistenceError: raise
         except Exception as e: raise StorageError(type(e).__name__) from e
         return updated
-    def search_learning(self, filters=None, limit=50, offset=0, order_by="created_at", descending=True):
+    def search_learning(self, filters=None, limit=50, offset=0, order_by="created_at", descending=True, owner_scope=None):
         limit = max(1, min(int(limit), 200))
-        return self.repo.search("learning_events", filters or {}, limit=limit,
-                                offset=max(0, int(offset)), order_by=order_by, descending=descending)
+        base = dict(filters or {})
+        if owner_scope is None:
+            return self.repo.search("learning_events", base, limit=limit,
+                                    offset=max(0, int(offset)), order_by=order_by, descending=descending)
+        scope = str(owner_scope).strip()
+        rows = self.repo.search("learning_events", base, limit=max(limit, 200), offset=0,
+                                order_by=order_by, descending=descending)
+        return [r for r in rows if _scope_matches(r.get("owner_scope"), scope)][max(0, int(offset)):max(0, int(offset))+limit]
 
     def create_node(self, data, actor="system", idempotency_key=None):
         fields = validate_graph_node(data)
@@ -1585,14 +1600,15 @@ class PersistenceService:
         return {"agent_node": agent_node["id"], "tool_node": tool_node["id"],
                 "edge": edge["id"] if edge else None}
 
-    def auto_connect_learning(self, learning_id, actor="auto-connect"):
-        learning = self.repo.get("learning_events", learning_id)
+    def auto_connect_learning(self, learning_id, actor="auto-connect", owner_scope=None):
+        learning = self.get_learning(learning_id, owner_scope=owner_scope)
         if learning is None: return {"connected": 0}
         knowledge_nodes = learning.get("knowledge_nodes") or []
         if not knowledge_nodes: return {"connected": 0}
         learning_node = self._find_or_create_node(
             "experience", f"learning:{learning_id}",
-            tags=["learning", str(learning.get("source", "unknown"))], actor=actor)
+            tags=["learning", str(learning.get("source", "unknown"))], actor=actor,
+            owner_scope=owner_scope or learning.get("owner_scope"))
         if not learning_node: return {"connected": 0}
         connected = 0
         for kn_id in knowledge_nodes:
