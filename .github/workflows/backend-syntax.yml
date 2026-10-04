@@ -68,6 +68,10 @@ jobs:
         run: |
           python -m unittest test_memory_embedding_ownership -v
 
+      - name: Test mission and task ownership contract
+        run: |
+          python -m unittest test_mission_task_ownership -v
+
       - name: Install backend runtime dependencies for multimedia regression
         run: |
           python -m pip install -r requirements.txt
