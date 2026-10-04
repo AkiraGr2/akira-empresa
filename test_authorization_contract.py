@@ -198,6 +198,27 @@ class AuthorizationContractTests(unittest.TestCase):
         self.assertNotIn("mission_id", branch)
         self.assertIn('"source_id": "tool_registry"', branch)
 
+    def test_learning_and_cognitive_routes_propagate_owner_scope(self):
+        names = [
+            "v8_learning_create",
+            "v8_learning_list",
+            "v8_learning_experience",
+            "v8_learning_teach",
+            "v8_learning_evidence_add",
+            "v8_learning_investigate",
+            "v8_learning_evaluate",
+            "v8_learning_status_update",
+            "v8_learning_get",
+            "v8_learning_reuse",
+            "v8_cognitive_cycle",
+            "v8_cognitive_cycle_get",
+            "v8_cognitive_cycles_list",
+        ]
+        for name in names:
+            source = self._function_source(name)
+            self.assertIn('s["owner_scope"]', source, name)
+
+
 
 if __name__ == "__main__":
     unittest.main()
