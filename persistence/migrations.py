@@ -608,4 +608,12 @@ MIGRATIONS = [
         WHERE name IN ('memory_save', 'memory_search')
         """
     ),
+    (
+        "025_memory_tools_owner_reassert",
+        """
+        UPDATE tools
+        SET permissions = '[\"owner\"]'::jsonb, updated_at = now()
+        WHERE name IN ('memory_save', 'memory_search')
+        """
+    ),
 ]

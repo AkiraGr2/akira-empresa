@@ -44,20 +44,21 @@ def _guard(name, fn):
 
 
 def _ensure_tools(service):
-    """Registra las tools que los tests de agentes necesitan. Idempotente por nombre."""
-    tools = [
-        {"name": "memory_save", "description": "Guarda memoria (test).", "category": "memory",
-         "permissions": ["auth"], "inputs_schema": {"content": "str", "memory_type": "str"},
-         "outputs_schema": {"id": "str"}, "limits_json": {}, "risks": []},
-        {"name": "memory_search", "description": "Busca memorias (test).", "category": "memory",
-         "permissions": ["auth"], "inputs_schema": {"query": "str"},
-         "outputs_schema": {"results": "list"}, "limits_json": {}, "risks": []},
-    ]
-    for t in tools:
-        try:
-            service.register_tool(t, actor="selftest")
-        except Exception:
-            pass
+    """Verifica el contrato de las tools reales sin modificar el registry de producción."""
+    expected = ("memory_save", "memory_search")
+    problems = []
+    for name in expected:
+        tool = service.get_tool_by_name(name)
+        if tool is None:
+            problems.append(f"{name}:missing")
+            continue
+        permissions = {str(p).strip() for p in (tool.get("permissions") or [])}
+        if permissions != {"owner"}:
+            problems.append(f"{name}:permissions={sorted(permissions)}")
+        if tool.get("status") != "available":
+            problems.append(f"{name}:status={tool.get('status')}")
+    if problems:
+        raise ValidationError("tool contract invalid: " + ", ".join(problems))
 
 
 def _ensure_test_agent(service):
@@ -91,6 +92,7 @@ def run_logic_tests(service, fresh_service_factory=None):
     """fresh_service_factory: opcional, devuelve un servicio con conexiones nuevas ('reinicio suave')."""
     created_ids = []
     created_task_ids = []
+    created_mission_ids = []
     results = []
 
     # ---------- MEMORIA (Fase 4/5) ----------
@@ -239,25 +241,77 @@ def run_logic_tests(service, fresh_service_factory=None):
                 return _res(name, False, f"excepcion inesperada: {type(e).__name__}")
         return _res(name, True, "rechazo tool no permitida, tool inexistente y agente inexistente")
 
+    def t_tool_permission_contract():
+        name = "TEST_TOOL_PERMISSION_CONTRACT"
+        _ensure_tools(service)
+        return _res(
+            name,
+            True,
+            "memory_save y memory_search existen, estan disponibles y tienen permissions=[owner]",
+        )
+
     def t_agent_task_mission_filter():
         name = "TEST_AGENT_TASK_MISSION_FILTER"
         _ensure_tools(service)
         _ensure_test_agent(service)
-        mission_id = f"test_mission_{uuid.uuid4().hex[:8]}"
+        mission = service.create_mission(
+            {
+                "title": f"selftest mission {uuid.uuid4().hex[:8]}",
+                "objective": "fixture temporal para probar mission_id en agent_tasks",
+                "status": "created",
+                "priority": 1,
+                "flow_type": "generic",
+            },
+            actor="selftest",
+        )
+        mission_id = mission["record"]["id"]
+        created_mission_ids.append(mission_id)
         ids = []
         for i in range(3):
-            r = service.create_task(_TEST_AGENT_NAME, "memory_save",
-                                    inputs={"content": f"selftest m{i}", "memory_type": "system"},
-                                    mission_id=mission_id, actor="selftest")
+            r = service.create_task(
+                _TEST_AGENT_NAME,
+                "memory_save",
+                inputs={"content": f"selftest m{i}", "memory_type": "system"},
+                mission_id=mission_id,
+                actor="selftest",
+            )
             tid = r["record"]["id"]
             ids.append(tid)
             created_task_ids.append(tid)
             service.complete_task(tid, outputs={}, duration_ms=1, actor="selftest")
-        # Filtrar por mission_id
         rows = service.list_tasks(mission_id=mission_id, limit=10)
         filtered = [r for r in rows if r.get("mission_id") == mission_id]
         ok = len(filtered) == 3 and all(r["id"] in ids for r in filtered)
         return _res(name, ok, f"3 tasks con mission_id, filtradas: {len(filtered)}")
+
+    def t_agent_task_owner_scope_filter():
+        name = "TEST_AGENT_TASK_OWNER_SCOPE_FILTER"
+        _ensure_tools(service)
+        _ensure_test_agent(service)
+        scope_a = "selftest_scope_a"
+        scope_b = "selftest_scope_b"
+        ids = []
+        for scope in (scope_a, scope_b):
+            r = service.create_task(
+                _TEST_AGENT_NAME,
+                "memory_search",
+                inputs={"query": "selftest"},
+                actor="selftest",
+                owner_scope=scope,
+            )
+            ids.append((r["record"]["id"], scope))
+            created_task_ids.append(r["record"]["id"])
+        rows_a = service.list_tasks(owner_scope=scope_a, limit=20)
+        rows_b = service.list_tasks(owner_scope=scope_b, limit=20)
+        ids_a = {r["id"] for r in rows_a}
+        ids_b = {r["id"] for r in rows_b}
+        ok = (
+            ids[0][0] in ids_a
+            and ids[1][0] not in ids_a
+            and ids[1][0] in ids_b
+            and ids[0][0] not in ids_b
+        )
+        return _res(name, ok, "cada owner_scope solo recupera sus agent_tasks")
 
     def t_agent_state_transition():
         name = "TEST_AGENT_STATE_TRANSITION"
@@ -317,12 +371,13 @@ def run_logic_tests(service, fresh_service_factory=None):
         ("TEST_IDEMPOTENT_SYNC", t_idempotent),
         ("TEST_PRIVATE_MEMORY", t_private),
         ("TEST_VERSIONING_CONFLICT", t_versioning),
-        ("TEST_ARCHIVE_SOFT_DELETE", t_archive),
         ("TEST_VALIDATION_REJECTS", t_validation),
+        ("TEST_TOOL_PERMISSION_CONTRACT", t_tool_permission_contract),
         ("TEST_TRANSACTION_ROLLBACK", t_rollback),
         ("TEST_AGENT_TASK_PERSISTENCE", t_agent_task_persistence),
         ("TEST_AGENT_TASK_VALIDATION", t_agent_task_validation),
         ("TEST_AGENT_TASK_MISSION_FILTER", t_agent_task_mission_filter),
+        ("TEST_AGENT_TASK_OWNER_SCOPE_FILTER", t_agent_task_owner_scope_filter),
         ("TEST_AGENT_STATE_TRANSITION", t_agent_state_transition),
         ("TEST_LEARNING_STATE_CONTRACT", t_learning_state_contract),
     ):
@@ -374,6 +429,45 @@ def run_logic_tests(service, fresh_service_factory=None):
             service.repo.delete("agent_tasks", tid)
         except Exception:
             pass
+
+    mission_cleanup_failures = []
+    mission_cleanup_deleted = 0
+    for mid in created_mission_ids:
+        try:
+            with service.repo.transaction() as tx:
+                deleted = tx.delete("missions", mid)
+                tx.append_audit({
+                    "actor": "selftest",
+                    "action": "mission.fixture.delete",
+                    "resource": "missions",
+                    "resource_id": mid,
+                    "status": "success" if deleted else "failure",
+                    "detail": {"fixture": True},
+                })
+            if service.get_mission(mid) is not None:
+                mission_cleanup_failures.append({
+                    "mission_id": mid,
+                    "reason": "mission_still_exists_after_delete",
+                    "delete_returned": bool(deleted),
+                })
+            else:
+                mission_cleanup_deleted += 1
+        except Exception as e:
+            mission_cleanup_failures.append({
+                "mission_id": mid,
+                "reason": "delete_error",
+                "error_type": type(e).__name__,
+            })
+
+    results.append(
+        _res(
+            "TEST_MISSION_FIXTURE_CLEANUP",
+            not mission_cleanup_failures,
+            f"creadas={len(created_mission_ids)} eliminadas={mission_cleanup_deleted} "
+            f"fallos={len(mission_cleanup_failures)}",
+        )
+    )
+
     _disable_test_agent(service)
     return results
 

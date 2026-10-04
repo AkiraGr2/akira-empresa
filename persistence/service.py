@@ -171,8 +171,14 @@ class PersistenceService:
         if created and str(verified.get("source") or "") not in {
             "learning_candidate", "learning_engine", "learning_promoted"
         }:
-            try: self.auto_connect_memory_tags(verified["id"], actor=actor)
-            except Exception as e: print(f"[auto-connect] memory_tags fallo: {type(e).__name__}: {str(e)[:200]}")
+            try:
+                self.auto_connect_memory_tags(
+                    verified["id"],
+                    actor=actor,
+                    owner_scope=verified.get("owner_scope"),
+                )
+            except Exception as e:
+                print(f"[auto-connect] memory_tags fallo: {type(e).__name__}: {str(e)[:200]}")
         return result
 
     def get_memory(self, memory_id, owner_scope=None):
@@ -262,20 +268,40 @@ class PersistenceService:
         if owner_scope is None:
             return self.repo.search("memories", base, limit=limit,
                                     offset=max(0, int(offset)), order_by=order_by, descending=descending)
-        rows = self.repo.search("memories", base, limit=max(limit, 500), offset=0,
-                                order_by=order_by, descending=descending)
         scope = str(owner_scope).strip()
-        filtered = [r for r in rows if _scope_matches(r.get("owner_scope"), scope)]
-        start = max(0, int(offset))
-        return filtered[start:start + limit]
+        if not scope:
+            raise ValidationError("owner_scope requerido")
+        scoped = dict(base)
+        scoped.pop("owner_scope", None)
+        scoped.pop("owner_scope__in", None)
+        allowed_scopes = [scope]
+        if scope != LEGACY_OWNER_SCOPE:
+            allowed_scopes.append(LEGACY_OWNER_SCOPE)
+        scoped["owner_scope__in"] = allowed_scopes
+        return self.repo.search(
+            "memories",
+            scoped,
+            limit=limit,
+            offset=max(0, int(offset)),
+            order_by=order_by,
+            descending=descending,
+        )
 
     def count_memory(self, filters=None, hive=False, owner_scope=None):
         base = self._memory_filters(filters, hive)
         if owner_scope is None:
             return self.repo.count("memories", base)
-        rows = self.repo.search("memories", base, limit=5000)
         scope = str(owner_scope).strip()
-        return sum(1 for r in rows if _scope_matches(r.get("owner_scope"), scope))
+        if not scope:
+            raise ValidationError("owner_scope requerido")
+        scoped = dict(base)
+        scoped.pop("owner_scope", None)
+        scoped.pop("owner_scope__in", None)
+        allowed_scopes = [scope]
+        if scope != LEGACY_OWNER_SCOPE:
+            allowed_scopes.append(LEGACY_OWNER_SCOPE)
+        scoped["owner_scope__in"] = allowed_scopes
+        return self.repo.count("memories", scoped)
     def health(self): return self.repo.ping()
 
     def get_self_model(self):

@@ -3244,7 +3244,7 @@ def _invoke_tool(service, tool_name, inputs, actor, owner_scope=None):
         gate = _memory_gate_decide(
             service, content, mtype, 5,
             ["mission_memory"],
-            actor, "owner",
+            actor, owner_scope,
         )
         if not gate.get("allowed"):
             return {
@@ -3262,13 +3262,23 @@ def _invoke_tool(service, tool_name, inputs, actor, owner_scope=None):
             "source_reference": f"tool:{actor}"[:256],
             "privacy_level": "PRIVATE",
             "tags": ["mission_memory"],
-        }, actor=actor)
-        _index_memory_embedding(service, r["record"], actor=actor)
+        }, actor=actor, owner_scope=owner_scope)
+        _index_memory_embedding(
+            service,
+            r["record"],
+            actor=actor,
+            owner_scope=owner_scope,
+        )
         return {
             "stored": True,
             "id": r["record"]["id"],
             "outcome": r["outcome"],
-            "semantic_indexed": bool(service.get_memory_embedding(r["record"]["id"])),
+            "semantic_indexed": bool(
+                service.get_memory_embedding(
+                    r["record"]["id"],
+                    owner_scope=owner_scope,
+                )
+            ),
         }, None
     if tool_name == "memory_search":
         q = str(inputs.get("query") or "").strip()
@@ -4775,7 +4785,11 @@ def _memory_gate_decide(service, content, memory_type, importance, tags, actor, 
     duplicate = None
     if service is not None and text:
         try:
-            candidates = service.search_memory({"text_contains": text[:200]}, limit=20)
+            candidates = service.search_memory(
+                {"text_contains": text[:200]},
+                limit=20,
+                owner_scope=owner_scope,
+            )
             for row in candidates:
                 if str(row.get("content") or "").strip() == text:
                     if str(row.get("owner_scope") or "owner") == str(owner_scope):
