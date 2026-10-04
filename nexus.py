@@ -4655,15 +4655,13 @@ def v8_get_conversation(request: Request, conversation_id: str, include_messages
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
 
-    conv = service.get_conversation(conversation_id)
-    if conv is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
-    if conv.get("created_by") != s["email"]:
-        return JSONResponse({"ok": False, "reason": "forbidden"}, status_code=403)
+    conv = service.get_conversation(conversation_id, owner=s["email"])
+    if conv is None: return JSONResponse({"ok": False, "reason": "forbidden"}, status_code=403)
 
     response = {"ok": True, "conversation": conv}
     if include_messages:
         try:
-            messages = service.list_messages(conversation_id, limit=500)
+            messages = service.list_messages(conversation_id, limit=500, owner=s["email"])
         except Exception as e:
             return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
         response["messages"] = messages
@@ -4678,10 +4676,8 @@ def v8_update_conversation(request: Request, conversation_id: str, payload: dict
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     if not isinstance(payload, dict): return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
 
-    conv = service.get_conversation(conversation_id)
-    if conv is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
-    if conv.get("created_by") != s["email"]:
-        return JSONResponse({"ok": False, "reason": "forbidden"}, status_code=403)
+    conv = service.get_conversation(conversation_id, owner=s["email"])
+    if conv is None: return JSONResponse({"ok": False, "reason": "forbidden"}, status_code=403)
 
     changes = {}
     if "title" in payload:
@@ -4698,7 +4694,9 @@ def v8_update_conversation(request: Request, conversation_id: str, payload: dict
 
     from persistence.core import ConflictError, PersistenceError, ValidationError
     try:
-        updated = service.update_conversation(conversation_id, changes, conv["version"], actor=s["email"])
+        updated = service.update_conversation(
+        conversation_id, changes, conv["version"], actor=s["email"], owner=s["email"]
+    )
     except ValidationError as e:
         return JSONResponse({"ok": False, "reason": "validation", "detail": str(e)[:200]}, status_code=400)
     except ConflictError:
@@ -4716,14 +4714,14 @@ def v8_delete_conversation(request: Request, conversation_id: str):
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
 
-    conv = service.get_conversation(conversation_id)
-    if conv is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
-    if conv.get("created_by") != s["email"]:
-        return JSONResponse({"ok": False, "reason": "forbidden"}, status_code=403)
+    conv = service.get_conversation(conversation_id, owner=s["email"])
+    if conv is None: return JSONResponse({"ok": False, "reason": "forbidden"}, status_code=403)
 
     from persistence.core import ConflictError, PersistenceError, ValidationError
     try:
-        updated = service.update_conversation(conversation_id, {"status": "deleted"}, conv["version"], actor=s["email"])
+        updated = service.update_conversation(
+        conversation_id, {"status": "deleted"}, conv["version"], actor=s["email"], owner=s["email"]
+    )
     except ConflictError:
         return JSONResponse({"ok": False, "reason": "conflict"}, status_code=409)
     except PersistenceError as e:
@@ -4734,7 +4732,7 @@ def v8_delete_conversation(request: Request, conversation_id: str):
 
 def _ensure_conversation(service, conversation_id, first_message, actor):
     if conversation_id:
-        conv = service.get_conversation(conversation_id)
+        conv = service.get_conversation(conversation_id, owner=actor)
         if conv is None:
             return None, "conversation_not_found"
         if conv.get("created_by") != actor:
@@ -5581,12 +5579,12 @@ def memory_search(request: Request, payload: dict):
     }
 
 
-def _format_conversation_context(service, conversation_id, current_msg, limit=20, max_chars=18000):
+def _format_conversation_context(service, conversation_id, current_msg, owner=None, limit=20, max_chars=18000):
     """Reconstruye contexto real de la conversación sin convertir el chat crudo en memoria."""
     if service is None or not conversation_id:
         return ""
     try:
-        rows = service.list_messages(conversation_id, limit=500, offset=0)
+        rows = service.list_messages(conversation_id, limit=500, offset=0, owner=owner)
     except Exception:
         return ""
     if not isinstance(rows, list):
