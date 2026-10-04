@@ -97,4 +97,56 @@ PERSISTENT_MEMORY_CAPABILITY = {
     },
 }
 
-BASE_CAPABILITIES = (SESSION_AUTH_CAPABILITY, PERSISTENT_MEMORY_CAPABILITY)
+
+MEMORY_RECALL_CAPABILITY = {
+    "name": "memory_recall",
+    "description": "Recuperación híbrida de memorias activas: búsqueda léxica como respaldo, búsqueda semántica mediante Gemini Embedding 2 + pgvector y aislamiento por owner_scope.",
+    "category": "memory",
+    "kind": "provider_dependent",
+    "implementation_state": "implemented",
+    "verification_state": "unverified",
+    "availability_state": "available",
+    "maturity": "experimental",
+    "cost_compatibility": "conditional",
+    "dependencies": [
+        {"kind": "service", "id": "PersistenceService.search_memory", "required": True},
+        {"kind": "service", "id": "PersistenceService.search_memory_semantic", "required": True},
+        {"kind": "storage", "id": "PostgreSQL.memory_embeddings", "required": True},
+        {"kind": "extension", "id": "pgvector", "required": True},
+        {"kind": "provider", "id": "gemini-embedding-2", "required": True},
+        {"kind": "security", "id": "owner_scope", "required": True},
+    ],
+    "limitations": [
+        "La rama semántica depende de disponibilidad, cuotas y limites del proveedor externo; la rama léxica conserva degradación segura.",
+        "La calidad semántica depende del modelo de embeddings y de la consistencia del corpus indexado.",
+        "Las memorias legacy con owner_scope='owner' se conservan como compatibilidad histórica.",
+    ],
+    "verification_spec": {
+        "method": "selftest",
+        "test_key": "memory_recall_contract",
+        "freshness_policy": {
+            "mode": "on_change",
+            "max_age_seconds": None,
+            "invalidate_on": [
+                "build_change",
+                "dependency_change",
+                "embedding_model_change",
+                "memory_schema_change",
+                "ownership_change",
+            ],
+        },
+    },
+    "provenance": {
+        "source": "architecture_rebaseline",
+        "created_by": "system",
+        "basis": [
+            "nexus.py",
+            "persistence/memory_recall.py",
+            "persistence/service.py",
+            "persistence/postgres.py",
+            "persistence/migrations.py",
+        ],
+    },
+}
+
+BASE_CAPABILITIES = (SESSION_AUTH_CAPABILITY, PERSISTENT_MEMORY_CAPABILITY, MEMORY_RECALL_CAPABILITY)
