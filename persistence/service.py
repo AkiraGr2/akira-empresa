@@ -1480,14 +1480,17 @@ class PersistenceService:
                                 order_by="created_at", descending=True)
     def count_tasks(self, filters=None): return self.repo.count("agent_tasks", filters or {})
 
-    def _find_or_create_node(self, node_type, label, tags=None, actor="auto-connect"):
+    def _find_or_create_node(self, node_type, label, tags=None, actor="auto-connect", owner_scope=None):
         label = str(label).strip()[:200]
         if not label:
             return None
         try:
+            filters = {"node_type": node_type, "status": "active", "label": label}
+            if owner_scope is not None:
+                filters["owner_scope"] = str(owner_scope).strip()
             rows = self.repo.search(
                 "graph_nodes",
-                {"node_type": node_type, "status": "active", "label": label},
+                filters,
                 limit=20,
                 order_by="created_at",
                 descending=False,
@@ -1499,17 +1502,20 @@ class PersistenceService:
                 return r
 
         try:
-            result = self.create_node(
-                {"node_type": node_type, "label": label, "tags": tags or []},
-                actor=actor,
-            )
+            data = {"node_type": node_type, "label": label, "tags": tags or []}
+            if owner_scope is not None:
+                data["owner_scope"] = str(owner_scope).strip()
+            result = self.create_node(data, actor=actor)
             return result["record"]
         except Exception:
             # A concurrent creator may have won the active-node unique guard.
             try:
+                filters = {"node_type": node_type, "status": "active", "label": label}
+                if owner_scope is not None:
+                    filters["owner_scope"] = str(owner_scope).strip()
                 rows = self.repo.search(
                     "graph_nodes",
-                    {"node_type": node_type, "status": "active", "label": label},
+                    filters,
                     limit=20,
                     order_by="created_at",
                     descending=False,
