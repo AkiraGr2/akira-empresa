@@ -93,6 +93,29 @@ class AuthorizationContractTests(unittest.TestCase):
         for name in ("countermeasures", "sync_to_r2"):
             source = self._function_source(name)
             self.assertIn("_require_owner(request)", source, name)
+    def test_public_health_surface_does_not_leak_operational_secrets_or_counts(self):
+        source = self._function_source("health")
+        self.assertIn('"status":"ok"', source)
+        self.assertIn('"version":VERSION', source)
+        self.assertIn('"build_marker":BACKEND_BUILD_MARKER', source)
+        for marker in (
+            "github_token",
+            "github_repo",
+            "gemini_keys_count",
+            "groq_keys_count",
+            "gemini_keys_failed",
+            "countermeasures",
+            "membrana",
+            '"consciente": True',
+        ):
+            self.assertNotIn(marker, source, marker)
+
+    def test_brain_count_and_shared_are_owner_only(self):
+        for name in ("brain_count", "brain_shared"):
+            source = self._function_source(name)
+            self.assertIn("request: Request", source, name)
+            self.assertIn("_require_owner(request)", source, name)
+
     def test_me_route_derives_identity_only_from_signed_session(self):
         source = self._function_source("v8_me")
         self.assertIn("s = get_session(request)", source)
