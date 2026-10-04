@@ -450,6 +450,23 @@ REGLAS ANTI-ALUCINACION (OBLIGATORIAS):
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse, Response, RedirectResponse
 import json as json_lib
+@asynccontextmanager
+async def _akira_lifespan(_app):
+    await asyncio.sleep(3)
+    try:
+        print(f"[providers] configured key counts: {provider_key_inventory()}")
+    except Exception as e:
+        print(f"[providers] inventory error: {type(e).__name__}")
+    try:
+        _seed_tools_and_agents()
+    except Exception as e:
+        print(f"[startup seed] error: {e}")
+    try:
+        _cleanup_orphan_missions(_persistence_service())
+    except Exception as e:
+        print(f"[startup cleanup] error: {e}")
+    yield
+
 app=FastAPI(title="Akira V7.3 Consciente", lifespan=_akira_lifespan)
 
 class CORSFixMiddleware:
@@ -1602,22 +1619,6 @@ def _run_mission_sync(mission_id, actor):
             _mission_execution_ids.discard(mission_id)
             _mission_active_count = max(0, _mission_active_count - 1)
 
-@asynccontextmanager
-async def _akira_lifespan(_app):
-    await asyncio.sleep(3)
-    try:
-        print(f"[providers] configured key counts: {provider_key_inventory()}")
-    except Exception as e:
-        print(f"[providers] inventory error: {type(e).__name__}")
-    try:
-        _seed_tools_and_agents()
-    except Exception as e:
-        print(f"[startup seed] error: {e}")
-    try:
-        _cleanup_orphan_missions(_persistence_service())
-    except Exception as e:
-        print(f"[startup cleanup] error: {e}")
-    yield
 
 def _route_registered(path):
     """Verdad runtime: inspecciona las rutas efectivamente registradas en FastAPI."""
