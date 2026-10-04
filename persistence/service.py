@@ -1023,12 +1023,27 @@ class PersistenceService:
     def list_graph_nodes(self, limit=500, offset=0, order_by="weight", descending=True, owner_scope=None):
         limit = max(1, min(int(limit), 2000))
         filters = {"status": "active"}
-        if owner_scope is not None:
-            filters["owner_scope"] = str(owner_scope).strip()
-        rows = self.repo.search(
-            "graph_nodes", filters, limit=limit, offset=max(0, int(offset)),
-            order_by=order_by, descending=descending
-        )
+        if owner_scope is None:
+            rows = self.repo.search(
+                "graph_nodes", filters, limit=limit, offset=max(0, int(offset)),
+                order_by=order_by, descending=descending
+            )
+        else:
+            scope = str(owner_scope).strip()
+            rows = self.repo.search(
+                "graph_nodes",
+                {"status": "active", "owner_scope": scope},
+                limit=limit, offset=max(0, int(offset)),
+                order_by=order_by, descending=descending
+            )
+            if scope != LEGACY_OWNER_SCOPE:
+                legacy = self.repo.search(
+                    "graph_nodes",
+                    {"status": "active", "owner_scope": LEGACY_OWNER_SCOPE},
+                    limit=limit, offset=0,
+                    order_by=order_by, descending=descending
+                )
+                rows = rows + legacy
         if owner_scope is not None:
             core = self.repo.search(
                 "graph_nodes", {"status": "active", "label": _CORE_NODE_LABEL}, limit=1
