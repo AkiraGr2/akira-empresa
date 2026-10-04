@@ -6065,7 +6065,10 @@ async def chat_stream(request: Request):
                 return StreamingResponse(gen_err(), media_type="text/event-stream")
             conversation_id = conv["id"]
             try:
-                service.add_message(conversation_id, "user", msg, actor=session["email"])
+                service.add_message(
+                    conversation_id, "user", msg,
+                    actor=session["email"], owner=session["email"]
+                )
             except Exception as e:
                 print(f"[chat/stream] add_message user fallo: {type(e).__name__}: {str(e)[:200]}")
 
