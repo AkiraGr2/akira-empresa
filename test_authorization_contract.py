@@ -89,6 +89,10 @@ class AuthorizationContractTests(unittest.TestCase):
         for name in ("self_repair_status", "self_repair_propose"):
             source = self._function_source(name)
             self.assertIn("_require_owner(request)", source, name)
+    def test_legacy_maintenance_surfaces_are_owner_only(self):
+        for name in ("countermeasures", "sync_to_r2"):
+            source = self._function_source(name)
+            self.assertIn("_require_owner(request)", source, name)
     def test_me_route_derives_identity_only_from_signed_session(self):
         source = self._function_source("v8_me")
         self.assertIn("s = get_session(request)", source)
