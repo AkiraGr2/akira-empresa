@@ -1107,11 +1107,14 @@ class PersistenceService:
             if self.get_edge(edge.get("id"), owner_scope=scope) is not None
         ][:limit]
 
-    def start_cycle(self, trigger, input_data=None, actor="system", idempotency_key=None):
+    def start_cycle(self, trigger, input_data=None, actor="system", idempotency_key=None, owner_scope=None):
+        scope = str(owner_scope).strip() if owner_scope is not None else LEGACY_OWNER_SCOPE
+        if not scope:
+            raise ValidationError("owner_scope requerido")
         data = {"trigger": trigger, "input": input_data or {},
                 "current_stage": "observe", "status": "in_progress"}
         fields = validate_cognitive_cycle(data)
-        record = dict(fields, id=new_id("cycle"), schema_version=COGNITIVE_CYCLE_SCHEMA_VERSION)
+        record = dict(fields, owner_scope=scope, id=new_id("cycle"), schema_version=COGNITIVE_CYCLE_SCHEMA_VERSION)
         if idempotency_key is not None:
             if not isinstance(idempotency_key, str) or not 0 < len(idempotency_key.strip()) <= 200:
                 raise ValidationError("idempotency_key debe ser texto de 1 a 200 caracteres")
@@ -1132,9 +1135,9 @@ class PersistenceService:
         if verified is None: raise VerificationError("ciclo no confirmado")
         return {"outcome": "created" if created else "already_synced", "record": verified}
 
-    def record_stage(self, cycle_id, stage, data=None, status="success", error=None, actor="system", idempotency_key=None):
+    def record_stage(self, cycle_id, stage, data=None, status="success", error=None, actor="system", idempotency_key=None, owner_scope=None):
         if stage not in COGNITIVE_STAGES: raise ValidationError(f"stage invalido: {stage!r}")
-        cycle = self.repo.get("cognitive_cycles", cycle_id)
+        cycle = self.get_cycle(cycle_id, owner_scope=owner_scope)
         if cycle is None: raise NotFoundError(f"ciclo no existe: {cycle_id}")
         if cycle.get("status") in ("completed", "failed", "aborted"):
             raise ValidationError(f"el ciclo ya esta {cycle['status']}")
@@ -1164,10 +1167,10 @@ class PersistenceService:
         if verified_event is None: raise VerificationError("evento no confirmado")
         return {"event": verified_event, "cycle": updated_cycle}
 
-    def complete_cycle(self, cycle_id, final_status="completed", actor="system"):
+    def complete_cycle(self, cycle_id, final_status="completed", actor="system", owner_scope=None):
         if final_status not in ("completed", "failed", "aborted"):
             raise ValidationError("final_status debe ser completed, failed o aborted")
-        cycle = self.repo.get("cognitive_cycles", cycle_id)
+        cycle = self.get_cycle(cycle_id, owner_scope=owner_scope)
         if cycle is None: raise NotFoundError(cycle_id)
         if cycle.get("status") != "in_progress": raise ValidationError(f"el ciclo ya esta {cycle['status']}")
         changes = {"status": final_status, "completed_at": _now_iso()}
@@ -1180,17 +1183,27 @@ class PersistenceService:
         except PersistenceError: raise
         except Exception as e: raise StorageError(type(e).__name__) from e
         return updated
-    def get_cycle(self, cycle_id): return self.repo.get("cognitive_cycles", cycle_id)
-    def list_cycle_events(self, cycle_id, limit=100):
+    def get_cycle(self, cycle_id, owner_scope=None):
+        cycle = self.repo.get("cognitive_cycles", cycle_id)
+        if cycle is None or owner_scope is None:
+            return cycle
+        return cycle if _scope_matches(cycle.get("owner_scope"), owner_scope) else None
+    def list_cycle_events(self, cycle_id, limit=100, owner_scope=None):
+        if self.get_cycle(cycle_id, owner_scope=owner_scope) is None:
+            return []
         limit = max(1, min(int(limit), 500))
         return self.repo.search("cognitive_events", {"cycle_id": cycle_id}, limit=limit,
                                 offset=0, order_by="created_at", descending=False)
-    def get_cycle_with_events(self, cycle_id):
-        cycle = self.repo.get("cognitive_cycles", cycle_id)
+    def get_cycle_with_events(self, cycle_id, owner_scope=None):
+        cycle = self.get_cycle(cycle_id, owner_scope=owner_scope)
         if cycle is None: return None
-        events = self.list_cycle_events(cycle_id)
+        events = self.list_cycle_events(cycle_id, owner_scope=owner_scope)
         return {"cycle": cycle, "events": events}
-    def count_cycles(self, filters=None): return self.repo.count("cognitive_cycles", filters or {})
+    def count_cycles(self, filters=None, owner_scope=None):
+        if owner_scope is None:
+            return self.repo.count("cognitive_cycles", filters or {})
+        rows = self.repo.search("cognitive_cycles", filters or {}, limit=5000)
+        return sum(1 for r in rows if _scope_matches(r.get("owner_scope"), owner_scope))
     def count_cycle_events(self, filters=None): return self.repo.count("cognitive_events", filters or {})
 
     def register_tool(self, data, actor="system", idempotency_key=None):
