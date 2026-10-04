@@ -325,7 +325,9 @@ class PostgresRepository(PersistenceRepository):
                 return []
             clauses.append("(m.owner_scope = %s OR m.owner_scope = 'owner')")
             params.append(scope)
-        params.extend([vector, limit])
+        # Placeholder order must match the SQL exactly:
+        # model, optional owner scope, SELECT vector, ORDER BY vector, limit.
+        params.extend([vector, vector, limit])
         with self._cursor() as cur:
             cur.execute(
                 f"""
@@ -337,7 +339,7 @@ class PostgresRepository(PersistenceRepository):
                 ORDER BY me.embedding <=> %s::vector
                 LIMIT %s
                 """,
-                [vector, *params],
+                params,
             )
             return [_out(row) for row in cur.fetchall()]
 
