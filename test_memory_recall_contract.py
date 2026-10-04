@@ -223,9 +223,9 @@ class SemanticPostgresQueryContractTests(unittest.TestCase):
         self.assertEqual(
             params,
             [
+                expected_literal,
                 "gemini-embedding-2",
                 "g:user-A",
-                expected_literal,
                 expected_literal,
                 20,
             ],
