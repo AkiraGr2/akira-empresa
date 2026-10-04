@@ -518,7 +518,11 @@ class PersistenceService:
                     "action": (
                         "capability.verification"
                         if event["result"] == "pass"
-                        else "capability.verification.failed"
+                        else (
+                            "capability.verification.failed"
+                            if event["result"] == "fail"
+                            else "capability.verification.inconclusive"
+                        )
                     ),
                     "resource": "capabilities",
                     "resource_id": capability_id,
