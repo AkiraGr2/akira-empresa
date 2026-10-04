@@ -564,9 +564,6 @@ def run_logic_tests(service, fresh_service_factory=None):
 
     def t_capability_verification_append_only():
         name = "TEST_CAPABILITY_VERIFICATION_APPEND_ONLY"
-        cap = service.get_capability("capability_selftest")
-        if cap is None:
-            cap = service.get_capability("cap_selftest")
         rows = service.list_capabilities(filters={"name": "selftest_capability"}, limit=1)
         if not rows:
             return _res(name, False, "fixture selftest_capability no existe")
