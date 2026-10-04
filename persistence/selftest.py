@@ -584,6 +584,22 @@ def run_logic_tests(service, fresh_service_factory=None):
                 f"resultado={verification.get('outcome')}; effective_state={effective}; checks={checks}",
             )
         except Exception as exc:
+            try:
+                service.record_audit(
+                    "selftest",
+                    "selftest.self_knowledge_runtime",
+                    "capabilities",
+                    capability.get("id"),
+                    "failure",
+                    {
+                        "phase": "exception",
+                        "error_type": type(exc).__name__,
+                        "error": str(exc)[:500],
+                        "checks": checks,
+                    },
+                )
+            except Exception:
+                pass
             return _res(name, False, f"excepcion {type(exc).__name__}: {str(exc)[:300]}")
 
     def t_agent_tool_reference_integrity():
