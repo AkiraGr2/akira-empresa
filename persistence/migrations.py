@@ -583,7 +583,7 @@ MIGRATIONS = [
         CREATE INDEX learning_events_owner_scope_idx ON learning_events (owner_scope, status, created_at DESC)
         """
     ),
-,
+
     (
         "022_cognitive_owner_scope",
         """
