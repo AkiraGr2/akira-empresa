@@ -64,6 +64,10 @@ jobs:
         run: |
           python -m unittest test_persistent_memory_contract -v
 
+      - name: Test memory recall capability contract
+        run: |
+          python -m unittest test_memory_recall_contract -v
+
       - name: Test route hardening contract
         run: |
           python -m unittest test_route_security_contract -v
