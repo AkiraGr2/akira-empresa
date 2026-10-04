@@ -487,6 +487,201 @@ def run_logic_tests(service, fresh_service_factory=None):
         )
         return _res(name, ok, "estados validos, estado imposible rechazado y transicion valida aceptada")
 
+    def t_persistent_memory_capability():
+        name = "TEST_PERSISTENT_MEMORY_CAPABILITY"
+        rows = service.list_capabilities(filters={"name": "persistent_memory"}, limit=1)
+        if not rows:
+            return _res(name, False, "capacidad persistent_memory no fue registrada por el bootstrap")
+        capability = rows[0]
+        scope_a = "selftest:persistent-memory:A"
+        scope_b = "selftest:persistent-memory:B"
+        created_ids_local = []
+        checks = {}
+        key = "selftest:persistent_memory:v1:" + uuid.uuid4().hex
+        detail = ""
+        try:
+            a = service.save_memory({
+                "content": "persistent memory probe A " + uuid.uuid4().hex,
+                "memory_type": "semantic",
+                "importance": 7,
+                "confidence": 0.9,
+                "source": "persistent_memory_selftest",
+                "source_reference": "selftest://persistent-memory/v1",
+                "privacy_level": "PRIVATE",
+                "tags": ["persistent_memory_selftest"],
+            }, actor="selftest", owner_scope=scope_a, idempotency_key=key)
+            created_ids_local.append(a["record"]["id"])
+            same = service.get_memory(a["record"]["id"], owner_scope=scope_a)
+            foreign = service.get_memory(a["record"]["id"], owner_scope=scope_b)
+            checks["created"] = a["outcome"] == "created"
+            checks["reread"] = bool(
+                same
+                and same.get("content") == a["record"].get("content")
+                and same.get("version") == 1
+            )
+            checks["foreign_read_blocked"] = foreign is None
+            other = fresh_service_factory() if fresh_service_factory else service
+            after_restart = other.get_memory(a["record"]["id"], owner_scope=scope_a)
+            checks["fresh_connection_reread"] = bool(
+                after_restart and after_restart.get("id") == a["record"]["id"]
+            )
+            repeat = service.save_memory({
+                "content": a["record"]["content"],
+                "memory_type": "semantic",
+                "importance": 7,
+                "confidence": 0.9,
+                "source": "persistent_memory_selftest",
+                "source_reference": "selftest://persistent-memory/v1",
+                "privacy_level": "PRIVATE",
+                "tags": ["persistent_memory_selftest"],
+            }, actor="selftest", owner_scope=scope_a, idempotency_key=key)
+            checks["idempotent"] = (
+                repeat["outcome"] == "already_synced"
+                and repeat["record"]["id"] == a["record"]["id"]
+            )
+            b = service.save_memory({
+                "content": "persistent memory probe B " + uuid.uuid4().hex,
+                "memory_type": "episodic",
+                "importance": 5,
+                "confidence": 0.7,
+                "source": "persistent_memory_selftest",
+                "source_reference": "selftest://persistent-memory/v1",
+                "privacy_level": "SHAREABLE",
+                "tags": ["persistent_memory_selftest"],
+            }, actor="selftest", owner_scope=scope_b)
+            created_ids_local.append(b["record"]["id"])
+            ids_a = {
+                x["id"]
+                for x in service.search_memory(
+                    {"text_contains": "persistent memory probe"},
+                    owner_scope=scope_a,
+                    limit=20,
+                )
+            }
+            ids_b = {
+                x["id"]
+                for x in service.search_memory(
+                    {"text_contains": "persistent memory probe"},
+                    owner_scope=scope_b,
+                    limit=20,
+                )
+            }
+            checks["scope_isolated"] = (
+                a["record"]["id"] in ids_a
+                and b["record"]["id"] not in ids_a
+                and b["record"]["id"] in ids_b
+                and a["record"]["id"] not in ids_b
+            )
+            updated = service.update_memory(
+                a["record"]["id"],
+                {"importance": 8},
+                expected_version=1,
+                actor="selftest",
+            )
+            checks["versioned_update"] = (
+                updated.get("version") == 2 and updated.get("importance") == 8
+            )
+            try:
+                service.update_memory(
+                    a["record"]["id"],
+                    {"importance": 9},
+                    expected_version=1,
+                    actor="selftest",
+                )
+                checks["stale_version_rejected"] = False
+            except ConflictError:
+                checks["stale_version_rejected"] = True
+            archived = service.archive_memory(
+                a["record"]["id"],
+                expected_version=2,
+                actor="selftest",
+            )
+            hidden = service.search_memory(
+                {"text_contains": "persistent memory probe A"},
+                owner_scope=scope_a,
+                limit=20,
+            )
+            checks["archive"] = (
+                archived.get("status") == "archived"
+                and all(x.get("id") != a["record"]["id"] for x in hidden)
+            )
+        except Exception as exc:
+            checks["exception_free"] = False
+            detail = "excepcion " + type(exc).__name__ + ": " + str(exc)[:240]
+        else:
+            checks["exception_free"] = True
+        finally:
+            for mid in created_ids_local:
+                try:
+                    service.repo.delete("memories", mid)
+                except Exception:
+                    pass
+        ok = all(checks.values())
+        source_digest = hashlib.sha256(
+            inspect.getsource(service.__class__).encode("utf-8")
+        ).hexdigest()[:16]
+        evidence = [{
+            "type": "selftest",
+            "title": "Persistent memory lifecycle and ownership",
+            "reference": "selftest:persistent_memory:v1",
+            "summary": (
+                "Creacion, relectura, reinicio suave, idempotencia, aislamiento, "
+                "versionado y archivado."
+                if ok else
+                "El contrato de memoria persistente no supero todos los controles."
+            ),
+            "hash": source_digest,
+        }]
+        event = {
+            "event_type": "verification",
+            "test_key": "persistent_memory_contract",
+            "test_version": "v1",
+            "result": "pass" if ok else "fail",
+            "evidence": evidence,
+            "environment": {"runtime": "selftest"},
+            "dependency_snapshot": [
+                {
+                    "kind": "service",
+                    "id": "PersistenceService",
+                    "version": source_digest,
+                },
+                {
+                    "kind": "storage",
+                    "id": "PostgreSQL.memories",
+                    "version": "runtime",
+                },
+            ],
+            "runtime_version": "selftest",
+            "build_ref": source_digest,
+            "actor": "selftest",
+            "executor": "selftest",
+            "evaluator": "system",
+            "error": None if ok else {"checks": checks, "detail": detail},
+        }
+        try:
+            result = service.record_capability_verification(
+                capability["id"],
+                event,
+                actor="selftest",
+                idempotency_key=(
+                    "selftest:persistent_memory:verification:v1:" + source_digest
+                ),
+            )
+        except Exception as exc:
+            return _res(
+                name,
+                False,
+                "verification persistence fallo: "
+                + type(exc).__name__ + ": " + str(exc)[:240],
+            )
+        return _res(
+            name,
+            bool(ok and result.get("effective_state") == "verified"),
+            "resultado=" + str(result.get("outcome"))
+            + "; effective_state=" + str(result.get("effective_state"))
+            + "; checks=" + str(checks),
+        )
+
     def t_session_auth_capability():
         name = "TEST_SESSION_AUTH_CAPABILITY"
         rows = service.list_capabilities(filters={"name": "session_auth"}, limit=1)
@@ -704,6 +899,7 @@ def run_logic_tests(service, fresh_service_factory=None):
         ("TEST_LEARNING_STATE_CONTRACT", t_learning_state_contract),
         ("TEST_CAPABILITY_ENGINE_CONTRACT", t_capability_engine_contract),
         ("TEST_SESSION_AUTH_CAPABILITY", t_session_auth_capability),
+        ("TEST_PERSISTENT_MEMORY_CAPABILITY", t_persistent_memory_capability),
         ("TEST_CAPABILITY_PERSISTENCE", t_capability_persistence),
         ("TEST_CAPABILITY_VERIFICATION_APPEND_ONLY", t_capability_verification_append_only),
     ):
