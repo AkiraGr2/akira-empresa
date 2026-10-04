@@ -35,7 +35,8 @@ class ProviderFailoverRegressionTests(unittest.TestCase):
     def test_openrouter_supports_multiple_keys(self):
         self.assertIn("def get_openrouter_keys():", self.source)
         self.assertIn("def _pick_openrouter_keys():", self.source)
-        self.assertIn("OPENROUTER_API_KEY_5", self.source)
+        self.assertIn('os.getenv(f"OPENROUTER_API_KEY_{i}"', self.source)
+
 
     def test_mistral_is_optional_fourth_provider(self):
         self.assertIn("def get_mistral_keys():", self.source)
