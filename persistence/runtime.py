@@ -94,7 +94,9 @@ def boot(backend_factory=None, attempts=3, wait_seconds=(5, 10), sleep=time.slee
                 sleep(wait_seconds[min(i, len(wait_seconds) - 1)])
     else:
         return
-    if os.getenv("AKIRA_PERSISTENCE_SELFTEST", "").strip() == "1":
+    selftest_enabled = os.getenv("AKIRA_PERSISTENCE_SELFTEST", "").strip() == "1"
+    print(f"[persistence] logic selftest enabled={selftest_enabled}", flush=True)
+    if selftest_enabled:
         try:
             fresh = (lambda: PersistenceService(fresh_repo_factory()))
             results = run_logic_tests(service, fresh_service_factory=fresh)
