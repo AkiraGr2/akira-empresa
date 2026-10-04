@@ -16,7 +16,7 @@ import uuid
 
 import akira_auth
 
-from .core import (ConflictError, PersistenceError, ValidationError, new_id,
+from .core import (ConflictError, LEARNING_SCHEMA_VERSION, PersistenceError, ValidationError, new_id,
                    validate_memory, validate_learning_event)
 from .memory_recall import recall_memories
 from .capability import (
@@ -422,6 +422,143 @@ def run_logic_tests(service, fresh_service_factory=None):
         ok = valid["status"] == "candidate" and invalid
         return _res(name, ok, "candidate valido y estados desconocidos rechazados" if ok else "fallo del contrato de estados")
 
+
+
+    def t_learning_persistent_capability():
+        name = "TEST_LEARNING_PERSISTENT_CAPABILITY"
+        rows = service.list_capabilities(filters={"name": "learning_persistent"}, limit=1)
+        if not rows:
+            return _res(name, False, "capacidad learning_persistent no fue registrada por el bootstrap")
+        scope_a = "selftest:learning-persistent:A"
+        scope_b = "selftest:learning-persistent:B"
+        created_ids_local = []
+        checks = {}
+        idem = "selftest:learning_persistent:v1:" + uuid.uuid4().hex
+        try:
+            a = service.save_learning({
+                "source": "learning_persistent_selftest",
+                "event": "selftest lifecycle",
+                "lesson": "learning persistence contract probe " + uuid.uuid4().hex,
+                "knowledge_nodes": [],
+                "relationships": [],
+                "confidence": 0.9,
+                "outcome": "success",
+                "status": "candidate",
+                "evidence": [],
+                "learning_context": {"origin": "selftest", "scope": scope_a},
+            }, actor="selftest", owner_scope=scope_a, idempotency_key=idem)
+            b = service.save_learning({
+                "source": "learning_persistent_selftest",
+                "event": "selftest isolation",
+                "lesson": "learning persistence scope B " + uuid.uuid4().hex,
+                "knowledge_nodes": [],
+                "relationships": [],
+                "confidence": 0.8,
+                "outcome": "unknown",
+                "status": "candidate",
+                "evidence": [],
+                "learning_context": {"origin": "selftest", "scope": scope_b},
+            }, actor="selftest", owner_scope=scope_b)
+            created_ids_local.extend([a["record"]["id"], b["record"]["id"]])
+
+            reread = service.get_learning(a["record"]["id"], owner_scope=scope_a)
+            foreign = service.get_learning(a["record"]["id"], owner_scope=scope_b)
+            rows_b = service.search_learning({"id": a["record"]["id"]}, owner_scope=scope_b, limit=10)
+            fresh_service = fresh_service_factory() if fresh_service_factory else service
+            fresh = fresh_service.get_learning(a["record"]["id"], owner_scope=scope_a)
+            repeat = service.save_learning({
+                "source": "learning_persistent_selftest",
+                "event": "selftest lifecycle",
+                "lesson": a["record"]["lesson"],
+                "knowledge_nodes": [],
+                "relationships": [],
+                "confidence": 0.9,
+                "outcome": "success",
+                "status": "candidate",
+                "evidence": [],
+                "learning_context": {"origin": "selftest", "scope": scope_a},
+            }, actor="selftest", owner_scope=scope_a, idempotency_key=idem)
+
+            checks["created_v3"] = (
+                a["outcome"] == "created"
+                and a["record"].get("schema_version") == LEARNING_SCHEMA_VERSION
+                and a["record"].get("status") == "candidate"
+            )
+            checks["reread"] = bool(reread and reread["id"] == a["record"]["id"])
+            checks["foreign_read_blocked"] = foreign is None and not rows_b
+            checks["fresh_connection_reread"] = bool(fresh and fresh["id"] == a["record"]["id"])
+            checks["idempotent"] = (
+                repeat["outcome"] == "already_synced"
+                and repeat["record"]["id"] == a["record"]["id"]
+            )
+
+            evidence = [{
+                "type": "selftest",
+                "title": "Learning persistent evidence",
+                "reference": "selftest://learning-persistent/v1",
+                "summary": "Evidencia controlada para verificar el ciclo candidate -> verified -> consolidated.",
+                "hash": hashlib.sha256(a["record"]["lesson"].encode("utf-8")).hexdigest()[:16],
+            }]
+            with_evidence = service.add_learning_evidence(
+                a["record"]["id"], evidence,
+                expected_version=a["record"]["version"],
+                actor="selftest", owner_scope=scope_a,
+            )
+            verified = service.update_learning_status(
+                a["record"]["id"], "verified",
+                expected_version=with_evidence["version"],
+                actor="selftest", owner_scope=scope_a,
+            )
+            gate_blocked = False
+            try:
+                service.update_learning_status(
+                    a["record"]["id"], "consolidated",
+                    expected_version=verified["version"],
+                    actor="selftest", owner_scope=scope_a,
+                )
+            except ValidationError:
+                gate_blocked = True
+
+            analyzed = service.update_learning(
+                a["record"]["id"],
+                {"verification_analysis": {
+                    "verdict": "supported",
+                    "confidence": 0.90,
+                    "evaluated_by": "selftest",
+                }},
+                expected_version=verified["version"],
+                actor="selftest", owner_scope=scope_a,
+            )
+            consolidated = service.update_learning_status(
+                a["record"]["id"], "consolidated",
+                expected_version=analyzed["version"],
+                actor="selftest", owner_scope=scope_a,
+            )
+            reused = service.record_reuse(
+                a["record"]["id"], actor="selftest", owner_scope=scope_a
+            )
+
+            checks["evidence_persisted"] = len(with_evidence.get("evidence") or []) == 1
+            checks["verified_transition"] = verified.get("status") == "verified"
+            checks["consolidation_gate"] = gate_blocked
+            checks["consolidated_with_supported_analysis"] = consolidated.get("status") == "consolidated"
+            checks["reuse_persisted"] = reused.get("reuse_count") == 1 and reused.get("last_reused_at") is not None
+
+            ok = all(checks.values())
+            detail = "checks=" + str(checks)
+            for learning_id in created_ids_local:
+                try:
+                    service.repo.delete("learning_events", learning_id)
+                except Exception:
+                    pass
+            return _res(name, ok, detail)
+        except Exception as exc:
+            for learning_id in created_ids_local:
+                try:
+                    service.repo.delete("learning_events", learning_id)
+                except Exception:
+                    pass
+            return _res(name, False, f"excepcion {type(exc).__name__}: {str(exc)[:240]}")
 
     def t_capability_engine_contract():
         name = "TEST_CAPABILITY_ENGINE_CONTRACT"
@@ -1119,6 +1256,7 @@ def run_logic_tests(service, fresh_service_factory=None):
         ("TEST_SESSION_AUTH_CAPABILITY", t_session_auth_capability),
         ("TEST_PERSISTENT_MEMORY_CAPABILITY", t_persistent_memory_capability),
         ("TEST_MEMORY_RECALL_CAPABILITY", t_memory_recall_capability),
+        ("TEST_LEARNING_PERSISTENT_CAPABILITY", t_learning_persistent_capability),
         ("TEST_CAPABILITY_PERSISTENCE", t_capability_persistence),
         ("TEST_CAPABILITY_VERIFICATION_APPEND_ONLY", t_capability_verification_append_only),
     ):

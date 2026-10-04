@@ -2430,7 +2430,7 @@ def v8_learning_evaluate(request: Request, learning_id: str, payload: dict):
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     from persistence.core import ConflictError, NotFoundError, PersistenceError, ValidationError
-    current = service.get_learning(learning_id, owner_scope=owner_scope)
+    current = service.get_learning(learning_id, owner_scope=s["owner_scope"])
     if current is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
     evidence = current.get("evidence") or []
     if not evidence: return JSONResponse({"ok": False, "reason": "evidence_required"}, status_code=400)

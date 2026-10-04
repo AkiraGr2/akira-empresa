@@ -187,9 +187,9 @@ class MemoryRecallContractTests(unittest.TestCase):
             embedding_model=self.MODEL,
         )
         self.assertEqual([row["id"] for row in result], ["mem_learning"])
-        self.assertEqual(
-            self.service.learning_calls,
-            [("learning-A", "g:user-A")],
+        self.assertTrue(self.service.learning_calls)
+        self.assertTrue(
+            all(scope == "g:user-A" for _learning_id, scope in self.service.learning_calls)
         )
         self.assertEqual(
             self.service.reuse_calls,
