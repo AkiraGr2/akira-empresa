@@ -62,6 +62,10 @@ class SpecializedAgentsContractTests(unittest.TestCase):
         with self.assertRaises(specialized_agent_tools.SpecializedAgentError):
             specialized_agent_tools.run_python_tests(tests=["test_not_allowlisted"])
 
+    def test_tester_accepts_allowlisted_package_test_module(self):
+        modules = specialized_agent_tools._normalize_test_modules(["persistence.test_absorption"])
+        self.assertEqual(modules, ["persistence.test_absorption"])
+
     def test_startup_seed_continues_after_one_item_fails(self):
         class FakeService:
             def __init__(self):
