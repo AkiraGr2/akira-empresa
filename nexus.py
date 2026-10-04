@@ -2467,7 +2467,7 @@ def v8_learning_status_update(request: Request, learning_id: str, payload: dict)
     if graph and graph.get("memory"):
         _index_memory_embedding(service, graph["memory"], actor=s["email"])
         try:
-            graph["semantic_indexed"] = bool(service.get_memory_embedding(graph["memory"]["id"]))
+            graph["semantic_indexed"] = bool(service.get_memory_embedding(graph["memory"]["id"], owner_scope=s["owner_scope"]))
         except Exception:
             graph["semantic_indexed"] = False
     return {"ok": True, "learning": rec, "graph": graph}
@@ -4214,6 +4214,7 @@ def v8_memory_semantic_selftest(request: Request):
                 hashlib.sha256(
                     (MEMORY_EMBEDDING_MODEL + "\n" + created["record"]["content"]).encode("utf-8")
                 ).hexdigest(),
+                owner_scope=s["owner_scope"],
             )
             add("embedding_persisted", bool(indexed and indexed.get("memory_id") == memory_id), indexed or {})
             query_embedding = _generate_memory_embedding("recuperar prueba de recuperación semántica controlada")
@@ -4221,6 +4222,7 @@ def v8_memory_semantic_selftest(request: Request):
                 query_embedding or embedding,
                 MEMORY_EMBEDDING_MODEL,
                 limit=10,
+                owner_scope=s["owner_scope"],
             )
             hit = next((row for row in semantic if row.get("memory_id") == memory_id), None)
             add(
@@ -4229,10 +4231,10 @@ def v8_memory_semantic_selftest(request: Request):
                 {"hit": bool(hit), "score": (hit or {}).get("semantic_score")},
             )
         if memory_id:
-            memory = service.get_memory(memory_id)
+            memory = service.get_memory(memory_id, owner_scope=s["owner_scope"])
             if memory:
                 service.archive_memory(memory_id, expected_version=memory["version"], actor=s["email"])
-            service.delete_memory_embedding(memory_id)
+            service.delete_memory_embedding(memory_id, owner_scope=s["owner_scope"])
             add("semantic_cleanup", True, {"memory_id": memory_id})
     except Exception as e:
         add("semantic_selftest_contract", False, {"error_type": type(e).__name__, "message": str(e)[:200]})
@@ -4839,10 +4841,10 @@ def memory_ingest(request: Request, payload: dict):
         return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
-    indexed = _index_memory_embedding(service, result["record"], actor="browser_sync")
+    indexed = _index_memory_embedding(service, result["record"], actor="browser_sync", owner_scope=owner_scope)
     if not indexed:
         try:
-            indexed = bool(service.get_memory_embedding(result["record"]["id"]))
+            indexed = bool(service.get_memory_embedding(result["record"]["id"], owner_scope=owner_scope))
         except Exception:
             indexed = False
     return {"ok": True, "stored": True, "id": result["record"]["id"], "outcome": result["outcome"], "semantic_indexed": indexed}
@@ -5288,7 +5290,7 @@ def _generate_memory_embedding(text):
                     pass
     return None
 
-def _index_memory_embedding(service, memory, actor="semantic-index"):
+def _index_memory_embedding(service, memory, actor="semantic-index", owner_scope=None):
     if not isinstance(memory, dict):
         return False
     memory_id = str(memory.get("id") or "").strip()
@@ -5299,7 +5301,7 @@ def _index_memory_embedding(service, memory, actor="semantic-index"):
         (MEMORY_EMBEDDING_MODEL + "\n" + content).encode("utf-8")
     ).hexdigest()
     try:
-        existing = service.get_memory_embedding(memory_id)
+        existing = service.get_memory_embedding(memory_id, owner_scope=owner_scope or memory.get("owner_scope"))
         if existing and existing.get("model") == MEMORY_EMBEDDING_MODEL and existing.get("source_hash") == source_hash:
             return True
     except Exception:
@@ -5313,6 +5315,7 @@ def _index_memory_embedding(service, memory, actor="semantic-index"):
             MEMORY_EMBEDDING_MODEL,
             embedding,
             source_hash,
+            owner_scope=owner_scope or memory.get("owner_scope"),
         )
         return True
     except Exception as e:
@@ -5506,7 +5509,7 @@ def v8_memory_semantic_reindex(request: Request, payload: dict):
     if source:
         filters["source"] = source
     try:
-        memories = service.search_memory(filters, limit=limit, offset=offset, order_by="created_at", descending=False)
+        memories = service.search_memory(filters, limit=limit, offset=offset, order_by="created_at", descending=False, owner_scope=s["owner_scope"])
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
 
@@ -5522,7 +5525,7 @@ def v8_memory_semantic_reindex(request: Request, payload: dict):
             if existing and existing.get("model") == MEMORY_EMBEDDING_MODEL and existing.get("source_hash") == expected_hash:
                 already_indexed += 1
                 continue
-            if _index_memory_embedding(service, memory, actor=s["email"]):
+            if _index_memory_embedding(service, memory, actor=s["email"], owner_scope=s["owner_scope"]):
                 indexed += 1
             else:
                 failed.append(memory.get("id"))
