@@ -134,8 +134,13 @@ class PersistenceService:
     def recent_audit(self, actor=None, action_prefix=None, limit=20):
         return self.repo.audit_search(actor=actor, action_prefix=action_prefix, limit=limit)
 
-    def save_memory(self, data, actor="system", idempotency_key=None):
+    def save_memory(self, data, actor="system", idempotency_key=None, owner_scope=None):
         fields = validate_memory(data)
+        if owner_scope is not None:
+            scope = str(owner_scope).strip()
+            if not scope:
+                raise ValidationError("owner_scope requerido")
+            fields["owner_scope"] = scope
         if "created_by" not in fields:
             fields["created_by"] = actor
         record = dict(fields, id=new_id("mem"), status="active", schema_version=MEMORY_SCHEMA_VERSION)
@@ -170,7 +175,11 @@ class PersistenceService:
             except Exception as e: print(f"[auto-connect] memory_tags fallo: {type(e).__name__}: {str(e)[:200]}")
         return result
 
-    def get_memory(self, memory_id): return self.repo.get("memories", memory_id)
+    def get_memory(self, memory_id, owner_scope=None):
+        memory = self.repo.get("memories", memory_id)
+        if memory is None or owner_scope is None:
+            return memory
+        return memory if _scope_matches(memory.get("owner_scope"), owner_scope) else None
     def get_memory_embedding(self, memory_id):
         getter = getattr(self.repo, "get_memory_embedding", None)
         if getter is None:
@@ -239,12 +248,26 @@ class PersistenceService:
         if hive:
             f.pop("privacy_level", None); f["privacy_level__in"] = list(HIVE_VISIBLE)
         return f
-    def search_memory(self, filters=None, hive=False, limit=50, offset=0, order_by="created_at", descending=True):
+    def search_memory(self, filters=None, hive=False, limit=50, offset=0, order_by="created_at", descending=True, owner_scope=None):
         limit = max(1, min(int(limit), 200))
-        return self.repo.search("memories", self._memory_filters(filters, hive), limit=limit,
-                                offset=max(0, int(offset)), order_by=order_by, descending=descending)
-    def count_memory(self, filters=None, hive=False):
-        return self.repo.count("memories", self._memory_filters(filters, hive))
+        base = self._memory_filters(filters, hive)
+        if owner_scope is None:
+            return self.repo.search("memories", base, limit=limit,
+                                    offset=max(0, int(offset)), order_by=order_by, descending=descending)
+        rows = self.repo.search("memories", base, limit=max(limit, 500), offset=0,
+                                order_by=order_by, descending=descending)
+        scope = str(owner_scope).strip()
+        filtered = [r for r in rows if _scope_matches(r.get("owner_scope"), scope)]
+        start = max(0, int(offset))
+        return filtered[start:start + limit]
+
+    def count_memory(self, filters=None, hive=False, owner_scope=None):
+        base = self._memory_filters(filters, hive)
+        if owner_scope is None:
+            return self.repo.count("memories", base)
+        rows = self.repo.search("memories", base, limit=5000)
+        scope = str(owner_scope).strip()
+        return sum(1 for r in rows if _scope_matches(r.get("owner_scope"), scope))
     def health(self): return self.repo.ping()
 
     def get_self_model(self):
