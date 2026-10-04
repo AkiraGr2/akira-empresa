@@ -13,6 +13,13 @@ import uuid
 
 from .core import (ConflictError, PersistenceError, ValidationError, new_id,
                    validate_memory, validate_learning_event)
+from .capability import (
+    CapabilityContractError,
+    derive_effective_state,
+    validate_capability,
+    validate_capability_state,
+    validate_capability_transition,
+)
 
 PROBE_KEY = "selftest:restart-probe:v1"
 PROBE_CONTENT = "AKIRA selftest restart probe v1: si puedes leer esto tras un reinicio, la persistencia funciona."
@@ -400,6 +407,196 @@ def run_logic_tests(service, fresh_service_factory=None):
         ok = valid["status"] == "candidate" and invalid
         return _res(name, ok, "candidate valido y estados desconocidos rechazados" if ok else "fallo del contrato de estados")
 
+
+    def t_capability_engine_contract():
+        name = "TEST_CAPABILITY_ENGINE_CONTRACT"
+        valid = validate_capability({
+            "name": "selftest_capability_contract",
+            "description": "Prueba estable del contrato Capability Engine.",
+            "category": "general",
+            "kind": "composite",
+            "implementation_state": "implemented",
+            "verification_state": "unverified",
+            "availability_state": "available",
+            "maturity": "experimental",
+            "cost_compatibility": "unknown",
+            "dependencies": [{"kind": "runtime", "id": "selftest", "required": True}],
+            "limitations": [],
+            "verification_spec": {
+                "method": "selftest",
+                "test_key": "capability_contract",
+                "freshness_policy": {
+                    "mode": "on_change",
+                    "max_age_seconds": None,
+                    "invalidate_on": ["build_change"],
+                },
+            },
+            "provenance": {"source": "selftest", "created_by": "selftest"},
+        })
+        impossible = False
+        try:
+            validate_capability_state({
+                "implementation_state": "not_implemented",
+                "verification_state": "verified",
+                "availability_state": "unavailable",
+                "maturity": "experimental",
+                "cost_compatibility": "unknown",
+            })
+        except CapabilityContractError:
+            impossible = True
+        effective = derive_effective_state(valid)
+        try:
+            validate_capability_transition(
+                validate_capability_state({
+                    "implementation_state": "implemented",
+                    "verification_state": "unverified",
+                    "availability_state": "available",
+                    "maturity": "experimental",
+                    "cost_compatibility": "unknown",
+                }),
+                validate_capability_state({
+                    "implementation_state": "implemented",
+                    "verification_state": "verified",
+                    "availability_state": "available",
+                    "maturity": "experimental",
+                    "cost_compatibility": "unknown",
+                }),
+            )
+            transition_ok = True
+        except CapabilityContractError:
+            transition_ok = False
+        ok = (
+            valid["verification_state"] == "unverified"
+            and effective == "implemented_unverified_available"
+            and impossible
+            and transition_ok
+        )
+        return _res(name, ok, "estados validos, estado imposible rechazado y transicion valida aceptada")
+
+    def t_capability_persistence():
+        name = "TEST_CAPABILITY_PERSISTENCE"
+        key = "selftest:capability:v1"
+        r = service.create_capability({
+            "name": "selftest_capability",
+            "description": "Fixture estable del Capability Engine.",
+            "category": "general",
+            "kind": "intrinsic",
+            "implementation_state": "implemented",
+            "verification_state": "unverified",
+            "availability_state": "available",
+            "maturity": "experimental",
+            "cost_compatibility": "unknown",
+            "dependencies": [],
+            "limitations": [],
+            "verification_spec": {
+                "method": "selftest",
+                "test_key": "capability_persistence",
+                "freshness_policy": {
+                    "mode": "on_change",
+                    "max_age_seconds": None,
+                    "invalidate_on": ["build_change", "dependency_change"],
+                },
+            },
+            "provenance": {"source": "selftest", "created_by": "selftest"},
+        }, actor="selftest", idempotency_key=key)
+        cap = r["record"]
+        vr = service.record_capability_verification(
+            cap["id"],
+            {
+                "event_type": "verification",
+                "test_key": "capability_persistence",
+                "test_version": "v1",
+                "result": "pass",
+                "evidence": [{
+                    "type": "selftest",
+                    "title": "Capability persistence roundtrip",
+                    "reference": "selftest:capability:v1",
+                    "summary": "Capability y verification persistidas y releidas.",
+                    "hash": "",
+                }],
+                "environment": {"runtime": "selftest"},
+                "dependency_snapshot": [],
+                "runtime_version": "selftest",
+                "build_ref": "selftest",
+                "actor": "selftest",
+                "executor": "selftest",
+                "evaluator": "system",
+            },
+            actor="selftest",
+            idempotency_key="selftest:capability:verification:v1",
+        )
+        cap2 = service.get_capability(cap["id"])
+        rows = service.get_capability_verifications(cap["id"], limit=10)
+        repeat = service.record_capability_verification(
+            cap["id"],
+            {
+                "event_type": "verification",
+                "test_key": "capability_persistence",
+                "test_version": "v1",
+                "result": "pass",
+                "evidence": [{
+                    "type": "selftest",
+                    "title": "Capability persistence roundtrip",
+                    "reference": "selftest:capability:v1",
+                    "summary": "Capability y verification persistidas y releidas.",
+                    "hash": "",
+                }],
+                "environment": {"runtime": "selftest"},
+                "dependency_snapshot": [],
+                "runtime_version": "selftest",
+                "build_ref": "selftest",
+                "actor": "selftest",
+                "executor": "selftest",
+                "evaluator": "system",
+            },
+            actor="selftest",
+            idempotency_key="selftest:capability:verification:v1",
+        )
+        ok = (
+            cap2 is not None
+            and cap2["verification_state"] == "verified"
+            and service.get_capability_verifications(cap["id"], limit=10)
+            and rows[0]["state_after"]["verification_state"] == "verified"
+            and repeat["outcome"] == "already_synced"
+            and vr["effective_state"] == "verified"
+        )
+        return _res(name, bool(ok), f"verificationes persistidas={len(rows)}; repeticion={repeat['outcome']}")
+
+    def t_capability_verification_append_only():
+        name = "TEST_CAPABILITY_VERIFICATION_APPEND_ONLY"
+        cap = service.get_capability("capability_selftest")
+        if cap is None:
+            cap = service.get_capability("cap_selftest")
+        rows = service.list_capabilities(filters={"name": "selftest_capability"}, limit=1)
+        if not rows:
+            return _res(name, False, "fixture selftest_capability no existe")
+        cap = rows[0]
+        verifications = service.get_capability_verifications(cap["id"], limit=10)
+        if not verifications:
+            return _res(name, False, "fixture no tiene verification")
+        event = verifications[0]
+        original = service.repo.get("capability_verifications", event["id"])
+        update_blocked = False
+        try:
+            service.repo.update(
+                "capability_verifications",
+                event["id"],
+                {"result": "fail"},
+                original["version"],
+            )
+        except PersistenceError:
+            update_blocked = True
+        delete_result = service.repo.delete("capability_verifications", event["id"])
+        current = service.repo.get("capability_verifications", event["id"])
+        ok = (
+            update_blocked
+            and delete_result is False
+            and current is not None
+            and current["result"] == original["result"]
+            and current["version"] == original["version"]
+        )
+        return _res(name, ok, "UPDATE y DELETE bloqueados; historial permanece intacto")
+
     for name, fn in (
         ("TEST_MEMORY_PERSISTENCE (reinicio suave)", t_memory_persistence),
         ("TEST_IDEMPOTENT_SYNC", t_idempotent),
@@ -417,6 +614,9 @@ def run_logic_tests(service, fresh_service_factory=None):
         ("TEST_AGENT_TASK_OWNER_SCOPE_FILTER", t_agent_task_owner_scope_filter),
         ("TEST_AGENT_STATE_TRANSITION", t_agent_state_transition),
         ("TEST_LEARNING_STATE_CONTRACT", t_learning_state_contract),
+        ("TEST_CAPABILITY_ENGINE_CONTRACT", t_capability_engine_contract),
+        ("TEST_CAPABILITY_PERSISTENCE", t_capability_persistence),
+        ("TEST_CAPABILITY_VERIFICATION_APPEND_ONLY", t_capability_verification_append_only),
     ):
         results.append(_guard(name, fn))
 
