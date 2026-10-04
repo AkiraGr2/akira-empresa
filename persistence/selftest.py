@@ -496,8 +496,7 @@ def run_logic_tests(service, fresh_service_factory=None):
                 "type": "selftest",
                 "title": "Learning persistent evidence",
                 "reference": "selftest://learning-persistent/v1",
-                "summary": "Evidencia controlada para verificar el ciclo candidate -> verified -> consolidated.",
-                "hash": hashlib.sha256(a["record"]["lesson"].encode("utf-8")).hexdigest()[:16],
+                "note": "Evidencia controlada para verificar el ciclo candidate -> verified -> consolidated.",
             }]
             with_evidence = service.add_learning_evidence(
                 a["record"]["id"], evidence,
