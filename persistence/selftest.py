@@ -432,6 +432,31 @@ def run_logic_tests(service, fresh_service_factory=None):
             return _res(name, False, "capacidad graph_persistent no fue registrada por el bootstrap")
         capability = rows[0]
 
+        # Limpia únicamente fixtures V12 anteriores creados por este selftest.
+        # El owner_scope dedicado evita tocar datos productivos aunque compartan
+        # una etiqueta parecida.
+        stale_nodes = []
+        for stale in service.repo.search("graph_nodes", {"status": "active"}, limit=2000):
+            label = str(stale.get("label") or "")
+            scope = str(stale.get("owner_scope") or "")
+            if label.startswith("V12 Graph Node ") and scope.startswith("selftest:graph-persistent:"):
+                stale_nodes.append(stale["id"])
+        for stale_node_id in stale_nodes:
+            stale_edges = {}
+            for field in ("from_node", "to_node"):
+                for edge in service.repo.search("graph_edges", {field: stale_node_id}, limit=5000):
+                    if edge.get("id"):
+                        stale_edges[edge["id"]] = edge
+            for edge in stale_edges.values():
+                try:
+                    service.repo.delete("graph_edges", edge["id"])
+                except Exception:
+                    pass
+            try:
+                service.repo.delete("graph_nodes", stale_node_id)
+            except Exception:
+                pass
+
         scope_a = "selftest:graph-persistent:A:" + uuid.uuid4().hex[:8]
         scope_b = "selftest:graph-persistent:B:" + uuid.uuid4().hex[:8]
         created_node_ids = []
