@@ -1970,14 +1970,13 @@ class PersistenceService:
 
     def add_message(self, conversation_id, role, content, model=None,
                     memories_used=None, duration_ms=0, error=None, actor="system",
-                    idempotency_key=None):
+                    idempotency_key=None, owner=None):
         """Añade un mensaje a una conversacion. En la MISMA transaccion:
         - crea el mensaje (append-only)
         - actualiza conversations.message_count +1
         - actualiza conversations.last_message_at al ahora
         Devuelve {"record": mensaje, "conversation": conversacion_actualizada}."""
-        scoped_owner = actor if actor and actor != "system" else None
-        current_conv = self.get_conversation(conversation_id, owner=scoped_owner)
+        current_conv = self.get_conversation(conversation_id, owner=owner)
         if current_conv is None:
             raise NotFoundError(f"conversacion no existe: {conversation_id}")
         if current_conv.get("status") != "active":
