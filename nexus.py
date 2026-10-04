@@ -3244,7 +3244,7 @@ def _invoke_tool(service, tool_name, inputs, actor):
         mtype = str(inputs.get("memory_type") or "episodic")
         gate = _memory_gate_decide(
             service, content, mtype, 5,
-            ["mission_memory", str(mission_id)[:64]],
+            ["mission_memory"],
             actor, "owner",
         )
         if not gate.get("allowed"):
