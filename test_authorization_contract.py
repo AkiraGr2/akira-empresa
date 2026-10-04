@@ -233,7 +233,10 @@ class AuthorizationContractTests(unittest.TestCase):
         ]
         for name in mission_names:
             source = self._function_source(name)
-            self.assertTrue('s["email"]' in source or 's["owner_scope"]' in source, name)
+            if name == "v8_missions_selftest":
+                self.assertIn('_require_owner(request)', source, name)
+            else:
+                self.assertTrue('s["email"]' in source or 's["owner_scope"]' in source, name)
         for name in task_names:
             source = self._function_source(name)
             self.assertIn('s["owner_scope"]', source, name)
