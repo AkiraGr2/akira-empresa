@@ -1802,8 +1802,8 @@ async def v8_me(request: Request):
 
 @app.get("/api/v8/self")
 def v8_self(request: Request):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     try:
