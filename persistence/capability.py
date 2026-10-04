@@ -134,7 +134,11 @@ def _json_safe(name: str, value: Any, *, max_items: int = MAX_CAPABILITY_ITEMS,
     def walk(node: Any, depth: int) -> Any:
         if depth > MAX_JSON_DEPTH:
             raise CapabilityContractError(f"{name} supera la profundidad maxima")
-        if node is None or isinstance(node, (bool, int, float)):
+        if node is None or isinstance(node, (bool, int)):
+            return node
+        if isinstance(node, float):
+            if not __import__("math").isfinite(node):
+                raise CapabilityContractError(f"{name} contiene un numero no finito")
             return node
         if isinstance(node, str):
             if len(node) > MAX_JSON_STRING:
@@ -429,67 +433,6 @@ def validate_verification_result_for_event(event_type: str, result: str, evidenc
     if event_type == "invalidation" and result not in ("fail", "inconclusive"):
         raise CapabilityContractError("invalidation requiere fail o inconclusive")
 
-
-def apply_verification_result(current: Mapping[str, Any], event: Mapping[str, Any]) -> dict:
-    before = validate_capability_state(capability_state_snapshot(current))
-    event_type = _choice("event_type", event.get("event_type"), CAPABILITY_VERIFICATION_EVENTS)
-    result = _choice("result", event.get("result"), CAPABILITY_VERIFICATION_RESULTS)
-    evidence = event.get("evidence") or []
-    validate_verification_result_for_event(event_type, result, evidence)
-
-    after = dict(before)
-    if event_type in ("verification", "revalidation"):
-        if result == "pass":
-            after["verification_state"] = "verified"
-        elif result == "fail":
-            after["verification_state"] = "failed"
-        elif result == "inconclusive" and before["verification_state"] == "verified":
-            after["verification_state"] = "stale"
-    elif event_type == "invalidation":
-        after["verification_state"] = "stale"
-    elif event_type == "availability_check":
-        observed = event.get("observed_availability_state")
-        if observed is None:
-            raise CapabilityContractError("availability_check requiere observed_availability_state")
-        after["availability_state"] = _choice(
-            "observed_availability_state", observed, CAPABILITY_AVAILABILITY_STATES
-        )
-
-    validate_capability_state(after)
-    return after
-
-
-def derive_effective_state(record: Mapping[str, Any]) -> str:
-    state = validate_capability_state(capability_state_snapshot(record))
-    impl = state["implementation_state"]
-    verification = state["verification_state"]
-    availability = state["availability_state"]
-
-    if impl == "deprecated":
-        return "deprecated"
-    if impl == "not_implemented":
-        return "not_implemented"
-    if verification == "failed":
-        return "failed"
-    if verification == "stale":
-        return "stale"
-    if impl == "partial":
-        if verification == "verified" and availability == "available":
-            return "partial_verified"
-        return "partial"
-    if verification == "verified":
-        if availability == "available":
-            return "verified"
-        if availability == "degraded":
-            return "verified_degraded"
-        return "verified_unavailable"
-    if availability == "available":
-        return "implemented_unverified_available"
-    if availability == "degraded":
-        return "implemented_unverified_degraded"
-    if availability == "blocked":
-        return "blocked"
-    return "unavailable"
 
 
 _STATE_TRANSITIONS = {
