@@ -206,6 +206,7 @@ ENTITIES = {
         "in_filterable": ("event_type", "test_key", "result"),
         "orderable": ("created_at",),
         "idempotent": True,
+        "conflict_strategy": "advisory_precheck",
     },
     "learning_events": {
         "table": "learning_events",
