@@ -46,6 +46,13 @@ class ProviderFailoverRegressionTests(unittest.TestCase):
         self.assertIn('"mistral-small-latest"', self.source)
         self.assertGreaterEqual(self.source.count("get_mistral_fallback"), 3)
 
+    def test_safe_provider_inventory_counts_configured_keys(self):
+        self.assertIn("def provider_key_inventory():", self.source)
+        self.assertIn('"gemini": len(get_gemini_keys())', self.source)
+        self.assertIn('"groq": len(get_groq_keys())', self.source)
+        self.assertIn('"openrouter": len(get_openrouter_keys())', self.source)
+        self.assertIn('"mistral": len(get_mistral_keys())', self.source)
+
     def test_gemini_429_uses_short_cooldown(self):
         self.assertIn(
             '_mark_key_failed(key, seconds=(120 if code == 429 else 3600))',
