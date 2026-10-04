@@ -498,4 +498,81 @@ MIGRATIONS = [
             WHERE status='active'
         """,
     ),
+
+    (
+        "020_rls_hardening",
+        """
+        ALTER TABLE public.agent_tasks, public.agents, public.audit_log, public.cognitive_cycles, public.cognitive_events, public.conversation_messages, public.conversations, public.graph_edges, public.graph_nodes, public.learning_events, public.memories, public.memory_embeddings, public.missions, public.schema_migrations, public.self_model, public.tool_invocations, public.tools ENABLE ROW LEVEL SECURITY;
+        REVOKE ALL ON TABLE public.agent_tasks, public.agents, public.audit_log, public.cognitive_cycles, public.cognitive_events, public.conversation_messages, public.conversations, public.graph_edges, public.graph_nodes, public.learning_events, public.memories, public.memory_embeddings, public.missions, public.schema_migrations, public.self_model, public.tool_invocations, public.tools FROM anon, authenticated;
+        ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public REVOKE SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON TABLES FROM anon, authenticated;
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON public.agent_tasks AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON public.agent_tasks AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON public.agent_tasks AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON public.agent_tasks AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON public.agents AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON public.agents AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON public.agents AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON public.agents AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON public.audit_log AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON public.audit_log AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON public.audit_log AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON public.audit_log AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON public.cognitive_cycles AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON public.cognitive_cycles AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON public.cognitive_cycles AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON public.cognitive_cycles AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON public.cognitive_events AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON public.cognitive_events AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON public.cognitive_events AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON public.cognitive_events AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON public.conversation_messages AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON public.conversation_messages AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON public.conversation_messages AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON public.conversation_messages AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON public.conversations AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON public.conversations AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON public.conversations AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON public.conversations AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON public.graph_edges AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON public.graph_edges AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON public.graph_edges AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON public.graph_edges AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON public.graph_nodes AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON public.graph_nodes AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON public.graph_nodes AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON public.graph_nodes AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON public.learning_events AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON public.learning_events AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON public.learning_events AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON public.learning_events AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON public.memories AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON public.memories AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON public.memories AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON public.memories AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON public.memory_embeddings AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON public.memory_embeddings AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON public.memory_embeddings AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON public.memory_embeddings AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON public.missions AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON public.missions AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON public.missions AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON public.missions AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON public.schema_migrations AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON public.schema_migrations AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON public.schema_migrations AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON public.schema_migrations AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON public.self_model AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON public.self_model AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON public.self_model AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON public.self_model AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON public.tool_invocations AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON public.tool_invocations AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON public.tool_invocations AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON public.tool_invocations AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON public.tools AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON public.tools AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON public.tools AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON public.tools AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false)
+        """
+    ),
 ]
