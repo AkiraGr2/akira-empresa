@@ -164,6 +164,21 @@ class AuthorizationContractTests(unittest.TestCase):
         self.assertIn('"status": "disabled"', line)
         self.assertIn('"permissions": ["owner"]', line)
 
+    def test_memory_routes_are_owner_only(self):
+        for name in ("memory_ingest", "v8_memory_semantic_reindex", "memory_search"):
+            source = self._function_source(name)
+            self.assertIn("_require_owner(request)", source, name)
+
+    def test_chat_recall_requires_owner_session(self):
+        source = self._function_source("chat")
+        self.assertIn('if session and session.get("is_owner")', source)
+        self.assertIn("else []", source)
+
+    def test_chat_stream_recall_requires_owner_session(self):
+        source = self._function_source("chat_stream")
+        self.assertIn('if session and session.get("is_owner")', source)
+        self.assertIn("else []", source)
+
     def test_memory_save_tool_has_no_undefined_mission_id_dependency(self):
         source = self._function_source("_invoke_tool")
         branch_start = source.index('if tool_name == "memory_save":')
