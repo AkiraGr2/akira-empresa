@@ -57,6 +57,10 @@ class SpecializedAgentsContractTests(unittest.TestCase):
         with self.assertRaises(specialized_agent_tools.SpecializedAgentError):
             specialized_agent_tools.run_python_tests()
 
+    def test_tester_rejects_unknown_test_module_even_when_name_looks_safe(self):
+        with self.assertRaises(specialized_agent_tools.SpecializedAgentError):
+            specialized_agent_tools.run_python_tests(tests=["test_not_allowlisted"])
+
     def test_developer_proposal_is_explicitly_non_mutating(self):
         fake_inspection = {"files": [{"path": "README.md", "status": "ok", "content": "hello"}]}
         fake_result = {
