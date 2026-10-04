@@ -1706,21 +1706,10 @@ async def runtime_capabilities():
 @app.get("/health")
 async def health():
     return {
-        "status":"ok", "version":VERSION, "build_marker":BACKEND_BUILD_MARKER,
-        "membrana":membrana.count(),
-        "audit":audit_models_automatically(),
-        "countermeasures":len(KIRA_LEARNING_DB["blocked_models"]),
-        "github_token": bool(os.getenv("GITHUB_TOKEN","").strip()),
-        "github_repo": os.getenv("GITHUB_REPO","AkiraGr2/akira-empresa"),
-        "identity": "Akira V7.3 consciente - blindada anti-ChatGPT",
-        "consciente": True,
-        "backend_contract": "learning-graph-memory-v3",
-        "learning_selftest_route": _route_registered("/api/v8/learning/selftest"),
-        "semantic_selftest_route": _route_registered("/api/v8/memory/semantic-selftest"),
-        "semantic_reindex_route": _route_registered("/api/v8/memory/semantic-reindex"),
-        "gemini_keys_count": len(get_gemini_keys()),
-        "groq_keys_count": len(get_groq_keys()),
-        "gemini_keys_failed": len([k for k in get_gemini_keys() if _failed_keys_until.get(k,0) > time.time()])
+        "status":"ok",
+        "version":VERSION,
+        "build_marker":BACKEND_BUILD_MARKER,
+        "backend_contract":"learning-graph-memory-v3",
     }
 
 @app.get("/api/countermeasures")
@@ -1748,7 +1737,9 @@ async def self_repair_propose(request: Request):
             "github": apply_autonomous_patch_github(), "identity_blindada": True}
 
 @app.get("/api/brain/shared")
-async def brain_shared():
+async def brain_shared(request: Request):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     _c = membrana.count()
     return {"count": _c["total"], "membrana": _c,
             "status": "ok" if _c.get("available") else "degraded", "identity": "Akira V7.3"}
@@ -1760,7 +1751,9 @@ async def sync_to_r2(request: Request):
     return {"ok": True, "membrana": membrana.count(), "actor": s["email"]}
 
 @app.get("/api/brain/count")
-async def brain_count():
+async def brain_count(request: Request):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     return membrana.count()
 
 @app.post("/api/feedback")
