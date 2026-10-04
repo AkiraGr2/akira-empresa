@@ -18,6 +18,7 @@ import akira_auth
 
 from .core import (ConflictError, PersistenceError, ValidationError, new_id,
                    validate_memory, validate_learning_event)
+from .memory_recall import recall_memories
 from .capability import (
     CapabilityContractError,
     derive_effective_state,
@@ -682,6 +683,223 @@ def run_logic_tests(service, fresh_service_factory=None):
             + "; checks=" + str(checks),
         )
 
+
+    def t_memory_recall_capability():
+        name = "TEST_MEMORY_RECALL_CAPABILITY"
+        rows = service.list_capabilities(filters={"name": "memory_recall"}, limit=1)
+        if not rows:
+            return _res(name, False, "capacidad memory_recall no fue registrada por el bootstrap")
+        capability = rows[0]
+        scope_a = "selftest:memory-recall:A"
+        scope_b = "selftest:memory-recall:B"
+        created_ids_local = []
+        checks = {}
+        detail = ""
+        model = "gemini-embedding-2"
+        vector_a = [1.0] + [0.0] * 767
+        vector_b = [0.0, 1.0] + [0.0] * 766
+        try:
+            a = service.save_memory({
+                "content": "recuerdo alpino controlado A " + uuid.uuid4().hex,
+                "memory_type": "semantic",
+                "importance": 7,
+                "confidence": 0.9,
+                "source": "memory_recall_selftest",
+                "source_reference": "selftest://memory-recall/v1/A",
+                "privacy_level": "PRIVATE",
+            }, actor="selftest", owner_scope=scope_a)
+            b = service.save_memory({
+                "content": "recuerdo marino controlado B " + uuid.uuid4().hex,
+                "memory_type": "semantic",
+                "importance": 7,
+                "confidence": 0.9,
+                "source": "memory_recall_selftest",
+                "source_reference": "selftest://memory-recall/v1/B",
+                "privacy_level": "PRIVATE",
+            }, actor="selftest", owner_scope=scope_b)
+            created_ids_local.extend([a["record"]["id"], b["record"]["id"]])
+
+            service.upsert_memory_embedding(
+                a["record"]["id"],
+                model,
+                vector_a,
+                "selftest:memory-recall:A",
+                owner_scope=scope_a,
+            )
+            service.upsert_memory_embedding(
+                b["record"]["id"],
+                model,
+                vector_b,
+                "selftest:memory-recall:B",
+                owner_scope=scope_b,
+            )
+
+            recalled_a = recall_memories(
+                service,
+                "consulta semantica controlada sin coincidencia lexical",
+                limit=5,
+                include_semantic=True,
+                owner_scope=scope_a,
+                extract_keywords=lambda _q: [],
+                generate_embedding=lambda _q: vector_a,
+                embedding_model=model,
+            )
+            recalled_b = recall_memories(
+                service,
+                "consulta semantica controlada sin coincidencia lexical",
+                limit=5,
+                include_semantic=True,
+                owner_scope=scope_b,
+                extract_keywords=lambda _q: [],
+                generate_embedding=lambda _q: vector_b,
+                embedding_model=model,
+            )
+
+            ids_a = {row.get("id") for row in recalled_a}
+            ids_b = {row.get("id") for row in recalled_b}
+            checks["semantic_scope_a"] = (
+                a["record"]["id"] in ids_a
+                and b["record"]["id"] not in ids_a
+            )
+            checks["semantic_scope_b"] = (
+                b["record"]["id"] in ids_b
+                and a["record"]["id"] not in ids_b
+            )
+
+            lexical = recall_memories(
+                service,
+                "marino",
+                limit=5,
+                include_semantic=False,
+                owner_scope=scope_b,
+                extract_keywords=lambda _q: ["marino"],
+                generate_embedding=None,
+                embedding_model=model,
+            )
+            checks["lexical_fallback"] = b["record"]["id"] in {
+                row.get("id") for row in lexical
+            }
+
+            other = fresh_service_factory() if fresh_service_factory else service
+            fresh = recall_memories(
+                other,
+                "consulta semantica controlada sin coincidencia lexical",
+                limit=5,
+                include_semantic=True,
+                owner_scope=scope_a,
+                extract_keywords=lambda _q: [],
+                generate_embedding=lambda _q: vector_a,
+                embedding_model=model,
+            )
+            checks["fresh_connection_semantic_recall"] = a["record"]["id"] in {
+                row.get("id") for row in fresh
+            }
+
+            archived = service.archive_memory(
+                b["record"]["id"],
+                expected_version=b["record"]["version"],
+                actor="selftest",
+            )
+            after_archive = recall_memories(
+                service,
+                "marino",
+                limit=5,
+                include_semantic=False,
+                owner_scope=scope_b,
+                extract_keywords=lambda _q: ["marino"],
+                generate_embedding=None,
+                embedding_model=model,
+            )
+            checks["archived_hidden"] = (
+                archived.get("status") == "archived"
+                and b["record"]["id"] not in {row.get("id") for row in after_archive}
+            )
+        except Exception as exc:
+            checks["exception_free"] = False
+            detail = "excepcion " + type(exc).__name__ + ": " + str(exc)[:240]
+        else:
+            checks["exception_free"] = True
+        finally:
+            for mid in created_ids_local:
+                try:
+                    service.repo.delete("memories", mid)
+                except Exception:
+                    pass
+
+        ok = all(checks.values())
+        recall_source = inspect.getsource(recall_memories).encode("utf-8")
+        vector_search = inspect.getsource(service.repo.search_memory_embeddings).encode("utf-8")
+        source_digest = hashlib.sha256(
+            recall_source + b"\\n" + vector_search
+        ).hexdigest()[:16]
+        evidence = [{
+            "type": "selftest",
+            "title": "Hybrid memory recall and ownership",
+            "reference": "selftest:memory_recall:v1",
+            "summary": (
+                "Recuperacion semantica vectorial, aislamiento por owner_scope, "
+                "degradacion lexical, reinicio suave y exclusion de memorias archivadas."
+                if ok else
+                "El contrato de recuperacion de memoria no supero todos los controles."
+            ),
+            "hash": source_digest,
+        }]
+        event = {
+            "event_type": "verification",
+            "test_key": "memory_recall_contract",
+            "test_version": "v1",
+            "result": "pass" if ok else "fail",
+            "evidence": evidence,
+            "environment": {
+                "runtime": "selftest",
+                "semantic_provider_call": False,
+            },
+            "dependency_snapshot": [
+                {
+                    "kind": "module",
+                    "id": "persistence.memory_recall",
+                    "version": source_digest,
+                },
+                {
+                    "kind": "storage",
+                    "id": "PostgreSQL.memory_embeddings",
+                    "version": "runtime",
+                },
+                {
+                    "kind": "provider",
+                    "id": model,
+                    "version": "external",
+                },
+            ],
+            "runtime_version": "selftest",
+            "build_ref": source_digest,
+            "actor": "selftest",
+            "executor": "selftest",
+            "evaluator": "system",
+            "error": None if ok else {"checks": checks, "detail": detail},
+        }
+        try:
+            verification = service.record_capability_verification(
+                capability["id"],
+                event,
+                actor="selftest",
+                idempotency_key="selftest:memory_recall:verification:v1:" + source_digest,
+            )
+        except Exception as exc:
+            return _res(
+                name,
+                False,
+                "verification persistence fallo: "
+                + type(exc).__name__ + ": " + str(exc)[:240],
+            )
+        return _res(
+            name,
+            bool(ok and verification.get("effective_state") == "verified"),
+            "resultado=" + str(verification.get("outcome"))
+            + "; effective_state=" + str(verification.get("effective_state"))
+            + "; checks=" + str(checks),
+        )
+
     def t_session_auth_capability():
         name = "TEST_SESSION_AUTH_CAPABILITY"
         rows = service.list_capabilities(filters={"name": "session_auth"}, limit=1)
@@ -900,6 +1118,7 @@ def run_logic_tests(service, fresh_service_factory=None):
         ("TEST_CAPABILITY_ENGINE_CONTRACT", t_capability_engine_contract),
         ("TEST_SESSION_AUTH_CAPABILITY", t_session_auth_capability),
         ("TEST_PERSISTENT_MEMORY_CAPABILITY", t_persistent_memory_capability),
+        ("TEST_MEMORY_RECALL_CAPABILITY", t_memory_recall_capability),
         ("TEST_CAPABILITY_PERSISTENCE", t_capability_persistence),
         ("TEST_CAPABILITY_VERIFICATION_APPEND_ONLY", t_capability_verification_append_only),
     ):
