@@ -1003,15 +1003,47 @@ class PersistenceService:
         f = dict(filters or {})
         f["owner_scope"] = str(owner_scope).strip()
         return self.repo.count("graph_nodes", f)
-    def count_edges(self, filters=None): return self.repo.count("graph_edges", filters or {})
-    def list_graph_nodes(self, limit=500, offset=0, order_by="weight", descending=True):
+    def count_edges(self, filters=None, owner_scope=None):
+        if owner_scope is None:
+            return self.repo.count("graph_edges", filters or {})
+        return len(self.list_graph_edges(
+            limit=5000, offset=0, order_by="weight", descending=True,
+            owner_scope=owner_scope, filters=filters
+        ))
+
+    def list_graph_nodes(self, limit=500, offset=0, order_by="weight", descending=True, owner_scope=None):
         limit = max(1, min(int(limit), 2000))
-        return self.repo.search("graph_nodes", {"status": "active"}, limit=limit,
-                                offset=max(0, int(offset)), order_by=order_by, descending=descending)
-    def list_graph_edges(self, limit=1000, offset=0, order_by="weight", descending=True):
+        filters = {"status": "active"}
+        if owner_scope is not None:
+            filters["owner_scope"] = str(owner_scope).strip()
+        rows = self.repo.search(
+            "graph_nodes", filters, limit=limit, offset=max(0, int(offset)),
+            order_by=order_by, descending=descending
+        )
+        if owner_scope is not None:
+            core = self.repo.search(
+                "graph_nodes", {"status": "active", "label": _CORE_NODE_LABEL}, limit=1
+            )
+            if core and all(str(r.get("id")) != str(core[0].get("id")) for r in rows):
+                rows = [core[0]] + rows
+        return rows[:limit]
+
+    def list_graph_edges(self, limit=1000, offset=0, order_by="weight",
+                         descending=True, owner_scope=None, filters=None):
         limit = max(1, min(int(limit), 5000))
-        return self.repo.search("graph_edges", {"status": "active"}, limit=limit,
-                                offset=max(0, int(offset)), order_by=order_by, descending=descending)
+        base_filters = dict(filters or {})
+        base_filters.setdefault("status", "active")
+        rows = self.repo.search(
+            "graph_edges", base_filters, limit=limit, offset=max(0, int(offset)),
+            order_by=order_by, descending=descending
+        )
+        if owner_scope is None:
+            return rows
+        scope = str(owner_scope).strip()
+        return [
+            edge for edge in rows
+            if self.get_edge(edge.get("id"), owner_scope=scope) is not None
+        ][:limit]
 
     def start_cycle(self, trigger, input_data=None, actor="system", idempotency_key=None):
         data = {"trigger": trigger, "input": input_data or {},
