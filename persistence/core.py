@@ -36,7 +36,7 @@ MEMORY_SCHEMA_VERSION = "memory.v1"
 SELF_MODEL_PRIMARY_ID = "akira_primary"
 SELF_MODEL_SCHEMA_VERSION = "self_model.v1"
 
-LEARNING_SCHEMA_VERSION = "learning.v2"
+LEARNING_SCHEMA_VERSION = "learning.v3"
 LEARNING_STATUSES = ("candidate", "verified", "consolidated", "conflicted", "obsolete", "discarded")
 GRAPH_NODE_SCHEMA_VERSION = "graph_node.v1"
 GRAPH_EDGE_SCHEMA_VERSION = "graph_edge.v1"
@@ -149,7 +149,7 @@ ENTITIES = {
         "columns": (
             "id", "source", "event", "lesson", "knowledge_nodes", "relationships",
             "confidence", "outcome", "status", "evidence", "verification_analysis", "learning_context", "verified_at", "verified_by", "reuse_count", "last_reused_at",
-            "schema_version", "idempotency_key",
+            "owner_scope", "schema_version", "idempotency_key",
         ),
         "json_columns": ("knowledge_nodes", "relationships", "evidence", "verification_analysis", "learning_context"),
         "mutable": (
