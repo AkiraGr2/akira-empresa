@@ -138,7 +138,7 @@ class SpecializedAgentMissionWiringTests(unittest.TestCase):
                     "repo": "AkiraGr2/akira-empresa",
                     "paths": ["README.md"],
                     "expected_output": "veredicto de revisión",
-                    "receives_from": 1,
+                    "receives_from": [1],
                 },
             ]
         }
