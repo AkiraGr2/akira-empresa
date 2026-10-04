@@ -16,8 +16,9 @@ import uuid
 
 import akira_auth
 
-from .core import (ConflictError, LEARNING_SCHEMA_VERSION, PersistenceError, ValidationError, new_id,
-                   validate_memory, validate_learning_event)
+from .core import (ConflictError, GRAPH_EDGE_SCHEMA_VERSION, GRAPH_NODE_SCHEMA_VERSION,
+                   LEARNING_SCHEMA_VERSION, NotFoundError, PersistenceError, ValidationError, new_id,
+                   validate_graph_edge, validate_graph_node, validate_memory, validate_learning_event)
 from .memory_recall import recall_memories
 from .capability import (
     CapabilityContractError,
@@ -423,6 +424,286 @@ def run_logic_tests(service, fresh_service_factory=None):
         return _res(name, ok, "candidate valido y estados desconocidos rechazados" if ok else "fallo del contrato de estados")
 
 
+
+    def t_graph_persistent_capability():
+        name = "TEST_GRAPH_PERSISTENT_CAPABILITY"
+        rows = service.list_capabilities(filters={"name": "graph_persistent"}, limit=1)
+        if not rows:
+            return _res(name, False, "capacidad graph_persistent no fue registrada por el bootstrap")
+        capability = rows[0]
+
+        scope_a = "selftest:graph-persistent:A:" + uuid.uuid4().hex[:8]
+        scope_b = "selftest:graph-persistent:B:" + uuid.uuid4().hex[:8]
+        created_node_ids = []
+        created_edge_ids = []
+        cleanup_failures = []
+        checks = {}
+
+        labels = [
+            "V12 Graph Node A1 " + uuid.uuid4().hex[:8],
+            "V12 Graph Node A2 " + uuid.uuid4().hex[:8],
+            "V12 Graph Node B1 " + uuid.uuid4().hex[:8],
+            "V12 Graph Node B2 " + uuid.uuid4().hex[:8],
+        ]
+        idem_node = "selftest:graph_persistent:node:" + uuid.uuid4().hex
+        idem_edge = "selftest:graph_persistent:edge:" + uuid.uuid4().hex
+
+        def _cleanup():
+            edge_ids = set(created_edge_ids)
+            for node_id in created_node_ids:
+                for field in ("from_node", "to_node"):
+                    try:
+                        for edge in service.repo.search("graph_edges", {field: node_id}, limit=5000):
+                            if edge.get("id"):
+                                edge_ids.add(edge["id"])
+                    except Exception as exc:
+                        cleanup_failures.append({
+                            "node_id": node_id,
+                            "field": field,
+                            "error": type(exc).__name__,
+                        })
+            for edge_id in sorted(edge_ids):
+                try:
+                    service.repo.delete("graph_edges", edge_id)
+                except Exception as exc:
+                    cleanup_failures.append({"edge_id": edge_id, "error": type(exc).__name__})
+            for node_id in created_node_ids:
+                try:
+                    service.repo.delete("graph_nodes", node_id)
+                except Exception as exc:
+                    cleanup_failures.append({"node_id": node_id, "error": type(exc).__name__})
+
+        try:
+            common = {
+                "node_type": "concept",
+                "tags": [],
+                "privacy_level": "PRIVATE",
+                "node_metadata": {"suppress_tag_auto_connect": True},
+            }
+            a1 = service.create_node(
+                {**common, "label": labels[0], "description": "V12 node A1", "owner_scope": scope_a},
+                actor="selftest", idempotency_key=idem_node,
+            )
+            a1_repeat = service.create_node(
+                {**common, "label": labels[0], "description": "V12 node A1", "owner_scope": scope_a},
+                actor="selftest", idempotency_key=idem_node,
+            )
+            a2 = service.create_node(
+                {**common, "label": labels[1], "description": "V12 node A2", "owner_scope": scope_a},
+                actor="selftest",
+            )
+            b1 = service.create_node(
+                {**common, "label": labels[2], "description": "V12 node B1", "owner_scope": scope_b},
+                actor="selftest",
+            )
+            b2 = service.create_node(
+                {**common, "label": labels[3], "description": "V12 node B2", "owner_scope": scope_b},
+                actor="selftest",
+            )
+            created_node_ids.extend([
+                a1["record"]["id"], a2["record"]["id"], b1["record"]["id"], b2["record"]["id"]
+            ])
+
+            reread_a1 = service.get_node(a1["record"]["id"], owner_scope=scope_a)
+            foreign_a1 = service.get_node(a1["record"]["id"], owner_scope=scope_b)
+            fresh_service = fresh_service_factory() if fresh_service_factory else service
+            fresh_a1 = fresh_service.get_node(a1["record"]["id"], owner_scope=scope_a)
+
+            updated_a1 = service.update_node(
+                a1["record"]["id"],
+                {"description": "V12 node A1 updated"},
+                expected_version=a1["record"]["version"],
+                actor="selftest", owner_scope=scope_a,
+            )
+            stale_blocked = False
+            try:
+                service.update_node(
+                    a1["record"]["id"],
+                    {"description": "stale update"},
+                    expected_version=a1["record"]["version"],
+                    actor="selftest", owner_scope=scope_a,
+                )
+            except ConflictError:
+                stale_blocked = True
+
+            foreign_update_blocked = False
+            try:
+                service.update_node(
+                    a1["record"]["id"],
+                    {"description": "foreign update"},
+                    expected_version=updated_a1["version"],
+                    actor="selftest", owner_scope=scope_b,
+                )
+            except NotFoundError:
+                foreign_update_blocked = True
+
+            edge_a = service.create_edge(
+                {"from_node": a1["record"]["id"], "to_node": a2["record"]["id"], "relation_type": "related_to"},
+                actor="selftest", owner_scope=scope_a, idempotency_key=idem_edge,
+            )
+            edge_a_repeat = service.create_edge(
+                {"from_node": a1["record"]["id"], "to_node": a2["record"]["id"], "relation_type": "related_to"},
+                actor="selftest", owner_scope=scope_a, idempotency_key=idem_edge,
+            )
+            edge_b = service.create_edge(
+                {"from_node": b1["record"]["id"], "to_node": b2["record"]["id"], "relation_type": "related_to"},
+                actor="selftest", owner_scope=scope_b,
+            )
+            created_edge_ids.extend([edge_a["record"]["id"], edge_b["record"]["id"]])
+
+            edge_a_read_a = service.get_edge(edge_a["record"]["id"], owner_scope=scope_a)
+            edge_a_read_b = service.get_edge(edge_a["record"]["id"], owner_scope=scope_b)
+            foreign_edge_blocked = False
+            try:
+                service.create_edge(
+                    {"from_node": a1["record"]["id"], "to_node": b1["record"]["id"], "relation_type": "related_to"},
+                    actor="selftest", owner_scope=scope_a,
+                )
+            except (NotFoundError, ValidationError):
+                foreign_edge_blocked = True
+
+            missing_endpoint_blocked = False
+            try:
+                service.create_edge(
+                    {"from_node": a1["record"]["id"], "to_node": "node_does_not_exist_v12", "relation_type": "related_to"},
+                    actor="selftest", owner_scope=scope_a,
+                )
+            except NotFoundError:
+                missing_endpoint_blocked = True
+
+            related_before = service.related_nodes(a1["record"]["id"], owner_scope=scope_a)
+            listed_a_nodes = service.list_graph_nodes(limit=2000, owner_scope=scope_a)
+            listed_a_edges = service.list_graph_edges(limit=5000, owner_scope=scope_a)
+
+            archived = service.archive_edge(
+                edge_a["record"]["id"],
+                expected_version=edge_a["record"]["version"],
+                actor="selftest", owner_scope=scope_a,
+            )
+            related_after = service.related_nodes(a1["record"]["id"], owner_scope=scope_a)
+            fresh_edge_b = fresh_service.get_edge(edge_b["record"]["id"], owner_scope=scope_b)
+
+            checks["node_created"] = (
+                a1["outcome"] == "created"
+                and a2["outcome"] == "created"
+                and b1["outcome"] == "created"
+                and b2["outcome"] == "created"
+                and a1["record"].get("schema_version") == GRAPH_NODE_SCHEMA_VERSION
+            )
+            checks["node_idempotent"] = (
+                a1_repeat["outcome"] == "already_synced"
+                and a1_repeat["record"]["id"] == a1["record"]["id"]
+            )
+            checks["node_reread"] = bool(reread_a1 and reread_a1["id"] == a1["record"]["id"])
+            checks["node_foreign_read_blocked"] = foreign_a1 is None
+            checks["node_fresh_connection"] = bool(fresh_a1 and fresh_a1["id"] == a1["record"]["id"])
+            checks["node_versioned_update"] = (
+                updated_a1["version"] == a1["record"]["version"] + 1
+                and updated_a1["description"] == "V12 node A1 updated"
+            )
+            checks["node_stale_update_blocked"] = stale_blocked
+            checks["node_foreign_update_blocked"] = foreign_update_blocked
+            checks["edge_created"] = (
+                edge_a["outcome"] == "created"
+                and edge_b["outcome"] == "created"
+                and edge_a["record"].get("schema_version") == GRAPH_EDGE_SCHEMA_VERSION
+            )
+            checks["edge_idempotent"] = (
+                edge_a_repeat["outcome"] == "already_synced"
+                and edge_a_repeat["record"]["id"] == edge_a["record"]["id"]
+            )
+            checks["edge_owner_isolated"] = edge_a_read_a is not None and edge_a_read_b is None
+            checks["edge_foreign_create_blocked"] = foreign_edge_blocked
+            checks["missing_endpoint_blocked"] = missing_endpoint_blocked
+            checks["listed_a_nodes_isolated"] = (
+                any(n.get("id") == a1["record"]["id"] for n in listed_a_nodes)
+                and not any(n.get("id") == b1["record"]["id"] for n in listed_a_nodes)
+            )
+            checks["listed_a_edges_isolated"] = (
+                any(e.get("id") == edge_a["record"]["id"] for e in listed_a_edges)
+                and not any(e.get("id") == edge_b["record"]["id"] for e in listed_a_edges)
+            )
+            checks["related_before_archive"] = any(
+                e.get("id") == edge_a["record"]["id"] for e in related_before
+            )
+            checks["edge_archived"] = (
+                archived.get("status") == "archived"
+                and archived.get("version") == edge_a["record"]["version"] + 1
+            )
+            checks["archived_edge_hidden_from_related"] = not any(
+                e.get("id") == edge_a["record"]["id"] for e in related_after
+            )
+            checks["fresh_connection_edge"] = bool(
+                fresh_edge_b and fresh_edge_b["id"] == edge_b["record"]["id"]
+            )
+
+            _cleanup()
+            checks["cleanup"] = not cleanup_failures
+            ok = all(checks.values())
+
+            source_digest = hashlib.sha256(
+                inspect.getsource(service.__class__).encode("utf-8")
+                + inspect.getsource(validate_graph_node).encode("utf-8")
+                + inspect.getsource(validate_graph_edge).encode("utf-8")
+            ).hexdigest()[:16]
+            verification_event = {
+                "event_type": "verification",
+                "test_key": "graph_persistent_contract",
+                "test_version": "v1",
+                "result": "pass" if ok else "fail",
+                "evidence": [{
+                    "type": "selftest",
+                    "title": "Graph persistent lifecycle and ownership",
+                    "reference": "selftest:graph_persistent:v1",
+                    "summary": (
+                        "Nodos y aristas persistidos, relectura, reinicio suave, versionado, "
+                        "idempotencia, aislamiento owner_scope, integridad de extremos y archivado."
+                        if ok else
+                        "El contrato de graph_persistent no supero todos los controles."
+                    ),
+                    "hash": source_digest,
+                }],
+                "environment": {
+                    "runtime": "selftest",
+                    "graph_node_schema": GRAPH_NODE_SCHEMA_VERSION,
+                    "graph_edge_schema": GRAPH_EDGE_SCHEMA_VERSION,
+                },
+                "dependency_snapshot": [
+                    {"kind": "service", "id": "PersistenceService.graph", "version": source_digest},
+                    {"kind": "storage", "id": "PostgreSQL.graph_nodes", "version": "runtime"},
+                    {"kind": "storage", "id": "PostgreSQL.graph_edges", "version": "runtime"},
+                    {"kind": "security", "id": "owner_scope", "version": "runtime"},
+                ],
+                "runtime_version": "selftest",
+                "build_ref": source_digest,
+                "actor": "selftest",
+                "executor": "selftest",
+                "evaluator": "system",
+                "error": None if ok else {
+                    "checks": checks,
+                    "cleanup_failures": cleanup_failures,
+                },
+            }
+            verification = service.record_capability_verification(
+                capability["id"],
+                verification_event,
+                actor="selftest",
+                idempotency_key="selftest:graph_persistent:verification:v1:" + source_digest,
+            )
+            verification_ok = (
+                verification.get("effective_state") == "verified"
+                if ok else
+                verification.get("effective_state") in ("failed", "stale")
+            )
+            detail = (
+                f"resultado={verification.get('outcome')}; "
+                f"effective_state={verification.get('effective_state')}; "
+                f"checks={checks}"
+            )
+            return _res(name, bool(ok and verification_ok), detail)
+        except Exception as exc:
+            _cleanup()
+            return _res(name, False, f"excepcion {type(exc).__name__}: {str(exc)[:240]}")
 
     def t_learning_persistent_capability():
         name = "TEST_LEARNING_PERSISTENT_CAPABILITY"
@@ -1337,6 +1618,7 @@ def run_logic_tests(service, fresh_service_factory=None):
         ("TEST_PERSISTENT_MEMORY_CAPABILITY", t_persistent_memory_capability),
         ("TEST_MEMORY_RECALL_CAPABILITY", t_memory_recall_capability),
         ("TEST_LEARNING_PERSISTENT_CAPABILITY", t_learning_persistent_capability),
+        ("TEST_GRAPH_PERSISTENT_CAPABILITY", t_graph_persistent_capability),
         ("TEST_CAPABILITY_PERSISTENCE", t_capability_persistence),
         ("TEST_CAPABILITY_VERIFICATION_APPEND_ONLY", t_capability_verification_append_only),
     ):
