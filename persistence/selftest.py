@@ -370,6 +370,40 @@ def run_logic_tests(service, fresh_service_factory=None):
         )
         return _res(name, ok, "cada owner_scope solo recupera sus agent_tasks")
 
+    def t_specialized_agents_persistence():
+        name = "TEST_SPECIALIZED_AGENTS_PERSISTENCE"
+        expected_tools = {
+            "developer_propose": {"permissions": {"owner"}, "status": "available"},
+            "python_test": {"permissions": {"owner"}, "status": "available"},
+            "code_review": {"permissions": {"owner"}, "status": "available"},
+        }
+        expected_agents = {
+            "developer": {"role": "developer", "allowed_tools": ["github_repo_read", "developer_propose"]},
+            "tester": {"role": "tester", "allowed_tools": ["github_repo_read", "python_test"]},
+            "reviewer": {"role": "reviewer", "allowed_tools": ["github_repo_read", "python_test", "code_review"]},
+        }
+        problems = []
+        for tool_name, expected in expected_tools.items():
+            tool = service.get_tool_by_name(tool_name)
+            if tool is None:
+                problems.append(f"tool_missing:{tool_name}")
+                continue
+            permissions = {str(p).strip() for p in (tool.get("permissions") or [])}
+            if permissions != expected["permissions"]:
+                problems.append(f"tool_permissions:{tool_name}:{sorted(permissions)}")
+            if tool.get("status") != expected["status"]:
+                problems.append(f"tool_status:{tool_name}:{tool.get('status')}")
+        for agent_name, expected in expected_agents.items():
+            agent = service.get_agent_by_name(agent_name)
+            if agent is None:
+                problems.append(f"agent_missing:{agent_name}")
+                continue
+            if agent.get("role") != expected["role"]:
+                problems.append(f"agent_role:{agent_name}:{agent.get('role')}")
+            if list(agent.get("allowed_tools") or []) != expected["allowed_tools"]:
+                problems.append(f"agent_tools:{agent_name}:{agent.get('allowed_tools')}")
+        return _res(name, not problems, "specialized tools/agents persisted" if not problems else "; ".join(problems))
+
     def t_agent_state_transition():
         name = "TEST_AGENT_STATE_TRANSITION"
         _ensure_tools(service)
@@ -1643,6 +1677,7 @@ def run_logic_tests(service, fresh_service_factory=None):
         ("TEST_AGENT_TASK_VALIDATION", t_agent_task_validation),
         ("TEST_AGENT_TASK_MISSION_FILTER", t_agent_task_mission_filter),
         ("TEST_AGENT_TASK_OWNER_SCOPE_FILTER", t_agent_task_owner_scope_filter),
+        ("TEST_SPECIALIZED_AGENTS_PERSISTENCE", t_specialized_agents_persistence),
         ("TEST_AGENT_STATE_TRANSITION", t_agent_state_transition),
         ("TEST_LEARNING_STATE_CONTRACT", t_learning_state_contract),
         ("TEST_CAPABILITY_ENGINE_CONTRACT", t_capability_engine_contract),
