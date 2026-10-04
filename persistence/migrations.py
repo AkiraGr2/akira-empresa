@@ -599,4 +599,13 @@ MIGRATIONS = [
         CREATE INDEX agent_tasks_owner_scope_idx ON agent_tasks (owner_scope, status, created_at DESC)
         """
     ),
+,
+    (
+        "024_memory_tools_owner_only",
+        """
+        UPDATE tools
+        SET permissions = '[\"owner\"]'::jsonb, updated_at = now()
+        WHERE name IN ('memory_save', 'memory_search')
+        """
+    ),
 ]
