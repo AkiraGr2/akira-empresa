@@ -73,6 +73,10 @@ class ProviderFailoverRegressionTests(unittest.TestCase):
         self.assertIn('app=FastAPI(title="Akira V7.3 Consciente", lifespan=_akira_lifespan)', self.source)
         self.assertIn("async def _akira_lifespan(_app):", self.source)
         self.assertNotIn('@app.on_event("startup")', self.source)
+        self.assertLess(
+            self.source.index("async def _akira_lifespan(_app):"),
+            self.source.index('app=FastAPI(title="Akira V7.3 Consciente", lifespan=_akira_lifespan)'),
+        )
 
 
 if __name__ == "__main__":
