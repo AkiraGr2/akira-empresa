@@ -51,4 +51,50 @@ SESSION_AUTH_CAPABILITY = {
     },
 }
 
-BASE_CAPABILITIES = (SESSION_AUTH_CAPABILITY,)
+PERSISTENT_MEMORY_CAPABILITY = {
+    "name": "persistent_memory",
+    "description": "Persistencia de memorias reales mediante el servicio de persistencia, con relectura confirmada, idempotencia, versionado, archivado, privacidad y aislamiento por owner_scope.",
+    "category": "memory",
+    "kind": "composite",
+    "implementation_state": "implemented",
+    "verification_state": "unverified",
+    "availability_state": "available",
+    "maturity": "experimental",
+    "cost_compatibility": "conditional",
+    "dependencies": [
+        {"kind": "service", "id": "PersistenceService.save_memory", "required": True},
+        {"kind": "storage", "id": "PostgreSQL.memories", "required": True},
+        {"kind": "security", "id": "owner_scope", "required": True},
+    ],
+    "limitations": [
+        "La recuperación semántica mediante embeddings pertenece a memory_recall y no a esta capability.",
+        "El ámbito legacy 'owner' se conserva como compatibilidad para datos históricos.",
+        "La disponibilidad efectiva depende del almacenamiento persistente configurado.",
+    ],
+    "verification_spec": {
+        "method": "selftest",
+        "test_key": "persistent_memory_contract",
+        "freshness_policy": {
+            "mode": "on_change",
+            "max_age_seconds": None,
+            "invalidate_on": [
+                "build_change",
+                "dependency_change",
+                "memory_schema_change",
+                "ownership_change",
+            ],
+        },
+    },
+    "provenance": {
+        "source": "architecture_rebaseline",
+        "created_by": "system",
+        "basis": [
+            "persistence/core.py",
+            "persistence/service.py",
+            "persistence/selftest.py",
+            "test_persistent_memory_contract.py",
+        ],
+    },
+}
+
+BASE_CAPABILITIES = (SESSION_AUTH_CAPABILITY, PERSISTENT_MEMORY_CAPABILITY)
