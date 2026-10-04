@@ -591,4 +591,12 @@ MIGRATIONS = [
         CREATE INDEX cognitive_cycles_owner_scope_idx ON cognitive_cycles (owner_scope, status, started_at DESC)
         """
     ),
+,
+    (
+        "023_agent_task_owner_scope",
+        """
+        ALTER TABLE agent_tasks ADD COLUMN owner_scope TEXT NOT NULL DEFAULT 'owner';
+        CREATE INDEX agent_tasks_owner_scope_idx ON agent_tasks (owner_scope, status, created_at DESC)
+        """
+    ),
 ]
