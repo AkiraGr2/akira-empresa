@@ -107,6 +107,15 @@ _SELF_MODEL_DEFAULTS = {
 def _now_iso():
     return _dt.datetime.now(_dt.timezone.utc).isoformat()
 
+LEGACY_OWNER_SCOPE = "owner"
+
+def _scope_matches(record_scope, owner_scope):
+    if owner_scope is None:
+        return True
+    requested = str(owner_scope).strip()
+    stored = str(record_scope or "").strip()
+    return bool(requested) and (stored == requested or stored == LEGACY_OWNER_SCOPE)
+
 class PersistenceService:
     def __init__(self, repo):
         self.repo = repo
@@ -870,7 +879,7 @@ class PersistenceService:
             scope = str(owner_scope).strip()
             node_scope = str(node.get("owner_scope") or "").strip()
             is_core = str(node.get("label") or "").strip().lower() == _CORE_NODE_LABEL.lower()
-            if not scope or (node_scope != scope and not is_core):
+            if not _scope_matches(node_scope, scope) and not is_core:
                 return None
         return node
 
