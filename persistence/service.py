@@ -478,6 +478,53 @@ class PersistenceService:
             for row in rows
         ]
 
+    def self_knowledge_snapshot(self, owner_scope=None, limit=200):
+        """Construye autoconocimiento operativo desde fuentes autoritativas en tiempo real."""
+        identity_root = self.get_identity_root()
+        capabilities = self.capabilities_for_self_model(limit=limit)
+        agents = self.repo.search(
+            "agents", {}, limit=min(max(int(limit), 1), 200),
+            order_by="name", descending=False,
+        )
+        tools = self.repo.search(
+            "tools", {}, limit=min(max(int(limit), 1), 200),
+            order_by="name", descending=False,
+        )
+        memory_count = None
+        if owner_scope is not None:
+            memory_count = self.count_memory(owner_scope=owner_scope)
+
+        return {
+            "source": "runtime_authoritative_registry",
+            "identity": identity_root,
+            "identity_authority": "identity_root",
+            "capabilities": capabilities,
+            "agents": [
+                {
+                    "name": a.get("name"),
+                    "role": a.get("role"),
+                    "status": a.get("status"),
+                    "allowed_tools": list(a.get("allowed_tools") or []),
+                }
+                for a in agents
+            ],
+            "tools": [
+                {
+                    "name": t.get("name"),
+                    "category": t.get("category"),
+                    "status": t.get("status"),
+                    "permissions": list(t.get("permissions") or []),
+                }
+                for t in tools
+            ],
+            "memory_active_count": memory_count,
+            "limitations": [
+                "Los estados de capability proceden del Capability Engine y su evidencia persistida.",
+                "La existencia de un agente o tool no demuestra por sí sola calidad E2E.",
+                "Los proveedores/modelos externos son motores de inferencia y no la identidad de Akira.",
+            ],
+        }
+
     def record_capability_verification(self, capability_id, data, actor="system", idempotency_key=None):
         capability = self.get_capability(capability_id)
         if capability is None:
