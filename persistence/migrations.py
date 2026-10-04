@@ -767,4 +767,145 @@ MIGRATIONS = [
             DO INSTEAD NOTHING
         """
     ),
+
+    (
+        "029_specialized_agents_v1",
+        """
+        INSERT INTO tools (
+            id, name, description, category, permissions, inputs_schema,
+            outputs_schema, limits_json, risks, status, schema_version
+        )
+        VALUES (
+            'tool_developer_propose',
+            'developer_propose',
+            'Genera una propuesta de cambio de codigo sin escribir en GitHub.',
+            'code',
+            '["owner"]'::jsonb,
+            '{"repo":"str","paths":"list","instruction":"str","queries":"list"}'::jsonb,
+            '{"proposal":"dict"}'::jsonb,
+            '{"max_paths":4,"max_instruction":4000}'::jsonb,
+            '["inferencia externa","propuesta de codigo"]'::jsonb,
+            'available',
+            'tool.v1'
+        )
+        ON CONFLICT (name) DO UPDATE SET
+            description = EXCLUDED.description,
+            category = EXCLUDED.category,
+            permissions = EXCLUDED.permissions,
+            inputs_schema = EXCLUDED.inputs_schema,
+            outputs_schema = EXCLUDED.outputs_schema,
+            limits_json = EXCLUDED.limits_json,
+            risks = EXCLUDED.risks,
+            updated_at = now();
+
+        INSERT INTO tools (
+            id, name, description, category, permissions, inputs_schema,
+            outputs_schema, limits_json, risks, status, schema_version
+        )
+        VALUES (
+            'tool_python_test',
+            'python_test',
+            'Ejecuta pruebas Python seleccionadas sin shell.',
+            'code',
+            '["owner"]'::jsonb,
+            '{"tests":"list","compile_paths":"list"}'::jsonb,
+            '{"status":"str","tests":"list"}'::jsonb,
+            '{"max_tests":6,"timeout_s":45}'::jsonb,
+            '["ejecucion de pruebas del repositorio"]'::jsonb,
+            'available',
+            'tool.v1'
+        )
+        ON CONFLICT (name) DO UPDATE SET
+            description = EXCLUDED.description,
+            category = EXCLUDED.category,
+            permissions = EXCLUDED.permissions,
+            inputs_schema = EXCLUDED.inputs_schema,
+            outputs_schema = EXCLUDED.outputs_schema,
+            limits_json = EXCLUDED.limits_json,
+            risks = EXCLUDED.risks,
+            updated_at = now();
+
+        INSERT INTO tools (
+            id, name, description, category, permissions, inputs_schema,
+            outputs_schema, limits_json, risks, status, schema_version
+        )
+        VALUES (
+            'tool_code_review',
+            'code_review',
+            'Revisa una propuesta de codigo contra el repositorio y evidencia de pruebas; no escribe.',
+            'code',
+            '["owner"]'::jsonb,
+            '{"repo":"str","paths":"list","proposal":"dict","test_results":"dict"}'::jsonb,
+            '{"review":"dict"}'::jsonb,
+            '{"max_paths":4,"max_proposal_chars":24000}'::jsonb,
+            '["inferencia externa","revision de codigo"]'::jsonb,
+            'available',
+            'tool.v1'
+        )
+        ON CONFLICT (name) DO UPDATE SET
+            description = EXCLUDED.description,
+            category = EXCLUDED.category,
+            permissions = EXCLUDED.permissions,
+            inputs_schema = EXCLUDED.inputs_schema,
+            outputs_schema = EXCLUDED.outputs_schema,
+            limits_json = EXCLUDED.limits_json,
+            risks = EXCLUDED.risks,
+            updated_at = now();
+
+        INSERT INTO agents (
+            id, name, role, description, allowed_tools, status, schema_version
+        )
+        VALUES (
+            'agent_developer',
+            'developer',
+            'Prepara propuestas de cambios de codigo sin escribir directamente en GitHub.',
+            'developer',
+            '["github_repo_read","developer_propose"]'::jsonb,
+            'idle',
+            'agent.v1'
+        )
+        ON CONFLICT (name) DO UPDATE SET
+            role = EXCLUDED.role,
+            description = EXCLUDED.description,
+            allowed_tools = EXCLUDED.allowed_tools,
+            updated_at = now();
+
+        INSERT INTO agents (
+            id, name, role, description, allowed_tools, status, schema_version
+        )
+        VALUES (
+            'agent_tester',
+            'tester',
+            'Ejecuta pruebas seleccionadas y reporta evidencia reproducible.',
+            'tester',
+            '["github_repo_read","python_test"]'::jsonb,
+            'idle',
+            'agent.v1'
+        )
+        ON CONFLICT (name) DO UPDATE SET
+            role = EXCLUDED.role,
+            description = EXCLUDED.description,
+            allowed_tools = EXCLUDED.allowed_tools,
+            updated_at = now();
+
+        INSERT INTO agents (
+            id, name, role, description, allowed_tools, status, schema_version
+        )
+        VALUES (
+            'agent_reviewer',
+            'reviewer',
+            'Revisa propuestas de codigo y evidencia de pruebas sin aplicar cambios.',
+            'reviewer',
+            '["github_repo_read","python_test","code_review"]'::jsonb,
+            'idle',
+            'agent.v1'
+        )
+        ON CONFLICT (name) DO UPDATE SET
+            role = EXCLUDED.role,
+            description = EXCLUDED.description,
+            allowed_tools = EXCLUDED.allowed_tools,
+            updated_at = now()
+        """
+    ),
+
 ]
