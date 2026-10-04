@@ -862,10 +862,20 @@ class PersistenceService:
                 except Exception as e: print(f"[core] connect fallo: {type(e).__name__}: {str(e)[:200]}")
         return {"outcome": "created" if created else "already_synced", "record": verified}
 
-    def get_node(self, node_id): return self.repo.get("graph_nodes", node_id)
+    def get_node(self, node_id, owner_scope=None):
+        node = self.repo.get("graph_nodes", node_id)
+        if node is None:
+            return None
+        if owner_scope is not None:
+            scope = str(owner_scope).strip()
+            node_scope = str(node.get("owner_scope") or "").strip()
+            is_core = str(node.get("label") or "").strip().lower() == _CORE_NODE_LABEL.lower()
+            if not scope or (node_scope != scope and not is_core):
+                return None
+        return node
 
-    def update_node(self, node_id, changes, expected_version=None, actor="system"):
-        current = self.get_node(node_id)
+    def update_node(self, node_id, changes, expected_version=None, actor="system", owner_scope=None):
+        current = self.get_node(node_id, owner_scope=owner_scope)
         if current is None:
             raise NotFoundError(node_id)
         clean = validate_graph_node(changes, partial=True)
@@ -888,13 +898,13 @@ class PersistenceService:
             raise
         except Exception as e:
             raise StorageError(type(e).__name__) from e
-        verified = self.repo.get("graph_nodes", node_id)
+        verified = self.get_node(node_id, owner_scope=owner_scope)
         if verified is None or verified["version"] != expected_version + 1:
             raise VerificationError("graph node update no confirmado")
         return verified
 
-    def archive_edge(self, edge_id, expected_version=None, actor="system"):
-        current = self.get_edge(edge_id)
+    def archive_edge(self, edge_id, expected_version=None, actor="system", owner_scope=None):
+        current = self.get_edge(edge_id, owner_scope=owner_scope)
         if current is None:
             raise NotFoundError(edge_id)
         if expected_version is None:
@@ -911,18 +921,37 @@ class PersistenceService:
                 "status": "success",
                 "detail": {"new_version": updated["version"]},
             })
-        verified = self.get_edge(edge_id)
+        verified = self.get_edge(edge_id, owner_scope=owner_scope)
         if verified is None or verified.get("status") != "archived":
             raise VerificationError("archive edge no confirmado")
         return verified
 
-    def create_edge(self, data, actor="system", idempotency_key=None):
+    def create_edge(self, data, actor="system", idempotency_key=None, owner_scope=None):
         fields = validate_graph_edge(data)
         from_node = fields.get("from_node"); to_node = fields.get("to_node")
-        if not self.repo.exists("graph_nodes", from_node):
+        from_record = self.repo.get("graph_nodes", from_node)
+        to_record = self.repo.get("graph_nodes", to_node)
+        if from_record is None:
             raise NotFoundError(f"from_node no existe: {from_node}")
-        if not self.repo.exists("graph_nodes", to_node):
+        if to_record is None:
             raise NotFoundError(f"to_node no existe: {to_node}")
+
+        if owner_scope is not None:
+            scope = str(owner_scope).strip()
+            if not scope:
+                raise ValidationError("owner_scope requerido")
+            def _accessible(node):
+                node_scope = str(node.get("owner_scope") or "").strip()
+                is_core = str(node.get("label") or "").strip().lower() == _CORE_NODE_LABEL.lower()
+                return node_scope == scope or is_core
+            if not _accessible(from_record) or not _accessible(to_record):
+                raise NotFoundError("grafo fuera del owner_scope")
+            from_core = str(from_record.get("label") or "").strip().lower() == _CORE_NODE_LABEL.lower()
+            to_core = str(to_record.get("label") or "").strip().lower() == _CORE_NODE_LABEL.lower()
+            from_scope = str(from_record.get("owner_scope") or "").strip()
+            to_scope = str(to_record.get("owner_scope") or "").strip()
+            if not (from_core or to_core) and from_scope != to_scope:
+                raise ValidationError("no se permiten aristas entre owner_scope distintos")
         record = dict(fields, id=new_id("edge"), status="active", schema_version=GRAPH_EDGE_SCHEMA_VERSION)
         if idempotency_key is not None:
             if not isinstance(idempotency_key, str) or not 0 < len(idempotency_key.strip()) <= 200:
@@ -944,17 +973,36 @@ class PersistenceService:
         if verified is None: raise VerificationError("relacion no confirmada")
         return {"outcome": "created" if created else "already_synced", "record": verified}
 
-    def get_edge(self, edge_id): return self.repo.get("graph_edges", edge_id)
+    def get_edge(self, edge_id, owner_scope=None):
+        edge = self.repo.get("graph_edges", edge_id)
+        if edge is None or owner_scope is None:
+            return edge
+        scope = str(owner_scope).strip()
+        if not scope:
+            return None
+        from_node = self.get_node(edge.get("from_node"), owner_scope=scope)
+        to_node = self.get_node(edge.get("to_node"), owner_scope=scope)
+        return edge if from_node is not None and to_node is not None else None
 
-    def related_nodes(self, node_id, direction="both", limit=50):
+    def related_nodes(self, node_id, direction="both", limit=50, owner_scope=None):
         limit = max(1, min(int(limit), 200))
+        if self.get_node(node_id, owner_scope=owner_scope) is None:
+            return []
         edges = []
         if direction in ("from", "both"):
             edges.extend(self.repo.search("graph_edges", {"from_node": node_id, "status": "active"}, limit=limit))
         if direction in ("to", "both"):
             edges.extend(self.repo.search("graph_edges", {"to_node": node_id, "status": "active"}, limit=limit))
+        if owner_scope is not None:
+            scope = str(owner_scope).strip()
+            edges = [e for e in edges if self.get_edge(e.get("id"), owner_scope=scope) is not None]
         return edges[:limit]
-    def count_nodes(self, filters=None): return self.repo.count("graph_nodes", filters or {})
+    def count_nodes(self, filters=None, owner_scope=None):
+        if owner_scope is None:
+            return self.repo.count("graph_nodes", filters or {})
+        f = dict(filters or {})
+        f["owner_scope"] = str(owner_scope).strip()
+        return self.repo.count("graph_nodes", f)
     def count_edges(self, filters=None): return self.repo.count("graph_edges", filters or {})
     def list_graph_nodes(self, limit=500, offset=0, order_by="weight", descending=True):
         limit = max(1, min(int(limit), 2000))
