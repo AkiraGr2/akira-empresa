@@ -2502,11 +2502,11 @@ def v8_learning_selftest(request: Request):
         created_version = created_rec["version"]
         add("candidate_created", created_rec.get("status") == "candidate", {"id": created_id})
         evidence = [{"type": "test", "title": "Fuente sintetica de selftest", "reference": "selftest://learning/" + marker_id, "note": "Evidencia controlada de prueba."}]
-        updated = service.add_learning_evidence(created_id, evidence, expected_version=created_version, actor=s["email"])
+        updated = service.add_learning_evidence(created_id, evidence, expected_version=created_version, actor=s["email"], owner_scope=s["owner_scope"])
         add("evidence_added", len(updated.get("evidence") or []) == 1, {"version": updated.get("version")})
-        verified = service.update_learning_status(created_id, "verified", expected_version=updated["version"], actor=s["email"])
+        verified = service.update_learning_status(created_id, "verified", expected_version=updated["version"], actor=s["email"], owner_scope=s["owner_scope"])
         add("candidate_to_verified", verified.get("status") == "verified" and bool(verified.get("verified_at")), {"status": verified.get("status")})
-        consolidated = service.update_learning_status(created_id, "consolidated", expected_version=verified["version"], actor=s["email"])
+        consolidated = service.update_learning_status(created_id, "consolidated", expected_version=verified["version"], actor=s["email"], owner_scope=s["owner_scope"])
         add("verified_to_consolidated", consolidated.get("status") == "consolidated", {"status": consolidated.get("status")})
         fetched = service.get_learning(created_id)
         add("persisted_after_consolidation", fetched is not None and fetched.get("status") == "consolidated", {"id": created_id})
@@ -2533,7 +2533,7 @@ def v8_learning_selftest(request: Request):
                 created_id, {"learning_context": context},
                 expected_version=current_before["version"], actor=s["email"]
             )
-            promoted = service.promote_learning_to_graph(created_id, actor=s["email"])
+            promoted = service.promote_learning_to_graph(created_id, actor=s["email"], owner_scope=s["owner_scope"])
             promoted_node = promoted.get("node")
             promoted_edges = promoted.get("edges") or []
             add(
@@ -2566,7 +2566,7 @@ def v8_learning_selftest(request: Request):
                 any(m.get("source_id") == created_id for m in recalled_verified),
                 {"recalled_count": len(recalled_verified)}
             )
-            after_recall = service.get_learning(created_id)
+            after_recall = service.get_learning(created_id, owner_scope=s["owner_scope"])
             add(
                 "verified_learning_reuse_recorded",
                 int((after_recall or {}).get("reuse_count") or 0) >= 1,
@@ -2644,7 +2644,7 @@ def v8_learning_selftest(request: Request):
         auto_mem = service.search_memory({
             "source": "learning_candidate",
             "source_id": auto_id,
-        }, limit=10)
+        }, limit=10, owner_scope=s["owner_scope"])
         add(
             "autonomous_candidate_has_no_memory",
             len(auto_mem) == 0,
@@ -2655,6 +2655,7 @@ def v8_learning_selftest(request: Request):
             "SELFTEST experiencia autónoma sintetizada " + auto_marker,
             limit=5,
             include_semantic=False,
+            owner_scope=s["owner_scope"],
         )
         add(
             "autonomous_candidate_not_recalled",
@@ -2672,6 +2673,7 @@ def v8_learning_selftest(request: Request):
             auto_id, "discarded",
             expected_version=auto_created["record"]["version"],
             actor=s["email"],
+            owner_scope=s["owner_scope"],
         )
         add(
             "autonomous_candidate_cleanup",
