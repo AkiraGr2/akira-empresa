@@ -1814,9 +1814,8 @@ def v8_self(request: Request):
 
 @app.patch("/api/v8/self")
 def v8_self_update(request: Request, payload: dict):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
-    if not s.get("is_owner"): return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     if not isinstance(payload, dict): return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
@@ -2029,11 +2028,8 @@ def v8_learning_teach(request: Request, payload: dict):
 @app.post("/api/v8/learning/absorption/diagnose")
 def v8_learning_absorption_diagnose(request: Request, payload: dict):
     """Diagnostico propietario del decisor; no crea candidate, memoria ni grafo."""
-    s = get_session(request)
-    if not s:
-        return JSONResponse({"authenticated": False}, status_code=401)
-    if not s.get("is_owner"):
-        return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
 
     payload = payload if isinstance(payload, dict) else {}
     message = str(payload.get("message") or "").strip()[:1500]
@@ -2082,9 +2078,8 @@ def v8_learning_absorption_diagnose(request: Request, payload: dict):
 
 @app.post("/api/v8/learning/{learning_id}/evidence")
 def v8_learning_evidence_add(request: Request, learning_id: str, payload: dict):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
-    if not s.get("is_owner"): return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     from persistence.core import ConflictError, NotFoundError, PersistenceError, ValidationError
@@ -2110,9 +2105,8 @@ def v8_learning_evidence_add(request: Request, learning_id: str, payload: dict):
 
 @app.post("/api/v8/learning/{learning_id}/investigate")
 def v8_learning_investigate(request: Request, learning_id: str, payload: dict):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
-    if not s.get("is_owner"): return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     from persistence.core import ConflictError, NotFoundError, PersistenceError, ValidationError
@@ -2353,9 +2347,8 @@ def _evaluate_learning_with_fallback(prompt):
 
 @app.post("/api/v8/learning/{learning_id}/evaluate")
 def v8_learning_evaluate(request: Request, learning_id: str, payload: dict):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
-    if not s.get("is_owner"): return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     from persistence.core import ConflictError, NotFoundError, PersistenceError, ValidationError
@@ -2434,9 +2427,8 @@ EVIDENCIA:
 
 @app.patch("/api/v8/learning/{learning_id}/status")
 def v8_learning_status_update(request: Request, learning_id: str, payload: dict):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
-    if not s.get("is_owner"): return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     from persistence.core import ConflictError, NotFoundError, PersistenceError, ValidationError
@@ -2478,9 +2470,8 @@ def v8_learning_status_update(request: Request, learning_id: str, payload: dict)
 @app.get("/api/v8/learning/selftest")
 def v8_learning_selftest(request: Request):
     selftest_started = time.monotonic()
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
-    if not s.get("is_owner"): return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     tests = []
@@ -2770,11 +2761,8 @@ def v8_learning_selftest(request: Request):
 
 @app.get("/api/v8/learning/selftest/result")
 def v8_learning_selftest_result(request: Request):
-    s = get_session(request)
-    if not s:
-        return JSONResponse({"authenticated": False}, status_code=401)
-    if not s.get("is_owner"):
-        return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     try:
         with _learning_selftest_last_lock:
             entry = _learning_selftest_last.get(s["email"])
@@ -2891,9 +2879,8 @@ def v8_graph_related(request: Request, node_id: str, direction: str = "both", li
 
 @app.post("/api/v8/graph/reinforce")
 def v8_graph_reinforce(request: Request):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
-    if not s.get("is_owner"): return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     try:
@@ -2905,11 +2892,8 @@ def v8_graph_reinforce(request: Request):
 
 @app.post("/api/v8/graph/cleanup_tests")
 def v8_graph_cleanup_tests(request: Request):
-    s = get_session(request)
-    if not s:
-        return JSONResponse({"authenticated": False}, status_code=401)
-    if not s.get("is_owner"):
-        return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None:
         return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
@@ -4182,9 +4166,8 @@ def _selftest_missions_run():
 
 @app.get("/api/v8/memory/semantic-selftest")
 def v8_memory_semantic_selftest(request: Request):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
-    if not s.get("is_owner"): return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
 
