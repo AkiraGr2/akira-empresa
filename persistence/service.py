@@ -376,7 +376,8 @@ class PersistenceService:
         if clean.get("verification_state") != "unverified":
             raise ValidationError("una capability nueva no puede declararse verified")
         try:
-            validate_capability_transition(clean, clean)
+            state = capability_state_snapshot(clean)
+            validate_capability_transition(state, state)
         except CapabilityContractError as exc:
             raise ValidationError(str(exc)) from exc
         record = dict(
