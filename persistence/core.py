@@ -278,7 +278,7 @@ ENTITIES = {
         "table": "agent_tasks",
         "columns": (
             "id", "agent_name", "tool_name", "status", "model", "mission_id",
-            "inputs", "outputs", "memory_used", "error", "duration_ms",
+            "owner_scope", "inputs", "outputs", "memory_used", "error", "duration_ms",
             "started_at", "completed_at", "schema_version", "idempotency_key",
         ),
         "json_columns": ("inputs", "outputs", "memory_used", "error"),
@@ -911,7 +911,7 @@ def validate_agent(data, partial: bool = False) -> dict:
 
 _TASK_INPUT = {
     "agent_name", "tool_name", "status", "model", "mission_id",
-    "inputs", "outputs", "memory_used", "error", "duration_ms",
+    "owner_scope", "inputs", "outputs", "memory_used", "error", "duration_ms",
     "started_at", "completed_at",
 }
 _TASK_UPDATABLE = {
@@ -944,6 +944,8 @@ def validate_agent_task(data, partial: bool = False) -> dict:
         out["model"] = _optional_str("model", data["model"], 64)
     if "mission_id" in data:
         out["mission_id"] = _optional_str("mission_id", data["mission_id"], 64)
+    if "owner_scope" in data:
+        out["owner_scope"] = _str("owner_scope", data["owner_scope"], 64)
     if "inputs" in data or not partial:
         v = data.get("inputs", {})
         if not isinstance(v, dict):
