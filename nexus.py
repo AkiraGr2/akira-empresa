@@ -611,12 +611,10 @@ def get_session(request):
     if akira_auth is None: return None
     return akira_auth.session_from_header(request.headers.get("authorization"), OWNER_EMAILS)
 
-def resolve_is_owner(request, data):
+def resolve_is_owner(request, _data=None):
+    """La identidad de propietario solo puede venir de la sesión firmada del servidor."""
     s = get_session(request)
-    if s: return s["is_owner"]
-    if os.getenv("AKIRA_TRUST_CLIENT_OWNER", "1").strip() != "0":
-        return bool(data.get("is_owner", False))
-    return False
+    return bool(s and s["is_owner"])
 
 _TOOL_SEED = [
     {"name": "web_search", "description": "Busqueda web via DuckDuckGo.", "category": "web", "permissions": ["auth"], "inputs_schema": {"query": "str"}, "outputs_schema": {"result": "str"}, "limits_json": {"timeout_s": 10}, "risks": ["dependencia de red"],},
@@ -1782,7 +1780,7 @@ async def v8_auth_status():
             "google_client_id_configured": bool(os.getenv("GOOGLE_CLIENT_ID", "").strip()),
             "google_verifier_available": bool(akira_auth and akira_auth.verifier_available()),
             "session_secret_configured": bool(akira_auth and akira_auth._secret() is not None),
-            "trust_client_owner": os.getenv("AKIRA_TRUST_CLIENT_OWNER", "1").strip() != "0"}
+            "trust_client_owner": False}
 
 @app.get("/api/v8/me")
 async def v8_me(request: Request):
