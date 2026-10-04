@@ -1204,6 +1204,14 @@ class PersistenceService:
             return self.repo.count("cognitive_cycles", filters or {})
         rows = self.repo.search("cognitive_cycles", filters or {}, limit=5000)
         return sum(1 for r in rows if _scope_matches(r.get("owner_scope"), owner_scope))
+
+    def list_cycles(self, limit=50, owner_scope=None):
+        limit = max(1, min(int(limit), 200))
+        rows = self.repo.search("cognitive_cycles", {}, limit=5000, offset=0,
+                                order_by="created_at", descending=True)
+        if owner_scope is not None:
+            rows = [r for r in rows if _scope_matches(r.get("owner_scope"), owner_scope)]
+        return rows[:limit]
     def count_cycle_events(self, filters=None): return self.repo.count("cognitive_events", filters or {})
 
     def register_tool(self, data, actor="system", idempotency_key=None):
