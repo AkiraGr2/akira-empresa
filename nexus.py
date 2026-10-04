@@ -1228,7 +1228,7 @@ def _fail_running_tasks_of_mission(service, mission_id, reason, owner_scope=None
         running = service.list_tasks(mission_id=mission_id, status="running", limit=50, owner_scope=owner_scope)
         for t in running:
             try:
-                service.fail_task(t["id"], {"type": "cascade_fail", "message": reason}, actor="orchestrator")
+                service.fail_task(t["id"], {"type": "cascade_fail", "message": reason}, actor="orchestrator", owner_scope=owner_scope)
             except Exception: pass
     except Exception: pass
 
@@ -1378,6 +1378,7 @@ def _run_mission_sync(mission_id, actor, owner_scope=None):
             _fail_mission_with_autonomous_learning(
                 service, mission_id, actor,
                 {"type": "no_steps", "message": "plan sin pasos"},
+                owner_scope=owner_scope,
             )
             return
 
@@ -1406,7 +1407,7 @@ def _run_mission_sync(mission_id, actor, owner_scope=None):
                 _fail_mission_with_autonomous_learning(
                     service, mission_id, actor,
                     {"type": "cancelled_during_run", "message": "cancelada por usuario"},
-                , owner_scope=owner_scope)
+                owner_scope=owner_scope)
                 return
 
             elapsed_s = time.time() - mission_start
@@ -1416,7 +1417,7 @@ def _run_mission_sync(mission_id, actor, owner_scope=None):
                     service, mission_id, actor,
                     {"type": "mission_timeout", "elapsed_s": int(elapsed_s),
                      "limit_s": MISSION_MAX_DURATION_S},
-                , owner_scope=owner_scope)
+                owner_scope=owner_scope)
                 return
 
             order = _norm_order(step.get("order"))
@@ -1428,7 +1429,7 @@ def _run_mission_sync(mission_id, actor, owner_scope=None):
                     service, mission_id, actor,
                     {"type": "bad_step", "step": order,
                      "message": "agent o tool vacios"},
-                , owner_scope=owner_scope)
+                owner_scope=owner_scope)
                 return
 
             inputs = _build_tool_inputs(tool_name, step, outputs_by_order, mission_id)
@@ -1442,7 +1443,7 @@ def _run_mission_sync(mission_id, actor, owner_scope=None):
                     {"type": "unsupported_tool_inputs", "step": order,
                      "tool": tool_name,
                      "message": "no se pueden derivar inputs para esta tool en 10.5"},
-                , owner_scope=owner_scope)
+                owner_scope=owner_scope)
                 return
 
             db_t0 = time.time()
@@ -1461,7 +1462,7 @@ def _run_mission_sync(mission_id, actor, owner_scope=None):
                     service, mission_id, actor,
                     {"type": "task_create_failed", "step": order,
                      "error": str(e)[:300]},
-                , owner_scope=owner_scope)
+                owner_scope=owner_scope)
                 return
 
             _set_mission_runtime(mission_id, "starting_task", step=order, task_id=task_id)
@@ -1473,7 +1474,7 @@ def _run_mission_sync(mission_id, actor, owner_scope=None):
                     service, mission_id, actor,
                     {"type": "task_start_failed", "step": order,
                      "error": str(e)[:300]},
-                , owner_scope=owner_scope)
+                owner_scope=owner_scope)
                 return
             db_ms = int((time.time() - db_t0) * 1000)
 
@@ -1527,7 +1528,7 @@ def _run_mission_sync(mission_id, actor, owner_scope=None):
                          str(k): _autonomous_learning_output_excerpt(v)
                          for k, v in outputs_by_order.items()
                      }},
-                , owner_scope=owner_scope)
+                owner_scope=owner_scope)
                 return
 
             _set_mission_runtime(
@@ -1550,7 +1551,7 @@ def _run_mission_sync(mission_id, actor, owner_scope=None):
                     service, mission_id, actor,
                     {"type": "task_completion_persist_failed", "step": order,
                      "task_id": task_id, "error": str(e)[:300]},
-                , owner_scope=owner_scope)
+                owner_scope=owner_scope)
                 return
             total_db_ms += int((time.time() - db_t2) * 1000)
 
@@ -1626,6 +1627,7 @@ def _run_mission_sync(mission_id, actor, owner_scope=None):
                  "steps_executed": len(step_reports),
                  "error": str(e)[:300],
                  "completed_steps": step_reports},
+                owner_scope=owner_scope,
             )
 
     except Exception as e:
@@ -1640,7 +1642,7 @@ def _run_mission_sync(mission_id, actor, owner_scope=None):
                 _fail_mission_with_autonomous_learning(
                     service, mission_id, actor,
                     {"type": "orchestrator_fatal", "error": str(e)[:300]},
-                , owner_scope=owner_scope)
+                owner_scope=owner_scope)
         except Exception: pass
     finally:
         _set_mission_runtime(mission_id, "orchestrator_finished")
