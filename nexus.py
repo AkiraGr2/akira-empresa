@@ -4805,8 +4805,8 @@ def _memory_gate_decide(service, content, memory_type, importance, tags, actor, 
 
 @app.post("/api/memory/ingest")
 def memory_ingest(request: Request, payload: dict):
-    s = get_session(request)
-    if not s: return JSONResponse({"ok": False, "reason": "auth_required"}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     if not isinstance(payload, dict): return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
@@ -5493,8 +5493,8 @@ def _format_recall_block(memories):
 
 @app.post("/api/v8/memory/semantic-reindex")
 def v8_memory_semantic_reindex(request: Request, payload: dict):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     if not s.get("is_owner"): return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
@@ -5547,8 +5547,8 @@ def v8_memory_semantic_reindex(request: Request, payload: dict):
 
 @app.post("/api/memory/search")
 def memory_search(request: Request, payload: dict):
-    s = get_session(request)
-    if not s: return JSONResponse({"ok": False, "reason": "auth_required"}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     if not isinstance(payload, dict): return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
@@ -5867,7 +5867,11 @@ async def chat(request: Request):
                     print(f"[chat] add_message teaching response fallo: {type(e).__name__}")
             return {"response": teaching_response, "model": "learning_engine", "conversation_id": conversation_id}
 
-        memories = await asyncio.to_thread(_recall_memories, service, msg)
+        memories = (
+            await asyncio.to_thread(_recall_memories, service, msg)
+            if session and session.get("is_owner")
+            else []
+        )
         recall_block = _format_recall_block(memories)
         conversation_context = await asyncio.to_thread(
             _format_conversation_context, service, conversation_id, msg
@@ -6095,7 +6099,11 @@ async def chat_stream(request: Request):
 
             return StreamingResponse(generate_teaching(), media_type="text/event-stream")
 
-        memories = await asyncio.to_thread(_recall_memories, service, msg)
+        memories = (
+            await asyncio.to_thread(_recall_memories, service, msg)
+            if session and session.get("is_owner")
+            else []
+        )
         recall_block = _format_recall_block(memories)
         conversation_context = await asyncio.to_thread(
             _format_conversation_context, service, conversation_id, msg
