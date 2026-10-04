@@ -2005,7 +2005,8 @@ def v8_learning_teach(request: Request, payload: dict):
             "status": "candidate",
             "evidence": [],
             "learning_context": context,
-        }, actor=s["email"], idempotency_key=payload.get("idempotency_key"))
+        }, actor=s["email"], idempotency_key=payload.get("idempotency_key"),
+           owner_scope=s["owner_scope"])
         return {
             "ok": True,
             "status": "candidate",
