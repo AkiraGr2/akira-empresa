@@ -9,7 +9,12 @@ contaminando la tabla memories. Ahora no queda rastro.
 """
 from __future__ import annotations
 
+import hashlib
+import inspect
+import time
 import uuid
+
+import akira_auth
 
 from .core import (ConflictError, PersistenceError, ValidationError, new_id,
                    validate_memory, validate_learning_event)
@@ -482,6 +487,86 @@ def run_logic_tests(service, fresh_service_factory=None):
         )
         return _res(name, ok, "estados validos, estado imposible rechazado y transicion valida aceptada")
 
+    def t_session_auth_capability():
+        name = "TEST_SESSION_AUTH_CAPABILITY"
+        rows = service.list_capabilities(filters={"name": "session_auth"}, limit=1)
+        if not rows:
+            return _res(name, False, "capacidad session_auth no fue registrada por el bootstrap")
+        capability = rows[0]
+        configured = akira_auth._secret() is not None
+        probe_sub = "selftest-session-auth-v1"
+        probe_email = "selftest-session-auth@example.invalid"
+        token, exp, issue_reason = akira_auth.issue_session(probe_sub, probe_email)
+        checks = {
+            "secret_configured": configured,
+            "issued": bool(token),
+            "issue_reason": issue_reason,
+        }
+        if token:
+            session = akira_auth.verify_session(token, default_owner_emails=(), now=time.time())
+            tampered = token[:-1] + ("A" if token[-1] != "A" else "B")
+            tampered_session = akira_auth.verify_session(tampered, default_owner_emails=(), now=time.time())
+            expired_session = akira_auth.verify_session(token, default_owner_emails=(), now=exp)
+            header_session = akira_auth.session_from_header("Bearer " + token, default_owner_emails=(), now=time.time())
+            checks.update({
+                "session_valid": session is not None,
+                "identity_preserved": bool(session and session.get("sub") == probe_sub and session.get("email") == probe_email),
+                "owner_scope_server_derived": bool(session and session.get("owner_scope") == "g:" + probe_sub),
+                "tampered_rejected": tampered_session is None,
+                "expired_rejected": expired_session is None,
+                "bearer_parsed": header_session is not None,
+            })
+        else:
+            checks.update({
+                "session_valid": False,
+                "identity_preserved": False,
+                "owner_scope_server_derived": False,
+                "tampered_rejected": False,
+                "expired_rejected": False,
+                "bearer_parsed": False,
+            })
+        ok = all(bool(checks[k]) for k in (
+            "secret_configured", "issued", "session_valid", "identity_preserved",
+            "owner_scope_server_derived", "tampered_rejected", "expired_rejected", "bearer_parsed",
+        ))
+        source_digest = hashlib.sha256(inspect.getsource(akira_auth).encode("utf-8")).hexdigest()[:16]
+        idem = f"selftest:session_auth:v1:{source_digest}:{\"configured\" if configured else \"missing\"}"
+        evidence = [{
+            "type": "selftest",
+            "title": "Session auth runtime contract",
+            "reference": "selftest:session_auth:v1",
+            "summary": "Sesion HMAC emitida, validada, delimitada por Bearer y rechaza manipulacion/caducidad." if ok else "El contrato de sesion no supero la autoprueba.",
+            "hash": source_digest,
+        }]
+        event = {
+            "event_type": "verification",
+            "test_key": "session_auth_contract",
+            "test_version": "v1",
+            "result": "pass" if ok else "fail",
+            "evidence": evidence,
+            "environment": {"runtime": "selftest", "secret_configured": configured},
+            "dependency_snapshot": [{"kind": "module", "id": "akira_auth.py", "version": source_digest}],
+            "runtime_version": "selftest",
+            "build_ref": source_digest,
+            "actor": "selftest",
+            "executor": "selftest",
+            "evaluator": "system",
+            "error": None if ok else {"checks": checks, "issue_reason": issue_reason},
+        }
+        try:
+            result = service.record_capability_verification(
+                capability["id"],
+                event,
+                actor="selftest",
+                idempotency_key=idem,
+            )
+        except Exception as exc:
+            return _res(name, False, f"verification persistence fallo: {type(exc).__name__}: {str(exc)[:240]}")
+        effective = result.get("effective_state")
+        outcome = result.get("outcome")
+        verified = effective == "verified" if ok else effective in ("failed", "stale")
+        return _res(name, bool(ok and verified), f"resultado={outcome}; effective_state={effective}; configured={configured}")
+
     def t_capability_persistence():
         name = "TEST_CAPABILITY_PERSISTENCE"
         key = "selftest:capability:v1"
@@ -618,6 +703,7 @@ def run_logic_tests(service, fresh_service_factory=None):
         ("TEST_AGENT_STATE_TRANSITION", t_agent_state_transition),
         ("TEST_LEARNING_STATE_CONTRACT", t_learning_state_contract),
         ("TEST_CAPABILITY_ENGINE_CONTRACT", t_capability_engine_contract),
+        ("TEST_SESSION_AUTH_CAPABILITY", t_session_auth_capability),
         ("TEST_CAPABILITY_PERSISTENCE", t_capability_persistence),
         ("TEST_CAPABILITY_VERIFICATION_APPEND_ONLY", t_capability_verification_append_only),
     ):
