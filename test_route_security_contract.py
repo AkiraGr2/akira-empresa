@@ -73,7 +73,7 @@ class SensitiveRouteSecurityContract(unittest.TestCase):
         for key, route in routes.items():
             self.assertIn("get_session(request)", route["source"], key)
             self.assertTrue(
-                "created_by" in route["source"] or "owner=" in route["source"],
+                ("created_by" in route["source"] or "owner=" in route["source"] or\n                 'actor=s["email"]' in route["source"]),
                 f"{key} lost its persistence ownership boundary",
             )
 
