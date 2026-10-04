@@ -82,8 +82,7 @@ class AuthorizationContractTests(unittest.TestCase):
             "v8_memory_semantic_reindex",
         ):
             source = self._function_source(name)
-            self.assertIn("is_owner", source, name)
-            self.assertIn("owner_required", source, name)
+            self.assertIn("_require_owner(request)", source, name)
 
     def test_legacy_self_repair_surfaces_are_owner_only(self):
         for name in ("self_repair_status", "self_repair_propose"):
