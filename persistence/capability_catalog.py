@@ -1,0 +1,54 @@
+"""Catálogo mínimo de capacidades canónicas de AKIRA.
+
+Este archivo define solo capacidades que tienen implementación identificable.
+El estado de verificación siempre inicia como unverified; la evidencia posterior
+determina si puede pasar a verified.
+"""
+
+SESSION_AUTH_CAPABILITY = {
+    "name": "session_auth",
+    "description": "Autenticación de sesión propia firmada y validada por el backend, con identidad de propietario derivada exclusivamente de una sesión verificada.",
+    "category": "security",
+    "kind": "provider_dependent",
+    "implementation_state": "implemented",
+    "verification_state": "unverified",
+    "availability_state": "available",
+    "maturity": "experimental",
+    "cost_compatibility": "conditional",
+    "dependencies": [
+        {"kind": "module", "id": "akira_auth.py", "required": True},
+        {"kind": "configuration", "id": "AKIRA_SESSION_SECRET", "required": True},
+        {"kind": "configuration", "id": "OWNER_EMAILS", "required": True},
+        {"kind": "identity_provider", "id": "Google", "required": True},
+    ],
+    "limitations": [
+        "La emisión inicial depende de una credencial de identidad válida de Google.",
+        "Sin AKIRA_SESSION_SECRET no se pueden emitir sesiones propias.",
+        "La propiedad se decide en servidor y no debe confiar en datos enviados por el cliente.",
+    ],
+    "verification_spec": {
+        "method": "selftest",
+        "test_key": "session_auth_contract",
+        "freshness_policy": {
+            "mode": "on_change",
+            "max_age_seconds": None,
+            "invalidate_on": [
+                "build_change",
+                "dependency_change",
+                "auth_configuration_change",
+            ],
+        },
+    },
+    "provenance": {
+        "source": "architecture_rebaseline",
+        "created_by": "system",
+        "basis": [
+            "akira_auth.py",
+            "test_authorization_contract.py",
+            "test_route_security_contract.py",
+            "test_session_auth_contract.py",
+        ],
+    },
+}
+
+BASE_CAPABILITIES = (SESSION_AUTH_CAPABILITY,)

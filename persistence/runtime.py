@@ -27,6 +27,17 @@ STATE = {
 }
 
 
+def _seed_capabilities(service):
+    """Registra las capacidades canónicas declaradas sin marcar evidencia por anticipado."""
+    try:
+        from .capability_catalog import BASE_CAPABILITIES
+        for capability in BASE_CAPABILITIES:
+            key = f"bootstrap:capability:{capability['name']}:v1"
+            service.create_capability(capability, actor="system", idempotency_key=key)
+    except Exception as exc:
+        print(f"[capability] seed fallo: {type(exc).__name__}: {str(exc)[:200]}", flush=True)
+
+
 def _default_backend():
     """Crea pool, migra y devuelve un repositorio Postgres. Lanza excepcion si no hay DATABASE_URL."""
     url = os.getenv("DATABASE_URL", "").strip()
@@ -84,6 +95,7 @@ def boot(backend_factory=None, attempts=3, wait_seconds=(5, 10), sleep=time.slee
             repo, fresh_repo_factory = backend
             service = PersistenceService(repo)
             service.health()
+            _seed_capabilities(service)
             STATE.update(service=service, connected=True, state="ok", error_type=None)
             break
         except Exception as e:  # PostgreSQL gestionado puede tardar en aceptar conexiones: se reintenta
