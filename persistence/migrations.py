@@ -617,6 +617,106 @@ MIGRATIONS = [
         """
     ),
     (
+        "028_capability_engine",
+        """
+        CREATE TABLE capabilities (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL,
+            category TEXT NOT NULL CHECK (category IN ('identity','memory','knowledge','learning','graph','cognitive','tooling','agents','missions','security','storage','multimedia','orchestration','repair','evolution','hive','external','general')),
+            kind TEXT NOT NULL CHECK (kind IN ('intrinsic','tool_backed','provider_dependent','composite')),
+            implementation_state TEXT NOT NULL DEFAULT 'not_implemented' CHECK (implementation_state IN ('not_implemented','partial','implemented','deprecated')),
+            verification_state TEXT NOT NULL DEFAULT 'unverified' CHECK (verification_state IN ('unverified','verified','stale','failed')),
+            availability_state TEXT NOT NULL DEFAULT 'unavailable' CHECK (availability_state IN ('available','degraded','blocked','unavailable')),
+            maturity TEXT NOT NULL DEFAULT 'experimental' CHECK (maturity IN ('experimental','stable')),
+            cost_compatibility TEXT NOT NULL DEFAULT 'unknown' CHECK (cost_compatibility IN ('free','conditional','paid_required','unknown')),
+            dependencies JSONB NOT NULL DEFAULT '[]'::jsonb,
+            limitations JSONB NOT NULL DEFAULT '[]'::jsonb,
+            verification_spec JSONB NOT NULL DEFAULT '{}'::jsonb,
+            provenance JSONB NOT NULL DEFAULT '{}'::jsonb,
+            version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+            schema_version TEXT NOT NULL DEFAULT 'capability.v1',
+            last_verification_id TEXT,
+            last_verified_at TIMESTAMPTZ,
+            idempotency_key TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            CONSTRAINT capabilities_name_uq UNIQUE (name),
+            CONSTRAINT capabilities_not_false_verified CHECK (
+                implementation_state <> 'not_implemented'
+                OR verification_state <> 'verified'
+            ),
+            CONSTRAINT capabilities_not_false_available CHECK (
+                implementation_state <> 'not_implemented'
+                OR availability_state <> 'available'
+            ),
+            CONSTRAINT capabilities_stable_requires_implementation CHECK (
+                maturity <> 'stable'
+                OR implementation_state <> 'not_implemented'
+            )
+        );
+        CREATE UNIQUE INDEX capabilities_idempotency_key_uq ON capabilities (idempotency_key);
+        CREATE INDEX capabilities_category_state_idx ON capabilities (category, implementation_state, verification_state);
+        CREATE INDEX capabilities_availability_idx ON capabilities (availability_state, updated_at DESC);
+        CREATE INDEX capabilities_cost_idx ON capabilities (cost_compatibility, updated_at DESC);
+        CREATE INDEX capabilities_last_verified_idx ON capabilities (last_verified_at DESC NULLS LAST);
+        CREATE TABLE capability_verifications (
+            id TEXT PRIMARY KEY,
+            capability_id TEXT NOT NULL REFERENCES capabilities(id) ON DELETE RESTRICT,
+            event_type TEXT NOT NULL CHECK (event_type IN ('verification','revalidation','availability_check','invalidation')),
+            test_key TEXT NOT NULL,
+            test_version TEXT NOT NULL DEFAULT 'v1',
+            result TEXT NOT NULL CHECK (result IN ('pass','fail','inconclusive','not_run')),
+            evidence JSONB NOT NULL DEFAULT '[]'::jsonb,
+            environment JSONB NOT NULL DEFAULT '{}'::jsonb,
+            dependency_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb,
+            runtime_version TEXT NOT NULL,
+            build_ref TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            executor TEXT NOT NULL,
+            evaluator TEXT NOT NULL,
+            started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            finished_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            error JSONB,
+            observed_availability_state TEXT CHECK (observed_availability_state IS NULL OR observed_availability_state IN ('available','degraded','blocked','unavailable')),
+            state_before JSONB NOT NULL,
+            state_after JSONB NOT NULL,
+            schema_version TEXT NOT NULL DEFAULT 'capability_verification.v1',
+            version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+            idempotency_key TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX capability_verifications_idempotency_key_uq ON capability_verifications (idempotency_key);
+        CREATE INDEX capability_verifications_capability_time_idx ON capability_verifications (capability_id, created_at DESC);
+        CREATE INDEX capability_verifications_result_idx ON capability_verifications (result, created_at DESC);
+        CREATE INDEX capability_verifications_test_idx ON capability_verifications (test_key, created_at DESC);
+        ALTER TABLE capabilities
+            ADD CONSTRAINT capabilities_last_verification_fk
+            FOREIGN KEY (last_verification_id)
+            REFERENCES capability_verifications(id)
+            ON DELETE RESTRICT;
+        ALTER TABLE public.capabilities, public.capability_verifications ENABLE ROW LEVEL SECURITY;
+        REVOKE ALL ON TABLE public.capabilities, public.capability_verifications FROM anon, authenticated;
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON public.capabilities AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON public.capabilities AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON public.capabilities AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON public.capabilities AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON public.capability_verifications AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON public.capability_verifications AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON public.capability_verifications AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON public.capability_verifications AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+        CREATE RULE capabilities_no_delete
+            AS ON DELETE TO public.capabilities
+            DO INSTEAD NOTHING;
+        CREATE RULE capability_verifications_no_update
+            AS ON UPDATE TO public.capability_verifications
+            DO INSTEAD NOTHING;
+        CREATE RULE capability_verifications_no_delete
+            AS ON DELETE TO public.capability_verifications
+            DO INSTEAD NOTHING
+        """
+    ),
+    (
         "026_identity_root_self_model",
         """
         CREATE TABLE IF NOT EXISTS identity_root (
