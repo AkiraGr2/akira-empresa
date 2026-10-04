@@ -243,5 +243,13 @@ class AuthorizationContractTests(unittest.TestCase):
 
 
 
+    def test_persistent_memory_tools_require_owner_scope(self):
+        source = self._function_source("_invoke_tool")
+        self.assertIn('memory_save', source)
+        self.assertIn('memory_search', source)
+        self.assertIn('owner_scope is None', source)
+
+
+
 if __name__ == "__main__":
     unittest.main()
