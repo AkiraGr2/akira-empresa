@@ -599,7 +599,7 @@ MIGRATIONS = [
         CREATE INDEX agent_tasks_owner_scope_idx ON agent_tasks (owner_scope, status, created_at DESC)
         """
     ),
-,
+
     (
         "024_memory_tools_owner_only",
         """
