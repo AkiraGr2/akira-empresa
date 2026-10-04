@@ -855,7 +855,7 @@ class PersistenceService:
         if created:
             metadata = verified.get("node_metadata") if isinstance(verified.get("node_metadata"), dict) else {}
             if not metadata.get("suppress_tag_auto_connect"):
-                try: self.auto_connect_node_tags(verified["id"], actor=actor)
+                try: self.auto_connect_node_tags(verified["id"], actor=actor, owner_scope=verified.get("owner_scope"))
                 except Exception as e: print(f"[auto-connect] node_tags fallo: {type(e).__name__}: {str(e)[:200]}")
             if str(verified.get("label", "")).strip() != _CORE_NODE_LABEL:
                 try: self.connect_to_core(verified["id"], actor=actor, weight=0.25)
@@ -1464,9 +1464,26 @@ class PersistenceService:
                                                  "relation_type": relation_type, "status": "active"}, limit=1)
         return rows[0] if rows else None
 
-    def _upsert_edge(self, from_node, to_node, relation_type, delta_weight=0.5, actor="auto-connect"):
-        """Crea o refuerza una única arista activa de forma atómica."""
+    def _upsert_edge(self, from_node, to_node, relation_type, delta_weight=0.5,
+                     actor="auto-connect", owner_scope=None):
+        """Crea o refuerza una arista, sin permitir cruces entre ámbitos."""
         if from_node == to_node:
+            return None
+        from_record = self.repo.get("graph_nodes", from_node)
+        to_record = self.repo.get("graph_nodes", to_node)
+        if from_record is None or to_record is None:
+            return None
+        from_scope = str(from_record.get("owner_scope") or "").strip()
+        to_scope = str(to_record.get("owner_scope") or "").strip()
+        from_core = str(from_record.get("label") or "").strip().lower() == _CORE_NODE_LABEL.lower()
+        to_core = str(to_record.get("label") or "").strip().lower() == _CORE_NODE_LABEL.lower()
+        if owner_scope is not None:
+            scope = str(owner_scope).strip()
+            if not scope:
+                return None
+            if not ((from_scope == scope or from_core) and (to_scope == scope or to_core)):
+                return None
+        if not (from_core or to_core) and from_scope != to_scope:
             return None
         for _attempt in range(2):
             try:
@@ -1504,13 +1521,17 @@ class PersistenceService:
                     return existing
         return None
 
-    def auto_connect_node_tags(self, node_id, actor="auto-connect"):
+    def auto_connect_node_tags(self, node_id, actor="auto-connect", owner_scope=None):
         node = self.repo.get("graph_nodes", node_id)
         if node is None or node.get("status") != "active": return {"connected": 0}
         my_tags = set(t.lower() for t in (node.get("tags") or []))
         if not my_tags: return {"connected": 0}
         my_privacy = node.get("privacy_level") or "PRIVATE"
-        candidates = self.repo.search("graph_nodes", {"status": "active", "privacy_level": my_privacy}, limit=200)
+        filters = {"status": "active", "privacy_level": my_privacy}
+        scope = str(owner_scope or node.get("owner_scope") or "").strip()
+        if scope:
+            filters["owner_scope"] = scope
+        candidates = self.repo.search("graph_nodes", filters, limit=200)
         scored = []
         for c in candidates:
             if c["id"] == node_id: continue
@@ -1524,7 +1545,8 @@ class PersistenceService:
         created = 0
         for weight, other_id, _s in scored[:_AUTO_MAX_CONNECTIONS]:
             r = self._upsert_edge(node_id, other_id, "related_to",
-                                  delta_weight=min(weight, _AUTO_EDGE_MAX_WEIGHT), actor=actor)
+                                  delta_weight=min(weight, _AUTO_EDGE_MAX_WEIGHT), actor=actor,
+                                  owner_scope=scope)
             if r: created += 1
         return {"connected": created}
 
