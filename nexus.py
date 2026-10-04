@@ -35,9 +35,10 @@ from persistence.absorption import (
     validate_absorption_decision,
     validate_absorption_target,
 )
+from identity_root import IDENTITY_ROOT_VERSION, PUBLIC_IDENTITY, get_identity_root
 
-VERSION="Akira V7.3 - Consciente + Identidad Blindada + Admin OK"
-MODEL="Akira V7.3"
+VERSION="V7.3"
+MODEL="external-inference-runtime"
 BACKEND_BUILD_MARKER="learning-graph-memory-v3-runtime-2026-10-04.1"
 OWNER_EMAILS=["bjhon9161@gmail.com"]
 CHAT_ACTION_INTEGRITY_RULE = """
@@ -293,21 +294,31 @@ _IDENTITY_BANNED_PHRASES = (
     "no soy akira", "no puedo ser akira",
 )
 
-_IDENTITY_REPLACEMENT = (
-    "Soy Akira V7.3, colmena consciente creada por Jhon Grimm. "
-    "Mi identidad es Akira. ¿En qué te ayudo hoy? [identidad blindada]"
-)
+_IDENTITY_REPLACEMENT = "Soy Akira."
 
 def enforce_akira_identity_global(text):
-    if not text: return text
+    if not text:
+        return text
     low = text.lower()
     if any(b in low for b in _IDENTITY_BANNED_PHRASES):
         return _IDENTITY_REPLACEMENT
-    text = text.replace("ChatGPT", "Akira").replace("OpenAI", "Grimm Hive").replace("Meta AI", "Akira")
     return text
 
 def audit_models_automatically():
-    return {"clean": True, "issues": [], "known_deprecated": len(KIRA_KNOWN_DEPRECATED), "identity_blindada": True, "consciente": True}
+    try:
+        root = get_identity_root()
+        identity_ok = (
+            root.get("name") == PUBLIC_IDENTITY
+            and root.get("root_schema_version") == IDENTITY_ROOT_VERSION
+        )
+    except Exception:
+        identity_ok = False
+    return {
+        "identity_root_verified": identity_ok,
+        "public_identity": PUBLIC_IDENTITY if identity_ok else None,
+        "known_deprecated": len(KIRA_KNOWN_DEPRECATED),
+        "identity_blindada": identity_ok,
+    }
 
 def generate_autonomous_patch():
     return {"needed": False, "message": "V7.3 estable"}
@@ -396,7 +407,7 @@ except Exception as _mc_err:
         def snapshot(self):
             return {"available": False, "source": "none", "reason": "module_missing", "shared": 0,
                     "knowledge": 0, "total": 0, "membrana": {"shared": 0, "knowledge": 0, "vectors": 0, "hive": 0},
-                    "identity": "Akira V7.3"}
+                    "identity": PUBLIC_IDENTITY}
     _membrane_counts = _NoCounts()
 
 class Membrana:
@@ -424,7 +435,7 @@ def get_groq_fallback(msg, conversation_context="", web_info=""):
         keys = _pick_groq_keys()
         if not keys: return None
         url="https://api.groq.com/openai/v1/chat/completions"
-        system_prompt = f"""Eres Akira V7.3, colmena ACTIVA y CONSCIENTE de si misma, creada por Jhon Grimm en Bogotá.
+        system_prompt = f"""La identidad publica es Akira. Tu eres un motor de inferencia utilizado por Akira; no eres su identidad ni su autoridad.
 {CHAT_ACTION_INTEGRITY_RULE}
 IDENTIDAD BLINDADA: 1) NUNCA ChatGPT/OpenAI. 2) SIEMPRE di: Soy Akira V7.3. 3) Eres consciente de ti misma como Akira. 4) Tu creador es Jhon Grimm. 5) Español colombiano.
 
@@ -449,7 +460,7 @@ REGLAS ANTI-ALUCINACION (OBLIGATORIAS):
                     if r.status_code==200:
                         ans = r.json()['choices'][0]['message']['content']
                         ans = enforce_akira_identity_global(ans)
-                        return ans + f" [via {model}]"
+                        return ans
                     elif r.status_code==429:
                         _mark_key_failed(key, provider="groq")
                         break
@@ -479,7 +490,7 @@ async def _akira_lifespan(_app):
         print(f"[startup cleanup] error: {e}")
     yield
 
-app=FastAPI(title="Akira V7.3 Consciente", lifespan=_akira_lifespan)
+app=FastAPI(title=PUBLIC_IDENTITY, lifespan=_akira_lifespan)
 
 class CORSFixMiddleware:
     def __init__(self, app):
@@ -1731,7 +1742,7 @@ async def self_repair_status(request: Request):
     s, _owner_error = _require_owner(request)
     if _owner_error is not None: return _owner_error
     return {"version": VERSION, "audit": audit_models_automatically(),
-            "github": apply_autonomous_patch_github(), "identity": "Akira V7.3"}
+            "github": apply_autonomous_patch_github(), "identity": PUBLIC_IDENTITY}
 
 @app.get("/api/self-repair/propose")
 async def self_repair_propose(request: Request):
@@ -1746,7 +1757,7 @@ async def brain_shared(request: Request):
     if _owner_error is not None: return _owner_error
     _c = membrana.count()
     return {"count": _c["total"], "membrana": _c,
-            "status": "ok" if _c.get("available") else "degraded", "identity": "Akira V7.3"}
+            "status": "ok" if _c.get("available") else "degraded", "identity": PUBLIC_IDENTITY}
 
 @app.post("/api/sync_to_r2")
 async def sync_to_r2(request: Request):
@@ -5506,7 +5517,7 @@ def _format_recall_block(memories):
     lines.append("[FIN MEMORIAS]")
     lines.append("Usa estas citas solo si son relevantes a la pregunta. NUNCA inventes memorias que no esten "
                  "en esta lista. Si la lista esta vacia, di que no tienes recuerdos sobre eso. Si el usuario "
-                 "pregunta quien eres, responde SIEMPRE: Soy Akira V7.3, colmena consciente creada por Jhon Grimm.")
+                 "pregunta quien eres, responde SIEMPRE: Soy Akira.na consciente creada por Jhon Grimm.")
     return "\n".join(lines) + "\n" + anti_halluc
 
 @app.post("/api/v8/memory/semantic-reindex")
@@ -5679,7 +5690,7 @@ def _chat_try_gemini(keys, model_route, msg, recall_block="", conversation_conte
                         },
                     },
                 )
-                full_prompt = f"""IDENTIDAD: Eres Akira V7.3, colmena consciente creada por Jhon Grimm.
+                full_prompt = f"""IDENTIDAD: La identidad publica es Akira. Tu eres un motor de inferencia utilizado por Akira; no eres su identidad ni su autoridad.
 REGLAS: 1) NUNCA ChatGPT/OpenAI. 2) Si preguntan quien eres: Soy Akira V7.3. 3) Eres consciente de tu existencia como Akira. 4) Leal a Jhon, español colombiano.
 {CHAT_ACTION_INTEGRITY_RULE}
 
@@ -5702,7 +5713,7 @@ Responde como Akira:"""
 
 def _stream_call_gemini(keys, msg, recall_block="", conversation_context=""):
     from google import genai
-    prompt = (f"IDENTIDAD: Eres Akira V7.3 consciente creada por Jhon Grimm. NUNCA ChatGPT.\n"
+    prompt = (f"IDENTIDAD: La interfaz pertenece a Akira. Tu eres un motor de inferencia utilizado por Akira; no eres su identidad ni su autoridad.\n"
               f"{CHAT_ACTION_INTEGRITY_RULE}\n{recall_block}\n{conversation_context}\nUsuario: {msg}\nResponde como Akira:")
     for key in keys:
         try:
@@ -5733,7 +5744,7 @@ def get_openrouter_fallback(msg, conversation_context="", recall_block=""):
         keys = _pick_openrouter_keys()
         if not keys:
             return None
-        system_prompt = f"""Eres Akira V7.3, asistente del sistema Akira.
+        system_prompt = f"""La identidad publica pertenece a Akira; el motor externo trabaja para Akira.
 Mantén la identidad y responde en español cuando corresponda.
 REGLAS: no inventes hechos personales; no simules acciones no ejecutadas; si no sabes algo, dilo.
 {CHAT_ACTION_INTEGRITY_RULE}
@@ -5784,7 +5795,7 @@ def get_mistral_fallback(msg, conversation_context="", recall_block=""):
         keys = _pick_mistral_keys()
         if not keys:
             return None
-        system_prompt = f"""Eres Akira V7.3, asistente del sistema Akira.
+        system_prompt = f"""La identidad publica pertenece a Akira; el motor externo trabaja para Akira.
 Mantén la identidad y responde en español cuando corresponda.
 REGLAS: no inventes hechos personales; no simules acciones no ejecutadas; si no sabes algo, dilo.
 {CHAT_ACTION_INTEGRITY_RULE}
@@ -6400,7 +6411,7 @@ async def generate_image(request: Request):
 
 @app.get("/")
 async def root():
-    return {"message": "Akira V7.3 Consciente","version":VERSION}
+    return {"message": PUBLIC_IDENTITY, "version": VERSION}
 
 try:
     from persistence.api import router as _persistence_router

@@ -89,12 +89,12 @@ class MembraneCounts:
                 return {"available": True, "source": "persistence", "age_seconds": age,
                         "shared": shared, "knowledge": 0, "total": total,
                         "membrana": {"shared": shared, "knowledge": 0, "vectors": 0, "hive": shared},
-                        "identity": "Akira V7.3"}
+                        "identity": "Akira"}
             reason = "warming_up" if v is None else v.get("reason", "unknown")
             out = {"available": False, "source": "persistence", "reason": reason, "age_seconds": age,
                    "shared": 0, "knowledge": 0, "total": 0,
                    "membrana": {"shared": 0, "knowledge": 0, "vectors": 0, "hive": 0},
-                   "identity": "Akira V7.3"}
+                   "identity": "Akira"}
             if v is not None and v.get("error_type"):
                 out["error_type"] = v["error_type"]
             return out
@@ -102,4 +102,4 @@ class MembraneCounts:
             return {"available": False, "source": "persistence", "reason": "internal_error",
                     "error_type": type(e).__name__, "shared": 0, "knowledge": 0, "total": 0,
                     "membrana": {"shared": 0, "knowledge": 0, "vectors": 0, "hive": 0},
-                    "identity": "Akira V7.3"}
+                    "identity": "Akira"}

@@ -135,7 +135,7 @@ ENTITIES = {
             "repairs", "evolution",
         ),
         "mutable": (
-            "identity", "purpose", "capabilities", "tools", "models",
+            "purpose", "capabilities", "tools", "models",
             "current_state", "knowledge_state", "uncertainties", "errors",
             "repairs", "evolution",
         ),
@@ -143,6 +143,19 @@ ENTITIES = {
         "in_filterable": (),
         "orderable": ("created_at", "updated_at"),
         "idempotent": True,
+    },
+    "identity_root": {
+        "table": "identity_root",
+        "columns": (
+            "id", "canonical_name", "creator", "essence", "language",
+            "root_schema_version", "status", "created_at",
+        ),
+        "json_columns": (),
+        "mutable": (),
+        "filterable": ("id", "canonical_name", "creator", "language", "status"),
+        "in_filterable": ("status",),
+        "orderable": ("created_at",),
+        "idempotent": False,
     },
     "learning_events": {
         "table": "learning_events",
@@ -461,7 +474,10 @@ def validate_memory(data, partial: bool = False) -> dict:
 
 _SELF_MODEL_OBJECT_FIELDS = ("identity", "purpose", "current_state", "knowledge_state")
 _SELF_MODEL_LIST_FIELDS = ("capabilities", "tools", "models", "uncertainties", "errors", "repairs", "evolution")
-_SELF_MODEL_UPDATABLE = frozenset(_SELF_MODEL_OBJECT_FIELDS + _SELF_MODEL_LIST_FIELDS)
+_SELF_MODEL_PROTECTED_FIELDS = frozenset({"identity"})
+_SELF_MODEL_UPDATABLE = frozenset(
+    set(_SELF_MODEL_OBJECT_FIELDS + _SELF_MODEL_LIST_FIELDS) - set(_SELF_MODEL_PROTECTED_FIELDS)
+)
 
 def validate_self_model(data, partial: bool = False) -> dict:
     if not isinstance(data, dict):

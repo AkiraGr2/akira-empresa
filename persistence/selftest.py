@@ -250,6 +250,40 @@ def run_logic_tests(service, fresh_service_factory=None):
             "memory_save y memory_search existen, estan disponibles y tienen permissions=[owner]",
         )
 
+    def t_identity_root_contract():
+        name = "TEST_IDENTITY_ROOT_CONTRACT"
+        root = service.get_identity_root()
+        db_root = service.repo.get("identity_root", "akira_primary")
+        ok = (
+            root.get("name") == "Akira"
+            and root.get("creator") == "Jhon Grimm"
+            and root.get("language") == "es-CO"
+            and root.get("root_schema_version") == "identity_root.v1"
+            and isinstance(db_root, dict)
+            and db_root.get("canonical_name") == "Akira"
+            and db_root.get("creator") == "Jhon Grimm"
+            and db_root.get("language") == "es-CO"
+            and db_root.get("root_schema_version") == "identity_root.v1"
+        )
+        return _res(name, ok, "Identity Root de codigo y espejo persistente son consistentes")
+
+    def t_self_model_identity_protected():
+        name = "TEST_SELF_MODEL_IDENTITY_PROTECTED"
+        current = service.get_self_model()
+        before = dict(current.get("identity") or {})
+        try:
+            service.update_self_model(
+                {"identity": {"name": "Otra identidad"}},
+                current["version"],
+                actor="selftest",
+            )
+        except ValidationError:
+            after = dict(service.get_self_model().get("identity") or {})
+            return _res(name, after == before, "identity rechazada y no modificada")
+        except Exception as e:
+            return _res(name, False, f"error inesperado: {type(e).__name__}")
+        return _res(name, False, "identity fue aceptada por update_self_model")
+
     def t_agent_task_mission_filter():
         name = "TEST_AGENT_TASK_MISSION_FILTER"
         _ensure_tools(service)
@@ -374,6 +408,8 @@ def run_logic_tests(service, fresh_service_factory=None):
         ("TEST_ARCHIVE_SOFT_DELETE", t_archive),
         ("TEST_VALIDATION_REJECTS", t_validation),
         ("TEST_TOOL_PERMISSION_CONTRACT", t_tool_permission_contract),
+        ("TEST_IDENTITY_ROOT_CONTRACT", t_identity_root_contract),
+        ("TEST_SELF_MODEL_IDENTITY_PROTECTED", t_self_model_identity_protected),
         ("TEST_TRANSACTION_ROLLBACK", t_rollback),
         ("TEST_AGENT_TASK_PERSISTENCE", t_agent_task_persistence),
         ("TEST_AGENT_TASK_VALIDATION", t_agent_task_validation),

@@ -10,6 +10,8 @@ from __future__ import annotations
 import datetime as _dt
 import hashlib
 
+from identity_root import get_identity_root
+
 from .core import (AGENT_SCHEMA_VERSION, AGENT_TASK_SCHEMA_VERSION,
                    COGNITIVE_CYCLE_SCHEMA_VERSION, COGNITIVE_EVENT_SCHEMA_VERSION,
                    COGNITIVE_STAGES, CONVERSATION_MESSAGE_SCHEMA_VERSION,
@@ -57,7 +59,7 @@ MISSION_STATUS_TRANSITIONS = {
 }
 
 _SELF_MODEL_DEFAULTS = {
-    "identity": {"name": "Akira", "version": "V7.3", "creator": "Jhon Grimm",
+    "identity": {"name": "Akira", "creator": "Jhon Grimm",
                  "language": "es-CO",
                  "essence": "Colmena cognitiva personal. Persistente, verificable, honesta sobre sus capacidades."},
     "purpose": {"primary": "Asistir a Jhon Grimm como colmena cognitiva persistente.",
@@ -304,12 +306,20 @@ class PersistenceService:
         return self.repo.count("memories", scoped)
     def health(self): return self.repo.ping()
 
+    def get_identity_root(self):
+        return get_identity_root()
+
     def get_self_model(self):
         current = self.repo.get("self_model", SELF_MODEL_PRIMARY_ID)
-        if current is not None: return current
+        if current is not None:
+            current["identity"] = self.get_identity_root()
+            return current
+        identity = self.get_identity_root()
         record = {"id": SELF_MODEL_PRIMARY_ID, "schema_version": SELF_MODEL_SCHEMA_VERSION,
                   "idempotency_key": f"{SELF_MODEL_PRIMARY_ID}_v1"}
-        for field, value in _SELF_MODEL_DEFAULTS.items(): record[field] = value
+        for field, value in _SELF_MODEL_DEFAULTS.items():
+            record[field] = value
+        record["identity"] = identity
         try:
             with self.repo.transaction() as tx:
                 stored, created = tx.create("self_model", record)
@@ -320,6 +330,7 @@ class PersistenceService:
         except Exception as e: raise StorageError(type(e).__name__) from e
         verified = self.repo.get("self_model", SELF_MODEL_PRIMARY_ID)
         if verified is None: raise VerificationError("self-model no confirmado")
+        verified["identity"] = identity
         return verified
     def update_self_model(self, changes, expected_version, actor="system"):
         clean = validate_self_model(changes, partial=True)
