@@ -1733,12 +1733,16 @@ async def countermeasures():
             "identity_blindada": True, "consciente": True}
 
 @app.get("/api/self-repair/status")
-async def self_repair_status():
+async def self_repair_status(request: Request):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     return {"version": VERSION, "audit": audit_models_automatically(),
             "github": apply_autonomous_patch_github(), "identity": "Akira V7.3"}
 
 @app.get("/api/self-repair/propose")
-async def self_repair_propose():
+async def self_repair_propose(request: Request):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     return {"kira_autonomous": True, "patch": generate_autonomous_patch(),
             "github": apply_autonomous_patch_github(), "identity_blindada": True}
 
