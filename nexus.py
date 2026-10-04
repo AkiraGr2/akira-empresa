@@ -4411,7 +4411,7 @@ def v8_approve_mission(request: Request, mission_id: str):
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
 
-    m = service.get_mission(mission_id)
+    m = service.get_mission(mission_id, owner=s["email"])
     if m is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
     if m.get("status") != "waiting_approval":
         return JSONResponse({"ok": False, "reason": "invalid_status",
@@ -4458,7 +4458,7 @@ async def v8_reject_mission(request: Request, mission_id: str):
     from persistence.core import (ConflictError, NotFoundError, PersistenceError,
                                    ValidationError)
     try:
-        m = await asyncio.to_thread(service.get_mission, mission_id)
+        m = await asyncio.to_thread(service.get_mission, mission_id, s["email"])
         if m is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
         if m.get("status") != "waiting_approval":
             return JSONResponse({"ok": False, "reason": "invalid_status",
@@ -4487,7 +4487,7 @@ async def v8_execute_mission(request: Request, mission_id: str):
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
 
-    m = service.get_mission(mission_id)
+    m = service.get_mission(mission_id, owner=s["email"])
     if m is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
     if m.get("status") != "running":
         return JSONResponse({"ok": False, "reason": "invalid_status",
@@ -4542,7 +4542,7 @@ def v8_cancel_mission(request: Request, mission_id: str):
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
 
-    m = service.get_mission(mission_id)
+    m = service.get_mission(mission_id, owner=s["email"])
     if m is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
     if m.get("status") != "running":
         return JSONResponse({"ok": False, "reason": "invalid_status",
