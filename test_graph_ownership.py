@@ -91,6 +91,13 @@ class GraphOwnershipTests(unittest.TestCase):
                 owner_scope="scope:A",
             )
 
+    def test_internal_upsert_refuses_cross_owner_edge(self):
+        self.assertIsNone(
+            self.service._upsert_edge(
+                "a1", "b1", "related_to", owner_scope="scope:A"
+            )
+        )
+
     def test_same_owner_edge_remains_allowed(self):
         result = self.service.create_edge(
             {"from_node": "a1", "to_node": "a1", "relation_type": "related_to"},
