@@ -2873,7 +2873,7 @@ def v8_graph_related(request: Request, node_id: str, direction: str = "both", li
     node_ids.discard(node_id)
     neighbors = []
     for nid in node_ids:
-        n = service.get_node(nid)
+        n = service.get_node(nid, owner_scope=s["owner_scope"])
         if n: neighbors.append(n)
     return {"ok": True, "root": node_id, "edges": edges, "neighbors": neighbors}
 
