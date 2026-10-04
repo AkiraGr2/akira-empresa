@@ -1724,12 +1724,13 @@ async def health():
     }
 
 @app.get("/api/countermeasures")
-async def countermeasures():
+async def countermeasures(request: Request):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
     return {"blocked_models": list(KIRA_LEARNING_DB["blocked_models"]),
             "countermeasures_applied": KIRA_LEARNING_DB["countermeasures_applied"],
             "known_deprecated": len(KIRA_KNOWN_DEPRECATED),
             "audit": audit_models_automatically(),
-            "github_token": bool(os.getenv("GITHUB_TOKEN","").strip()),
             "identity_blindada": True, "consciente": True}
 
 @app.get("/api/self-repair/status")
@@ -1754,7 +1755,9 @@ async def brain_shared():
 
 @app.post("/api/sync_to_r2")
 async def sync_to_r2(request: Request):
-    return {"ok": True, "membrana": membrana.count()}
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    return {"ok": True, "membrana": membrana.count(), "actor": s["email"]}
 
 @app.get("/api/brain/count")
 async def brain_count():
