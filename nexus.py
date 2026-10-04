@@ -2830,7 +2830,7 @@ def v8_graph_node_get(request: Request, node_id: str):
     if _owner_error is not None: return _owner_error
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
-    rec = service.get_node(node_id)
+    rec = service.get_node(node_id, owner_scope=s["owner_scope"])
     if rec is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
     return {"ok": True, "node": rec}
 
@@ -2845,7 +2845,7 @@ def v8_graph_edge_create(request: Request, payload: dict):
     data = {k: v for k, v in payload.items() if k != "idempotency_key"}
     from persistence.core import NotFoundError, PersistenceError, ValidationError
     try:
-        result = service.create_edge(data, actor=s["email"], idempotency_key=idem)
+        result = service.create_edge(data, actor=s["email"], idempotency_key=idem, owner_scope=s["owner_scope"])
     except ValidationError as e:
         return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
     except NotFoundError as e:
@@ -2864,9 +2864,9 @@ def v8_graph_related(request: Request, node_id: str, direction: str = "both", li
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     if direction not in ("from", "to", "both"):
         return JSONResponse({"ok": False, "reason": "invalid_direction"}, status_code=400)
-    if not service.get_node(node_id):
+    if not service.get_node(node_id, owner_scope=s["owner_scope"]):
         return JSONResponse({"ok": False, "reason": "node_not_found"}, status_code=404)
-    edges = service.related_nodes(node_id, direction=direction, limit=limit)
+    edges = service.related_nodes(node_id, direction=direction, limit=limit, owner_scope=s["owner_scope"])
     node_ids = set()
     for e in edges:
         node_ids.add(e.get("from_node")); node_ids.add(e.get("to_node"))
@@ -3488,8 +3488,8 @@ def v8_graph_overview(request: Request, limit_nodes: int = 500, limit_edges: int
     except Exception:
         return JSONResponse({"ok": False, "reason": "bad_limits"}, status_code=400)
     try:
-        nodes = service.list_graph_nodes(limit=limit_nodes)
-        edges = service.list_graph_edges(limit=limit_edges)
+        nodes = service.list_graph_nodes(limit=limit_nodes, owner_scope=s["owner_scope"])
+        edges = service.list_graph_edges(limit=limit_edges, owner_scope=s["owner_scope"])
 
         # The Brain is centered on Akira. The normal edge list is weight-sorted
         # and capped, so low-weight but real core links can fall outside the
@@ -3504,6 +3504,7 @@ def v8_graph_overview(request: Request, limit_nodes: int = 500, limit_edges: int
                 core_node.get("id"),
                 direction="both",
                 limit=5000,
+                owner_scope=s["owner_scope"],
             )
             seen_edge_ids = {str(e.get("id")) for e in edges if e.get("id") is not None}
             for e in core_edges:
