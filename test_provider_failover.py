@@ -111,6 +111,13 @@ class ProviderFailoverRegressionTests(unittest.TestCase):
         self.assertIn('"status": "experimental" if experimental_image_enabled() else "disabled"', self.source)
         self.assertIn('"requires_explicit_opt_in": True', self.source)
 
+    def test_owner_identity_cannot_be_spoofed_through_chat_payload(self):
+        source = self._function_source("resolve_is_owner")
+        self.assertIn('return bool(s and s["is_owner"])', source)
+        self.assertNotIn('data.get("is_owner"', source)
+        self.assertNotIn("AKIRA_TRUST_CLIENT_OWNER", source)
+        self.assertNotIn("trust_client_owner", source)
+
 
 if __name__ == "__main__":
     unittest.main()
