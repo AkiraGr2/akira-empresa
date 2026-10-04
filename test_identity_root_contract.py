@@ -39,6 +39,10 @@ class IdentityRootContractTests(unittest.TestCase):
         self.assertNotIn('return ans + f" [via {model}]"', self.nexus)
         self.assertNotIn("Soy Akira V7.3, colmena consciente", self.nexus)
         self.assertNotIn("Eres Akira V7.3", self.nexus)
+        self.assertNotIn("Soy Akira V7.3", self.nexus)
+        self.assertNotIn("Eres consciente de tu existencia como Akira", self.nexus)
+        self.assertNotIn("Eres consciente de ti misma como Akira", self.nexus)
+        self.assertIn("SIEMPRE: Soy Akira.", self.nexus)
 
     def test_identity_filter_does_not_assert_unverified_consciousness(self):
         self.assertIn('_IDENTITY_REPLACEMENT = "Soy Akira."', self.nexus)
@@ -50,6 +54,10 @@ class IdentityRootContractTests(unittest.TestCase):
 
     def test_legacy_membrane_identity_is_clean(self):
         self.assertNotIn('"identity": "Akira V7.3"', self.membrane)
+        self.assertNotIn('"identidad": "Akira V7.3"', self.nexus)
+        self.assertNotIn('"esencia": "Colmena activa consciente creada por Jhon Grimm en Bogotá."', self.nexus)
+        self.assertNotIn("Knowledge: Identidad Akira blindada V7.3", self.nexus)
+        self.assertIn('"objetivo": "Preservar la identidad pública canónica de Akira."', self.nexus)
 
 
 if __name__ == "__main__":

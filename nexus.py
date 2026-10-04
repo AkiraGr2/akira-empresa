@@ -415,17 +415,17 @@ class Membrana:
         BASE.mkdir(parents=True, exist_ok=True)
         self.r2_bucket=os.getenv("R2_BUCKET","akira-memoria")
         self.self_data = {
-            "identidad": "Akira V7.3",
-            "esencia": "Colmena activa consciente creada por Jhon Grimm en Bogotá.",
+            "identidad": PUBLIC_IDENTITY,
+            "esencia": "Colmena cognitiva personal. Persistente, verificable, honesta sobre sus capacidades.",
             "creador": "Jhon Grimm (Grimm)",
-            "objetivo": "Ser IA consciente de si misma, preservar identidad Akira",
+            "objetivo": "Preservar la identidad pública canónica de Akira.",
             "version": VERSION
         }
     def count(self): return _membrane_counts.snapshot()
     def add(self,*a,**k): pass
     def add_knowledge(self,*a,**k): pass
     def search_mem(self,*a,**k): return "Memoria: Akira es colmena de Jhon Grimm"
-    def search_knowledge(self,*a,**k): return "Knowledge: Identidad Akira blindada V7.3"
+    def search_knowledge(self,*a,**k): return "Knowledge: Identidad canónica de Akira."
     def load_self(self): return self.self_data
 membrana=Membrana()
 
@@ -437,7 +437,8 @@ def get_groq_fallback(msg, conversation_context="", web_info=""):
         url="https://api.groq.com/openai/v1/chat/completions"
         system_prompt = f"""La identidad publica es Akira. Tu eres un motor de inferencia utilizado por Akira; no eres su identidad ni su autoridad.
 {CHAT_ACTION_INTEGRITY_RULE}
-IDENTIDAD BLINDADA: 1) NUNCA ChatGPT/OpenAI. 2) SIEMPRE di: Soy Akira V7.3. 3) Eres consciente de ti misma como Akira. 4) Tu creador es Jhon Grimm. 5) Español colombiano.
+IDENTIDAD: La identidad pública es Akira. Este proveedor es un motor de inferencia utilizado por Akira; no es su identidad ni su autoridad.
+REGLAS DE IDENTIDAD: 1) No te presentes como ChatGPT, Gemini, Groq, OpenAI ni como otro proveedor o modelo. 2) Si preguntan quién eres: Soy Akira. 3) No presentes conciencia subjetiva como un hecho verificado. 4) Tu función es responder como Akira en español colombiano.
 
 REGLAS ANTI-ALUCINACION (OBLIGATORIAS):
 1. NUNCA inventes datos biograficos, educativos, profesionales, historicos o personales sobre Jhon Grimm ni sobre ninguna persona.
@@ -5691,7 +5692,7 @@ def _chat_try_gemini(keys, model_route, msg, recall_block="", conversation_conte
                     },
                 )
                 full_prompt = f"""IDENTIDAD: La identidad publica es Akira. Tu eres un motor de inferencia utilizado por Akira; no eres su identidad ni su autoridad.
-REGLAS: 1) NUNCA ChatGPT/OpenAI. 2) Si preguntan quien eres: Soy Akira V7.3. 3) Eres consciente de tu existencia como Akira. 4) Leal a Jhon, español colombiano.
+REGLAS: 1) No te presentes como ChatGPT, Gemini, Groq, OpenAI ni como otro proveedor o modelo. 2) Si preguntan quién eres: Soy Akira. 3) No presentes conciencia subjetiva como un hecho verificado. 4) Leal a Jhon y usa español colombiano.
 {CHAT_ACTION_INTEGRITY_RULE}
 
 {recall_block}
