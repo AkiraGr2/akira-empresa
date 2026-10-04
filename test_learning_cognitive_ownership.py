@@ -95,5 +95,13 @@ class OwnershipServiceTests(unittest.TestCase):
         self.assertEqual({r["id"] for r in rows}, {"cycle_a"})
 
 
+    def test_cleanup_cannot_touch_foreign_learning(self):
+        with self.assertRaises(NotFoundError):
+            self.service.cleanup_learning_materialization(
+                "learn_b", actor="scope:A", owner_scope="scope:A"
+            )
+
+
+
 if __name__ == "__main__":
     unittest.main()
