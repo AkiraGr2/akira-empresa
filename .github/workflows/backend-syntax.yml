@@ -44,6 +44,10 @@ jobs:
         run: |
           python -m unittest test_provider_failover -v
 
+      - name: Install backend runtime dependencies for multimedia regression
+        run: |
+          python -m pip install -r requirements.txt
+
       - name: Test multimedia contract and authenticated PDF flow
         run: |
           python -m unittest test_multimedia_contract -v
