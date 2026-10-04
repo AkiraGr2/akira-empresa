@@ -2495,7 +2495,7 @@ def v8_learning_selftest(request: Request):
             "outcome": "unknown",
             "status": "candidate",
             "evidence": [],
-        }, actor=s["email"], idempotency_key="learning_selftest:" + marker_id)
+        }, actor=s["email"], idempotency_key="learning_selftest:" + marker_id, owner_scope=s["owner_scope"])
         created_rec = created.get("record") if isinstance(created, dict) else None
         if not isinstance(created_rec, dict):
             raise ValidationError("save_learning selftest no devolvio record")
@@ -2509,7 +2509,7 @@ def v8_learning_selftest(request: Request):
         add("candidate_to_verified", verified.get("status") == "verified" and bool(verified.get("verified_at")), {"status": verified.get("status")})
         consolidated = service.update_learning_status(created_id, "consolidated", expected_version=verified["version"], actor=s["email"], owner_scope=s["owner_scope"])
         add("verified_to_consolidated", consolidated.get("status") == "consolidated", {"status": consolidated.get("status")})
-        fetched = service.get_learning(created_id)
+        fetched = service.get_learning(created_id, owner_scope=s["owner_scope"])
         add("persisted_after_consolidation", fetched is not None and fetched.get("status") == "consolidated", {"id": created_id})
 
         # E2E real del Knowledge Gate: un aprendizaje consolidado debe
@@ -2528,11 +2528,11 @@ def v8_learning_selftest(request: Request):
                 len(active_cores) == 1 and active_cores[0].get("id") == core.get("id"),
                 {"count": len(active_cores), "core_id": core.get("id")},
             )
-            current_before = service.get_learning(created_id)
+            current_before = service.get_learning(created_id, owner_scope=s["owner_scope"])
             context = {"node_type": "concept", "label": "SELFTEST Learning", "knowledge_node_ids": [core["id"]]}
             promoted_learning = service.update_learning(
                 created_id, {"learning_context": context},
-                expected_version=current_before["version"], actor=s["email"]
+                expected_version=current_before["version"], actor=s["email"], owner_scope=s["owner_scope"]
             )
             promoted = service.promote_learning_to_graph(created_id, actor=s["email"], owner_scope=s["owner_scope"])
             promoted_node = promoted.get("node")
@@ -2561,6 +2561,7 @@ def v8_learning_selftest(request: Request):
                 "Dato sintetico de prueba del Learning Engine SELFTEST Learning",
                 limit=5,
                 include_semantic=False,
+                owner_scope=s["owner_scope"],
             )
             add(
                 "verified_learning_recalled",
@@ -2573,14 +2574,14 @@ def v8_learning_selftest(request: Request):
                 int((after_recall or {}).get("reuse_count") or 0) >= 1,
                 {"reuse_count": int((after_recall or {}).get("reuse_count") or 0)}
             )
-            cleanup_result = service.cleanup_learning_materialization(created_id, actor=s["email"])
+            cleanup_result = service.cleanup_learning_materialization(created_id, actor=s["email"], owner_scope=s["owner_scope"])
             add(
                 "learning_materialization_cleanup",
                 cleanup_result.get("archived_nodes", 0) >= 1
                 and cleanup_result.get("archived_memories", 0) >= 1,
                 cleanup_result,
             )
-            core_after = service.get_node(core["id"])
+            core_after = service.get_node(core["id"], owner_scope=s["owner_scope"])
             add(
                 "core_node_protected",
                 bool(core_after)
@@ -2596,11 +2597,11 @@ def v8_learning_selftest(request: Request):
             add("verified_learning_promotion", False, {"reason": "core_node_unavailable"})
 
         try:
-            current_for_transition = service.get_learning(created_id)
+            current_for_transition = service.get_learning(created_id, owner_scope=s["owner_scope"])
             service.update_learning_status(
                 created_id, "discarded",
                 expected_version=current_for_transition["version"],
-                actor=s["email"]
+                actor=s["email"], owner_scope=s["owner_scope"]
             )
             add("illegal_transition_rejected", False, {"reason": "discarded_transition_should_fail"})
         except Exception as e:
@@ -2608,11 +2609,11 @@ def v8_learning_selftest(request: Request):
 
         # Limpieza final del registro sintético: consolidated -> obsolete.
         try:
-            current_for_cleanup = service.get_learning(created_id)
+            current_for_cleanup = service.get_learning(created_id, owner_scope=s["owner_scope"])
             service.update_learning_status(
                 created_id, "obsolete",
                 expected_version=current_for_cleanup["version"],
-                actor=s["email"]
+                actor=s["email"], owner_scope=s["owner_scope"]
             )
             add("selftest_cleanup", True, {"status": "obsolete"})
         except Exception as e:
@@ -2688,12 +2689,12 @@ def v8_learning_selftest(request: Request):
         })
         if auto_id:
             try:
-                current_auto = service.get_learning(auto_id)
+                current_auto = service.get_learning(auto_id, owner_scope=s["owner_scope"])
                 if current_auto and current_auto.get("status") == "candidate":
                     service.update_learning_status(
                         auto_id, "discarded",
                         expected_version=current_auto["version"],
-                        actor=s["email"],
+                        actor=s["email"], owner_scope=s["owner_scope"],
                     )
             except Exception:
                 pass
