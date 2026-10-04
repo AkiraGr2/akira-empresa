@@ -45,9 +45,18 @@ def _mem(marker, **over):
 
 def _guard(name, fn):
     try:
-        return fn()
+        result = fn()
+        if result.get("status") == "FAIL":
+            print(
+                f"[persistence] selftest {name} FAIL: "
+                f"{str(result.get('detail') or '')[:500]}",
+                flush=True,
+            )
+        return result
     except Exception as e:  # un fallo de la prueba es un FAIL, no un crash
-        return _res(name, False, f"excepcion {type(e).__name__}: {str(e)[:120]}")
+        detail = f"excepcion {type(e).__name__}: {str(e)[:120]}"
+        print(f"[persistence] selftest {name} FAIL: {detail}", flush=True)
+        return _res(name, False, detail)
 
 
 def _ensure_tools(service):
