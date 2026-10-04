@@ -89,6 +89,20 @@ class AuthorizationContractTests(unittest.TestCase):
         for name in ("self_repair_status", "self_repair_propose"):
             source = self._function_source(name)
             self.assertIn("_require_owner(request)", source, name)
+    def test_me_route_derives_identity_only_from_signed_session(self):
+        source = self._function_source("v8_me")
+        self.assertIn("s = get_session(request)", source)
+        self.assertIn('s["email"]', source)
+        self.assertIn('s["is_owner"]', source)
+        self.assertIn('s["owner_scope"]', source)
+        self.assertIn('s["exp"]', source)
+        self.assertNotIn("request.query_params", source)
+        self.assertNotIn("request.cookies", source)
+        self.assertNotIn("data.get", source)
+
+    def test_auth_status_declares_client_owner_trust_disabled(self):
+        source = self._function_source("v8_auth_status")
+        self.assertIn('"trust_client_owner": False', source)
 
     def test_graph_owner_scope_is_server_derived(self):
         source = self._function_source("v8_graph_node_create")
