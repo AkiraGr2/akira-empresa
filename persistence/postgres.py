@@ -325,9 +325,9 @@ class PostgresRepository(PersistenceRepository):
                 return []
             clauses.append("(m.owner_scope = %s OR m.owner_scope = 'owner')")
             params.append(scope)
-        # Placeholder order must match the SQL exactly:
-        # model, optional owner scope, SELECT vector, ORDER BY vector, limit.
-        params.extend([vector, vector, limit])
+        # Placeholder order follows the SQL text exactly:
+        # SELECT vector, model, optional owner scope, ORDER BY vector, limit.
+        params = [vector, *params, vector, limit]
         with self._cursor() as cur:
             cur.execute(
                 f"""
