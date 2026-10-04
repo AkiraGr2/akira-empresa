@@ -105,6 +105,8 @@ class ChatActionIntegrityGuardTests(unittest.TestCase):
         }
 
         def fake_get(url):
+            if url.endswith("/git/ref/heads/main"):
+                return {"object": {"sha": "a" * 40}}
             if url.endswith("/contents?ref=main"):
                 return fake_root
             return fake_file
@@ -120,6 +122,11 @@ class ChatActionIntegrityGuardTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["files"][0]["status"], "ok")
         self.assertEqual(result["files"][0]["mode"], "targeted_snippets")
+        self.assertEqual(result["head_commit_sha"], "a" * 40)
+        self.assertEqual(
+            result["files"][0]["source_url"],
+            "https://github.com/AkiraGr2/akira-v3-frontend/blob/main/js/obsidian_membrane.js",
+        )
         self.assertGreaterEqual(len(result["files"][0]["matches"]), 1)
         snippets = " ".join(m["snippet"] for m in result["files"][0]["matches"])
         self.assertIn("openBrainContext", snippets)
