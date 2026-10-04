@@ -532,7 +532,7 @@ def run_logic_tests(service, fresh_service_factory=None):
                 ).encode("utf-8")
             ).hexdigest()[:16]
             source_digest = hashlib.sha256(
-                inspect.getsource(PersistenceService.self_knowledge_snapshot).encode("utf-8")
+                inspect.getsource(service.self_knowledge_snapshot).encode("utf-8")
             ).hexdigest()[:16]
             evidence = [{
                 "type": "selftest",
