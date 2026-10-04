@@ -1712,26 +1712,51 @@ class PersistenceService:
             if edge: connected += 1
         return {"learning_node": learning_node["id"], "connected": connected}
 
-    def auto_connect_memory_tags(self, memory_id, actor="auto-connect"):
+    def auto_connect_memory_tags(self, memory_id, actor="auto-connect", owner_scope=None):
         memory = self.repo.get("memories", memory_id)
-        if memory is None or memory.get("status") != "active": return {"connected": 0}
+        if memory is None or memory.get("status") != "active":
+            return {"connected": 0}
+        scope = str(owner_scope or memory.get("owner_scope") or "").strip()
+        if owner_scope is not None and not scope:
+            return {"connected": 0}
         tags = memory.get("tags") or []
-        if not tags: return {"connected": 0}
+        if not tags:
+            return {"connected": 0}
         my_privacy = memory.get("privacy_level") or "PRIVATE"
-        memory_node = self._find_or_create_node("experience", f"memory:{memory_id}", tags=tags, actor=actor)
-        if not memory_node: return {"connected": 0}
+        memory_node = self._find_or_create_node(
+            "experience",
+            f"memory:{memory_id}",
+            tags=tags,
+            actor=actor,
+            owner_scope=scope or None,
+        )
+        if not memory_node:
+            return {"connected": 0}
         my_tags = set(t.lower() for t in tags)
-        candidates = self.repo.search("graph_nodes", {"status": "active", "privacy_level": my_privacy}, limit=200)
+        filters = {"status": "active", "privacy_level": my_privacy}
+        if scope:
+            filters["owner_scope"] = scope
+        candidates = self.repo.search("graph_nodes", filters, limit=200)
         connected = 0
-        for c in candidates:
-            if c["id"] == memory_node["id"]: continue
-            other_tags = set(t.lower() for t in (c.get("tags") or []))
+        for candidate in candidates:
+            if candidate["id"] == memory_node["id"]:
+                continue
+            other_tags = set(t.lower() for t in (candidate.get("tags") or []))
             shared = my_tags & other_tags
-            if not shared: continue
-            edge = self._upsert_edge(memory_node["id"], c["id"], "related_to",
-                                     delta_weight=_AUTO_MEMORY_WEIGHT, actor=actor)
-            if edge: connected += 1
-            if connected >= _AUTO_MAX_CONNECTIONS: break
+            if not shared:
+                continue
+            edge = self._upsert_edge(
+                memory_node["id"],
+                candidate["id"],
+                "related_to",
+                delta_weight=_AUTO_MEMORY_WEIGHT,
+                actor=actor,
+                owner_scope=scope or None,
+            )
+            if edge:
+                connected += 1
+            if connected >= _AUTO_MAX_CONNECTIONS:
+                break
         return {"memory_node": memory_node["id"], "connected": connected}
 
     def reinforce_frequent_pairs(self, actor="auto-connect", limit_nodes=200):
