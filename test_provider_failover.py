@@ -85,12 +85,31 @@ class ProviderFailoverRegressionTests(unittest.TestCase):
         self.assertIn('"status": "experimental"', self.source)
         self.assertIn('"status": "not_implemented"', self.source)
 
+
     def test_media_endpoints_require_session_and_have_independent_rate_limit(self):
         for fn in ("extract_file", "generate_image"):
             source = self._function_source(fn)
             self.assertIn("session = get_session(request)", source)
             self.assertIn("auth_required", source)
             self.assertIn("check_media_rate_limit", source)
+
+    def test_image_experimental_path_is_double_opt_in_and_never_exposes_key(self):
+        self.assertIn("def get_pollinations_key():", self.source)
+        self.assertIn("def experimental_image_enabled():", self.source)
+        source = self._function_source("generate_image")
+        self.assertIn("if not experimental_image_enabled():", source)
+        self.assertIn('"Authorization": f"Bearer {get_pollinations_key()}"', source)
+        self.assertNotIn('?key=', source)
+        self.assertNotIn("image.pollinations.ai/prompt/", source)
+
+    def test_pdf_validation_checks_signature_and_strict_base64(self):
+        source = self._function_source("extract_file")
+        self.assertIn("base64.b64decode(b64, validate=True)", source)
+        self.assertIn('raw[:5] != b"%PDF-"', source)
+
+    def test_runtime_image_status_reflects_explicit_opt_in(self):
+        self.assertIn('"status": "experimental" if experimental_image_enabled() else "disabled"', self.source)
+        self.assertIn('"requires_explicit_opt_in": True', self.source)
 
 
 if __name__ == "__main__":

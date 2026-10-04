@@ -16,6 +16,7 @@
 # Sub-fase 1.6 (2026-10-04): failover multi-proveedor endurecido + rotacion de credenciales.
 # Sub-fase 1.7: migración del ciclo startup de FastAPI a lifespan, sin cambiar comportamiento.
 # Sub-fase 1.8: contrato de capacidades + endurecimiento de endpoints multimedia en modo gratuito.
+# Sub-fase 1.9: imagen experimental protegida por doble opt-in y proxy seguro del servidor.
 import os, json, datetime, threading, time, hashlib, base64, math, asyncio, random, re
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -199,6 +200,16 @@ def get_mistral_keys():
         k = (os.getenv(f"MISTRAL_API_KEY_{i}","").strip() or os.getenv(f"MISTRAL_API_KEY{i}","").strip())
         if k: keys.append(k)
     return list(dict.fromkeys(keys))
+
+def get_pollinations_key():
+    """Clave opcional de imagen experimental; nunca se expone al cliente."""
+    return (os.getenv("POLLINATIONS_API_KEY", "") or "").strip()
+
+def experimental_image_enabled():
+    """Doble opt-in: clave + bandera explícita. Por defecto permanece desactivado."""
+    flag = (os.getenv("AKIRA_ENABLE_EXPERIMENTAL_IMAGE", "0") or "0").strip().lower()
+    return bool(get_pollinations_key()) and flag in {"1", "true", "yes", "on"}
+
 
 def _pick_gemini_keys():
     now = time.time()
@@ -1671,10 +1682,12 @@ async def runtime_capabilities():
             "max_size_mb": 5,
         },
         "image": {
-            "status": "experimental",
-            "mode": "external_url",
+            "status": "experimental" if experimental_image_enabled() else "disabled",
+            "mode": "server_proxy",
             "provider": "Pollinations",
             "free_guaranteed": False,
+            "enabled": experimental_image_enabled(),
+            "requires_explicit_opt_in": True,
         },
         "video": {
             "status": "not_implemented",
@@ -3292,11 +3305,13 @@ def _invoke_tool(service, tool_name, inputs, actor):
         except Exception:
             return None, {"type": "ConfigError", "message": "PyMuPDF no disponible"}
         try:
-            raw = base64.b64decode(b64)
+            raw = base64.b64decode(b64, validate=True)
         except Exception:
             return None, {"type": "ValidationError", "message": "base64 invalido"}
         if len(raw) > 5*1024*1024:
             return None, {"type": "ValidationError", "message": "archivo mayor a 5MB"}
+        if raw[:5] != b"%PDF-":
+            return None, {"type": "ValidationError", "message": "no parece un PDF"}
         try:
             doc = _f.open(stream=raw, filetype="pdf")
             text = "\n".join(page.get_text() for page in doc)
@@ -6266,11 +6281,12 @@ async def extract_file(request: Request):
     b64 = str(data.get("content_base64") or "")
     if not b64: return JSONResponse({"ok": False, "reason": "no_content"}, status_code=400)
     try:
-        raw = base64.b64decode(b64)
+        raw = base64.b64decode(b64, validate=True)
     except Exception:
         return JSONResponse({"ok": False, "reason": "bad_base64"}, status_code=400)
     if len(raw) > 5*1024*1024: return JSONResponse({"ok": False, "reason": "too_large"}, status_code=413)
     if not filename.endswith(".pdf"): return JSONResponse({"ok": False, "reason": "unsupported_type"}, status_code=400)
+    if raw[:5] != b"%PDF-": return JSONResponse({"ok": False, "reason": "not_pdf"}, status_code=400)
     if _fitz is None: return JSONResponse({"ok": False, "reason": "pdf_lib_missing"}, status_code=503)
     try:
         doc = _fitz.open(stream=raw, filetype="pdf")
@@ -6288,23 +6304,54 @@ async def generate_image(request: Request):
     ip = request.client.host if request.client else "0.0.0.0"
     if not check_media_rate_limit(ip, session["is_owner"]):
         return JSONResponse({"ok": False, "reason": "media_rate_limit"}, status_code=429)
+    if not experimental_image_enabled():
+        return JSONResponse({
+            "ok": False,
+            "reason": "experimental_image_disabled",
+            "message": "La generación de imagen experimental está desactivada bajo la política 100% gratuita.",
+        }, status_code=503)
     try:
         data = await request.json()
         prompt = str(data.get("prompt") or "").strip()[:500]
         if not prompt:
             return JSONResponse({"ok": False, "reason": "prompt_required"}, status_code=400)
+
         from urllib.parse import quote
+        import requests
         safe = quote(prompt, safe="")
+        upstream = (
+            f"https://gen.pollinations.ai/image/{safe}"
+            f"?model=flux&width=1024&height=1024&nologo=true"
+        )
+        r = requests.get(
+            upstream,
+            headers={"Authorization": f"Bearer {get_pollinations_key()}"},
+            timeout=60,
+        )
+        if r.status_code != 200:
+            return JSONResponse({
+                "ok": False,
+                "reason": "image_provider_error",
+                "provider_status": r.status_code,
+            }, status_code=502)
+        content_type = str(r.headers.get("content-type") or "").split(";")[0].lower()
+        if content_type not in {"image/png", "image/jpeg", "image/webp"}:
+            return JSONResponse({"ok": False, "reason": "unexpected_image_type"}, status_code=502)
+        if len(r.content) > 5*1024*1024:
+            return JSONResponse({"ok": False, "reason": "image_too_large"}, status_code=502)
+        encoded = base64.b64encode(r.content).decode("ascii")
         return {
             "ok": True,
-            "image_url": f"https://image.pollinations.ai/prompt/{safe}?width=1024&height=1024&nologo=true",
+            "image_url": f"data:{content_type};base64,{encoded}",
             "prompt": prompt,
             "provider": "pollinations",
             "experimental": True,
             "free_guaranteed": False,
         }
+    except requests.Timeout:
+        return JSONResponse({"ok": False, "reason": "image_provider_timeout"}, status_code=504)
     except Exception as e:
-        return JSONResponse({"error": str(e)[:200]}, status_code=500)
+        return JSONResponse({"ok": False, "reason": type(e).__name__}, status_code=502)
 
 @app.get("/")
 async def root():
