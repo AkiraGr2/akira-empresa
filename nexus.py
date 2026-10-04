@@ -5834,7 +5834,10 @@ async def chat(request: Request):
                 return {"response": f"Error: {err}", "model": "system", "conversation_id": None}
             conversation_id = conv["id"]
             try:
-                service.add_message(conversation_id, "user", msg, actor=session["email"])
+                service.add_message(
+                    conversation_id, "user", msg,
+                    actor=session["email"], owner=session["email"]
+                )
             except Exception as e:
                 print(f"[chat] add_message user fallo: {type(e).__name__}: {str(e)[:200]}")
 
@@ -5858,9 +5861,11 @@ async def chat(request: Request):
                     teaching_response = f"No pude registrar la enseñanza: {type(e).__name__}."
             if persist and teaching_response:
                 try:
-                    service.add_message(conversation_id, "assistant", teaching_response,
-                                        model="learning_engine", memories_used=[],
-                                        duration_ms=0, actor=session["email"])
+                    service.add_message(
+                        conversation_id, "assistant", teaching_response,
+                        model="learning_engine", memories_used=[],
+                        duration_ms=0, actor=session["email"], owner=session["email"]
+                    )
                 except Exception as e:
                     print(f"[chat] add_message teaching response fallo: {type(e).__name__}")
             return {"response": teaching_response, "model": "learning_engine", "conversation_id": conversation_id}
@@ -6022,7 +6027,8 @@ async def chat(request: Request):
                     memories_used=[m.get("id") for m in memories if m.get("id")],
                     duration_ms=duration_ms,
                     error=error_meta,
-                    actor=session["email"]
+                    actor=session["email"],
+                    owner=session["email"]
                 )
             except Exception as e:
                 print(f"[chat] add_message assistant fallo: {type(e).__name__}: {str(e)[:200]}")
@@ -6090,7 +6096,8 @@ async def chat_stream(request: Request):
                         await asyncio.to_thread(
                             service.add_message,
                             conversation_id, "assistant", teaching_response,
-                            "learning_engine", [], 0, None, session["email"]
+                            "learning_engine", [], 0, None, session["email"],
+                            owner=session["email"]
                         )
                     except Exception as e:
                         print(f"[chat/stream] add_message teaching response fallo: {type(e).__name__}")
@@ -6104,7 +6111,7 @@ async def chat_stream(request: Request):
         )
         recall_block = _format_recall_block(memories)
         conversation_context = await asyncio.to_thread(
-            _format_conversation_context, service, conversation_id, msg
+            _format_conversation_context, service, conversation_id, msg, session["email"]
         )
 
         github_context = ""
@@ -6264,7 +6271,8 @@ async def chat_stream(request: Request):
                             [m.get("id") for m in memories if m.get("id")],
                             duration_ms,
                             error_meta,
-                            session["email"]
+                            session["email"],
+                            owner=session["email"]
                         )
                     except Exception as e:
                         print(f"[chat/stream] add_message assistant fallo: {type(e).__name__}: {str(e)[:200]}")
