@@ -1826,7 +1826,12 @@ def v8_self(request: Request):
         sm = service.get_self_model()
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "self_model_unavailable", "error_type": type(e).__name__}, status_code=503)
-    return {"ok": True, "self_model": sm, "read_by": s["email"]}
+    return {
+        "ok": True,
+        "self_model": sm,
+        "capabilities_registry": service.capabilities_for_self_model(limit=200),
+        "read_by": s["email"],
+    }
 
 @app.patch("/api/v8/self")
 def v8_self_update(request: Request, payload: dict):
@@ -1871,6 +1876,59 @@ def v8_learning_create(request: Request, payload: dict):
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
     return {"ok": True, "id": result["record"]["id"], "outcome": result["outcome"], "learning": result["record"]}
 
+
+@app.get("/api/v8/capabilities")
+def v8_capabilities_list(request: Request, category: str = None, kind: str = None,
+                         implementation_state: str = None, verification_state: str = None,
+                         availability_state: str = None, maturity: str = None,
+                         cost_compatibility: str = None, limit: int = 100, offset: int = 0):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    filters = {
+        key: value for key, value in {
+            "category": category,
+            "kind": kind,
+            "implementation_state": implementation_state,
+            "verification_state": verification_state,
+            "availability_state": availability_state,
+            "maturity": maturity,
+            "cost_compatibility": cost_compatibility,
+        }.items() if value is not None
+    }
+    try:
+        rows = service.list_capabilities(filters=filters, limit=limit, offset=offset)
+        return {"ok": True, "capabilities": rows, "count": len(rows), "offset": max(0, int(offset))}
+    except (ValueError, TypeError) as exc:
+        return JSONResponse({"ok": False, "reason": "bad_filter", "error_type": type(exc).__name__}, status_code=400)
+
+@app.get("/api/v8/capabilities/{capability_id}")
+def v8_capability_get(request: Request, capability_id: str):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    try:
+        return {"ok": True, **service.capability_state(capability_id)}
+    except Exception as exc:
+        if type(exc).__name__ == "NotFoundError":
+            return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(exc).__name__}, status_code=500)
+
+@app.get("/api/v8/capabilities/{capability_id}/verifications")
+def v8_capability_verifications(request: Request, capability_id: str, limit: int = 100, offset: int = 0):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    try:
+        rows = service.get_capability_verifications(capability_id, limit=limit, offset=offset)
+        return {"ok": True, "capability_id": capability_id, "verifications": rows, "count": len(rows)}
+    except Exception as exc:
+        if type(exc).__name__ == "NotFoundError":
+            return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(exc).__name__}, status_code=500)
 @app.get("/api/v8/learning")
 def v8_learning_list(request: Request, status: str = None, source: str = None,
                      outcome: str = None, limit: int = 50, offset: int = 0):
