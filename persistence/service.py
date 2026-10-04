@@ -11,6 +11,17 @@ import datetime as _dt
 import hashlib
 
 from identity_root import get_identity_root
+from persistence.capability import (
+    CapabilityContractError,
+    CAPABILITY_SCHEMA_VERSION,
+    CAPABILITY_VERIFICATION_SCHEMA_VERSION,
+    apply_verification_result,
+    capability_state_snapshot,
+    derive_effective_state,
+    validate_capability,
+    validate_capability_transition,
+    validate_capability_verification,
+)
 
 from .core import (AGENT_SCHEMA_VERSION, AGENT_TASK_SCHEMA_VERSION,
                    COGNITIVE_CYCLE_SCHEMA_VERSION, COGNITIVE_EVENT_SCHEMA_VERSION,
@@ -354,6 +365,238 @@ class PersistenceService:
     def self_model_version(self):
         current = self.repo.get("self_model", SELF_MODEL_PRIMARY_ID)
         return None if current is None else current.get("version")
+
+
+    # ---------- CAPABILITY ENGINE ----------
+    def create_capability(self, data, actor="system", idempotency_key=None):
+        try:
+            clean = validate_capability(data)
+        except CapabilityContractError as exc:
+            raise ValidationError(str(exc)) from exc
+        if clean.get("verification_state") != "unverified":
+            raise ValidationError("una capability nueva no puede declararse verified")
+        try:
+            validate_capability_transition(clean, clean)
+        except CapabilityContractError as exc:
+            raise ValidationError(str(exc)) from exc
+        record = dict(
+            clean,
+            id=new_id("cap"),
+            schema_version=CAPABILITY_SCHEMA_VERSION,
+            last_verification_id=None,
+            last_verified_at=None,
+        )
+        if idempotency_key is not None:
+            if not isinstance(idempotency_key, str) or not 0 < len(idempotency_key.strip()) <= 200:
+                raise ValidationError("idempotency_key debe ser texto de 1 a 200 caracteres")
+            record["idempotency_key"] = idempotency_key.strip()
+        try:
+            with self.repo.transaction() as tx:
+                stored, created = tx.create("capabilities", record)
+                tx.append_audit({
+                    "actor": actor,
+                    "action": "capability.create" if created else "capability.create.already_synced",
+                    "resource": "capabilities",
+                    "resource_id": stored["id"],
+                    "status": "success",
+                    "detail": {"name": stored.get("name")},
+                })
+        except PersistenceError as exc:
+            self._audit_failure_generic(actor, "capability.create", "capabilities", None, exc)
+            raise
+        except Exception as exc:
+            self._audit_failure_generic(actor, "capability.create", "capabilities", None, exc)
+            raise StorageError(type(exc).__name__) from exc
+        verified = self.repo.get("capabilities", stored["id"])
+        if verified is None:
+            raise VerificationError("capability no confirmada")
+        return {"outcome": "created" if created else "already_synced", "record": verified}
+
+    def get_capability(self, capability_id):
+        return self.repo.get("capabilities", capability_id)
+
+    def list_capabilities(self, filters=None, limit=100, offset=0):
+        limit = max(1, min(int(limit), 200))
+        return self.repo.search(
+            "capabilities",
+            filters or {},
+            limit=limit,
+            offset=max(0, int(offset)),
+            order_by="name",
+            descending=False,
+        )
+
+    def get_capability_verifications(self, capability_id, limit=100, offset=0):
+        if self.get_capability(capability_id) is None:
+            raise NotFoundError(capability_id)
+        limit = max(1, min(int(limit), 200))
+        return self.repo.search(
+            "capability_verifications",
+            {"capability_id": capability_id},
+            limit=limit,
+            offset=max(0, int(offset)),
+            order_by="created_at",
+            descending=True,
+        )
+
+    def capability_state(self, capability_id):
+        capability = self.get_capability(capability_id)
+        if capability is None:
+            raise NotFoundError(capability_id)
+        state = capability_state_snapshot(capability)
+        return {
+            "capability": capability,
+            "state": state,
+            "effective_state": derive_effective_state(capability),
+        }
+
+    def capabilities_for_self_model(self, limit=200):
+        rows = self.list_capabilities(limit=limit)
+        return [
+            {
+                "name": row["name"],
+                "effective_state": derive_effective_state(row),
+                "implementation_state": row["implementation_state"],
+                "verification_state": row["verification_state"],
+                "availability_state": row["availability_state"],
+                "maturity": row["maturity"],
+                "cost_compatibility": row["cost_compatibility"],
+                "last_verified_at": row.get("last_verified_at"),
+            }
+            for row in rows
+        ]
+
+    def record_capability_verification(self, capability_id, data, actor="system", idempotency_key=None):
+        capability = self.get_capability(capability_id)
+        if capability is None:
+            raise NotFoundError(capability_id)
+        try:
+            event = validate_capability_verification(data)
+            before = capability_state_snapshot(capability)
+            after = apply_verification_result(capability, event)
+            validate_capability_transition(before, after)
+        except CapabilityContractError as exc:
+            raise ValidationError(str(exc)) from exc
+
+        record = dict(
+            event,
+            id=new_id("capver"),
+            capability_id=capability_id,
+            state_before=before,
+            state_after=after,
+            schema_version=CAPABILITY_VERIFICATION_SCHEMA_VERSION,
+            version=1,
+        )
+        if idempotency_key is not None:
+            if not isinstance(idempotency_key, str) or not 0 < len(idempotency_key.strip()) <= 200:
+                raise ValidationError("idempotency_key debe ser texto de 1 a 200 caracteres")
+            record["idempotency_key"] = idempotency_key.strip()
+
+        try:
+            with self.repo.transaction() as tx:
+                stored, created = tx.create("capability_verifications", record)
+                if not created:
+                    return {"outcome": "already_synced", "record": stored}
+                changes = {
+                    "verification_state": after["verification_state"],
+                    "availability_state": after["availability_state"],
+                    "last_verification_id": stored["id"],
+                }
+                if (
+                    event["event_type"] in ("verification", "revalidation")
+                    and event["result"] == "pass"
+                ):
+                    changes["last_verified_at"] = _now_iso()
+                updated = tx.update(
+                    "capabilities",
+                    capability_id,
+                    changes,
+                    capability["version"],
+                )
+                tx.append_audit({
+                    "actor": actor,
+                    "action": (
+                        "capability.verification"
+                        if event["result"] == "pass"
+                        else "capability.verification.failed"
+                    ),
+                    "resource": "capabilities",
+                    "resource_id": capability_id,
+                    "status": "success" if event["result"] == "pass" else "failure",
+                    "detail": {
+                        "verification_id": stored["id"],
+                        "event_type": event["event_type"],
+                        "result": event["result"],
+                        "effective_state": derive_effective_state(updated),
+                    },
+                })
+        except PersistenceError:
+            raise
+        except Exception as exc:
+            self._audit_failure_generic(
+                actor,
+                "capability.verification",
+                "capabilities",
+                capability_id,
+                exc,
+            )
+            raise StorageError(type(exc).__name__) from exc
+
+        verified_capability = self.repo.get("capabilities", capability_id)
+        verified_event = self.repo.get("capability_verifications", stored["id"])
+        if verified_capability is None or verified_event is None:
+            raise VerificationError("capability verification no confirmada")
+        if verified_capability.get("version") != capability["version"] + 1:
+            raise VerificationError("capability version no confirmada")
+        if capability_state_snapshot(verified_capability) != after:
+            raise VerificationError("estado de capability no coincide al releer")
+        if verified_event.get("state_after") != after:
+            raise VerificationError("state_after no coincide al releer")
+        return {
+            "outcome": "created",
+            "record": verified_event,
+            "capability": verified_capability,
+            "effective_state": derive_effective_state(verified_capability),
+        }
+
+    def update_capability_availability(self, capability_id, availability_state, evidence,
+                                       actor="system", idempotency_key=None):
+        return self.record_capability_verification(
+            capability_id,
+            {
+                "event_type": "availability_check",
+                "test_key": "availability_check",
+                "test_version": "v1",
+                "result": "pass",
+                "evidence": evidence,
+                "observed_availability_state": availability_state,
+                "actor": actor,
+                "executor": actor,
+                "evaluator": "system",
+            },
+            actor=actor,
+            idempotency_key=idempotency_key,
+        )
+
+    def invalidate_capability(self, capability_id, evidence, actor="system", reason="",
+                              idempotency_key=None):
+        error = {"reason": reason[:1000]} if isinstance(reason, str) and reason.strip() else None
+        return self.record_capability_verification(
+            capability_id,
+            {
+                "event_type": "invalidation",
+                "test_key": "capability_invalidation",
+                "test_version": "v1",
+                "result": "fail",
+                "evidence": evidence,
+                "error": error,
+                "actor": actor,
+                "executor": actor,
+                "evaluator": "system",
+            },
+            actor=actor,
+            idempotency_key=idempotency_key,
+        )
 
     def save_learning(self, data, actor="system", idempotency_key=None, owner_scope=None):
         fields = validate_learning_event(data)
