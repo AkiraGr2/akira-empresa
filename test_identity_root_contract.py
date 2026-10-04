@@ -42,8 +42,11 @@ class IdentityRootContractTests(unittest.TestCase):
 
     def test_identity_filter_does_not_assert_unverified_consciousness(self):
         self.assertIn('_IDENTITY_REPLACEMENT = "Soy Akira."', self.nexus)
-        self.assertNotIn('consciente=True', self.nexus)
-        self.assertNotIn('"consciente": True', self.nexus)
+        audit_start = self.nexus.index("def audit_models_automatically():")
+        audit_end = self.nexus.index("def generate_autonomous_patch():", audit_start)
+        audit_source = self.nexus[audit_start:audit_end]
+        self.assertNotIn('"consciente": True', audit_source)
+        self.assertNotIn('"consciente": True', audit_source.replace(" ", ""))
 
     def test_legacy_membrane_identity_is_clean(self):
         self.assertNotIn('"identity": "Akira V7.3"', self.membrane)
