@@ -289,22 +289,30 @@ class PostgresRepository(PersistenceRepository):
             row = cur.fetchone()
         return _out(row)
 
-    def search_memory_embeddings(self, embedding, model, limit=20):
+    def search_memory_embeddings(self, embedding, model, limit=20, owner_scope=None):
         vector = self._vector_literal(embedding)
         limit = max(1, min(int(limit), 100))
+        clauses = ["me.model = %s", "m.status = 'active'"]
+        params = [model]
+        if owner_scope is not None:
+            scope = str(owner_scope).strip()
+            if not scope:
+                return []
+            clauses.append("(m.owner_scope = %s OR m.owner_scope = 'owner')")
+            params.append(scope)
+        params.extend([vector, limit])
         with self._cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT me.memory_id,
                        1 - (me.embedding <=> %s::vector) AS semantic_score
                 FROM memory_embeddings me
                 JOIN memories m ON m.id = me.memory_id
-                WHERE me.model = %s
-                  AND m.status = 'active'
+                WHERE {" AND ".join(clauses)}
                 ORDER BY me.embedding <=> %s::vector
                 LIMIT %s
                 """,
-                (vector, model, vector, limit),
+                [vector, *params],
             )
             return [_out(row) for row in cur.fetchall()]
 
