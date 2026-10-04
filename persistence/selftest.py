@@ -530,7 +530,7 @@ def run_logic_tests(service, fresh_service_factory=None):
             "owner_scope_server_derived", "tampered_rejected", "expired_rejected", "bearer_parsed",
         ))
         source_digest = hashlib.sha256(inspect.getsource(akira_auth).encode("utf-8")).hexdigest()[:16]
-        idem = f"selftest:session_auth:v1:{source_digest}:{\"configured\" if configured else \"missing\"}"
+        idem = "selftest:session_auth:v1:" + source_digest + (":configured" if configured else ":missing")
         evidence = [{
             "type": "selftest",
             "title": "Session auth runtime contract",
