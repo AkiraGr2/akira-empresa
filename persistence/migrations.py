@@ -591,7 +591,7 @@ MIGRATIONS = [
         CREATE INDEX cognitive_cycles_owner_scope_idx ON cognitive_cycles (owner_scope, status, started_at DESC)
         """
     ),
-,
+
     (
         "023_agent_task_owner_scope",
         """
