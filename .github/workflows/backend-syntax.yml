@@ -84,6 +84,10 @@ jobs:
         run: |
           python -m unittest test_conversation_ownership -v
 
+      - name: Test graph persistent capability contract
+        run: |
+          python -m unittest test_graph_persistent_contract -v
+
       - name: Test graph ownership contract
         run: |
           python -m unittest test_graph_ownership -v
