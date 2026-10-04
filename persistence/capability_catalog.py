@@ -200,4 +200,60 @@ LEARNING_PERSISTENT_CAPABILITY = {
     },
 }
 
-BASE_CAPABILITIES = (SESSION_AUTH_CAPABILITY, PERSISTENT_MEMORY_CAPABILITY, MEMORY_RECALL_CAPABILITY, LEARNING_PERSISTENT_CAPABILITY)
+
+GRAPH_PERSISTENT_CAPABILITY = {
+    "name": "graph_persistent",
+    "description": "Persistencia verificable de nodos y relaciones del grafo de Akira, con versionado, idempotencia, aislamiento por owner_scope, integridad de extremos y archivado de relaciones.",
+    "category": "graph",
+    "kind": "composite",
+    "implementation_state": "implemented",
+    "verification_state": "unverified",
+    "availability_state": "available",
+    "maturity": "experimental",
+    "cost_compatibility": "conditional",
+    "dependencies": [
+        {"kind": "service", "id": "PersistenceService.create_node", "required": True},
+        {"kind": "service", "id": "PersistenceService.get_node", "required": True},
+        {"kind": "service", "id": "PersistenceService.update_node", "required": True},
+        {"kind": "service", "id": "PersistenceService.create_edge", "required": True},
+        {"kind": "service", "id": "PersistenceService.get_edge", "required": True},
+        {"kind": "service", "id": "PersistenceService.archive_edge", "required": True},
+        {"kind": "storage", "id": "PostgreSQL.graph_nodes", "required": True},
+        {"kind": "storage", "id": "PostgreSQL.graph_edges", "required": True},
+        {"kind": "security", "id": "owner_scope", "required": True},
+    ],
+    "limitations": [
+        "La API pública actual no expone actualización arbitraria de aristas ni archivado de nodos como operaciones de primer nivel; esas operaciones no forman parte del contrato de esta verificación.",
+        "La visibilidad de registros legacy con owner_scope='owner' se conserva por compatibilidad histórica y no representa un modelo multi-propietario aislado para esos datos legacy.",
+        "La integridad referencial de extremos depende de la capa de servicio; la base actual no declara FKs entre graph_edges y graph_nodes.",
+        "Las conexiones automáticas por tags y al núcleo son una capacidad separada y no constituyen por sí mismas evidencia de graph_persistent.",
+    ],
+    "verification_spec": {
+        "method": "selftest",
+        "test_key": "graph_persistent_contract",
+        "freshness_policy": {
+            "mode": "on_change",
+            "max_age_seconds": None,
+            "invalidate_on": [
+                "build_change",
+                "dependency_change",
+                "graph_schema_change",
+                "ownership_change",
+            ],
+        },
+    },
+    "provenance": {
+        "source": "architecture_audit_v12",
+        "created_by": "system",
+        "basis": [
+            "persistence/core.py",
+            "persistence/service.py",
+            "persistence/postgres.py",
+            "persistence/migrations.py",
+            "nexus.py",
+            "persistence/selftest.py",
+        ],
+    },
+}
+
+BASE_CAPABILITIES = (SESSION_AUTH_CAPABILITY, PERSISTENT_MEMORY_CAPABILITY, MEMORY_RECALL_CAPABILITY, LEARNING_PERSISTENT_CAPABILITY, GRAPH_PERSISTENT_CAPABILITY)
