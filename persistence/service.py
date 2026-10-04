@@ -751,9 +751,9 @@ class PersistenceService:
             "edges": edges,
         }
 
-    def cleanup_learning_materialization(self, learning_id, actor="learning-selftest"):
+    def cleanup_learning_materialization(self, learning_id, actor="learning-selftest", owner_scope=None):
         """Retira de forma acotada los artefactos de una prueba de materializacion."""
-        learning = self.get_learning(learning_id)
+        learning = self.get_learning(learning_id, owner_scope=owner_scope)
         if learning is None:
             raise NotFoundError(learning_id)
         # Cleanup must only touch artifacts owned by THIS learning.
@@ -778,7 +778,7 @@ class PersistenceService:
         context = learning.get("learning_context") if isinstance(learning.get("learning_context"), dict) else {}
         promoted_node_id = str(context.get("promoted_node_id") or "").strip()
         if promoted_node_id:
-            promoted_node = self.get_node(promoted_node_id)
+            promoted_node = self.get_node(promoted_node_id, owner_scope=owner_scope)
             promoted_metadata = (
                 promoted_node.get("node_metadata")
                 if isinstance(promoted_node, dict) and isinstance(promoted_node.get("node_metadata"), dict)
@@ -795,19 +795,19 @@ class PersistenceService:
         archived_edges = 0
 
         for node_id in sorted(learning_node_ids):
-            node = self.get_node(node_id)
+            node = self.get_node(node_id, owner_scope=owner_scope)
             if not node or node.get("status") != "active":
                 continue
             metadata = node.get("node_metadata") if isinstance(node.get("node_metadata"), dict) else {}
             if str(metadata.get("learning_id") or "") != str(learning_id):
                 continue
             try:
-                self.update_node(node_id, {"status": "archived"}, expected_version=node["version"], actor=actor)
+                self.update_node(node_id, {"status": "archived"}, expected_version=node["version"], actor=actor, owner_scope=owner_scope)
                 archived_nodes += 1
             except Exception:
                 pass
 
-        memories = self.repo.search("memories", {"source_id": learning_id, "status": "active"}, limit=50)
+        memories = self.search_memory({"source_id": learning_id, "status": "active"}, limit=50, owner_scope=owner_scope)
         for memory in memories:
             try:
                 with self.repo.transaction() as tx:
@@ -832,7 +832,8 @@ class PersistenceService:
                     except Exception:
                         rows = []
                     for edge in rows:
-                        edge_map[str(edge.get("id"))] = edge
+                        if owner_scope is None or self.get_edge(edge.get("id"), owner_scope=owner_scope) is not None:
+                            edge_map[str(edge.get("id"))] = edge
             for edge in edge_map.values():
                 if edge.get("origin") != "learning_promotion" and edge.get("origin") != "auto_connect":
                     continue
