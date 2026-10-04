@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import nexus
 import specialized_agent_tools
 
 ROOT = Path(__file__).resolve().parent
@@ -56,6 +57,47 @@ class SpecializedAgentsContractTests(unittest.TestCase):
     def test_tester_requires_explicit_targets(self):
         with self.assertRaises(specialized_agent_tools.SpecializedAgentError):
             specialized_agent_tools.run_python_tests()
+
+    def test_tester_rejects_unknown_test_module_even_when_name_looks_safe(self):
+        with self.assertRaises(specialized_agent_tools.SpecializedAgentError):
+            specialized_agent_tools.run_python_tests(tests=["test_not_allowlisted"])
+
+    def test_tester_accepts_allowlisted_package_test_module(self):
+        modules = specialized_agent_tools._normalize_test_modules(["persistence.test_absorption"])
+        self.assertEqual(modules, ["persistence.test_absorption"])
+
+    def test_startup_seed_continues_after_one_item_fails(self):
+        class FakeService:
+            def __init__(self):
+                self.tools = []
+                self.agents = []
+
+            def register_tool(self, item, actor="system"):
+                self.tools.append(item["name"])
+                if item["name"] == "developer_propose":
+                    raise RuntimeError("synthetic failure")
+                return {"outcome": "created"}
+
+            def register_agent(self, item, actor="system"):
+                self.agents.append(item["name"])
+                return {"outcome": "created"}
+
+        fake = FakeService()
+        with patch.object(nexus, "_persistence_service", return_value=fake):
+            with patch.object(
+                nexus,
+                "_TOOL_SEED",
+                [{"name": "tool_before"}, {"name": "developer_propose"}, {"name": "tool_after"}],
+            ):
+                with patch.object(
+                    nexus,
+                    "_AGENT_SEED",
+                    [{"name": "developer"}, {"name": "tester"}, {"name": "reviewer"}],
+                ):
+                    nexus._seed_tools_and_agents()
+
+        self.assertEqual(fake.tools, ["tool_before", "developer_propose", "tool_after"])
+        self.assertEqual(fake.agents, ["developer", "tester", "reviewer"])
 
     def test_developer_proposal_is_explicitly_non_mutating(self):
         fake_inspection = {"files": [{"path": "README.md", "status": "ok", "content": "hello"}]}

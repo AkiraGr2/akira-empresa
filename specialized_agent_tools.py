@@ -25,8 +25,33 @@ MAX_REVIEW_CHARS = 16000
 MAX_TEST_MODULES = 6
 MAX_COMPILE_PATHS = 8
 TEST_TIMEOUT_S = 45
-SAFE_TEST_RE = re.compile(r"^test_[A-Za-z0-9_]+(?:\.py)?$")
+SAFE_TEST_RE = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*\.)*test_[A-Za-z0-9_]+(?:\.py)?$")
 SAFE_PATH_RE = re.compile(r"^[A-Za-z0-9_./-]+$")
+SAFE_TEST_MODULES = frozenset({
+    "persistence.test_absorption",
+    "persistence.test_absorption_target",
+    "persistence.test_autonomous_candidate",
+    "persistence.test_chat_action_integrity",
+    "persistence.test_consolidation_gate",
+    "test_provider_failover",
+    "test_identity_root_contract",
+    "test_capability_engine_contract",
+    "test_authorization_contract",
+    "test_session_auth_contract",
+    "test_persistent_memory_contract",
+    "test_memory_recall_contract",
+    "test_learning_persistent_contract",
+    "test_route_security_contract",
+    "test_conversation_ownership",
+    "test_graph_persistent_contract",
+    "test_graph_ownership",
+    "test_learning_cognitive_ownership",
+    "test_memory_embedding_ownership",
+    "test_mission_task_ownership",
+    "test_specialized_agents_contract",
+    "test_specialized_agent_mission_wiring",
+    "test_multimedia_contract",
+})
 
 
 class SpecializedAgentError(RuntimeError):
@@ -282,6 +307,8 @@ def _normalize_test_modules(tests: Any) -> list[str]:
         if not SAFE_TEST_RE.fullmatch(value):
             raise SpecializedAgentError("unsafe_test_module")
         module = value[:-3] if value.endswith(".py") else value
+        if module not in SAFE_TEST_MODULES:
+            raise SpecializedAgentError("test_module_not_allowlisted")
         out.append(module)
     return list(dict.fromkeys(out))
 
@@ -319,7 +346,7 @@ def run_python_tests(tests: Any = None, compile_paths: Any = None) -> dict[str, 
 
     if modules:
         for module in modules:
-            file_path = root / f"{module}.py"
+            file_path = root.joinpath(*module.split(".")).with_suffix(".py")
             if not file_path.is_file():
                 raise SpecializedAgentError(f"test_module_not_found:{module}")
         commands.append([sys.executable, "-m", "unittest", "-v", *modules])

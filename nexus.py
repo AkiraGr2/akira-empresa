@@ -677,15 +677,20 @@ _AGENT_SEED = [
 
 def _seed_tools_and_agents():
     service = _persistence_service()
-    if service is None: return
-    try:
-        for t in _TOOL_SEED: service.register_tool(t, actor="system")
-    except Exception as e:
-        print(f"[tools] seed fallo: {type(e).__name__}: {str(e)[:200]}")
-    try:
-        for a in _AGENT_SEED: service.register_agent(a, actor="system")
-    except Exception as e:
-        print(f"[agents] seed fallo: {type(e).__name__}: {str(e)[:200]}")
+    if service is None:
+        return
+    for item in _TOOL_SEED:
+        try:
+            result = service.register_tool(item, actor="system")
+            print(f"[tools] seed {item.get('name')}: {result.get('outcome')}", flush=True)
+        except Exception as e:
+            print(f"[tools] seed {item.get('name')} fallo: {type(e).__name__}: {str(e)[:200]}", flush=True)
+    for item in _AGENT_SEED:
+        try:
+            result = service.register_agent(item, actor="system")
+            print(f"[agents] seed {item.get('name')}: {result.get('outcome')}", flush=True)
+        except Exception as e:
+            print(f"[agents] seed {item.get('name')} fallo: {type(e).__name__}: {str(e)[:200]}", flush=True)
 
 def _extract_json(text):
     if not text or not isinstance(text, str):
