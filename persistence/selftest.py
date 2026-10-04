@@ -404,6 +404,66 @@ def run_logic_tests(service, fresh_service_factory=None):
                 problems.append(f"agent_tools:{agent_name}:{agent.get('allowed_tools')}")
         return _res(name, not problems, "specialized tools/agents persisted" if not problems else "; ".join(problems))
 
+    def t_self_knowledge_snapshot():
+        name = "TEST_SELF_KNOWLEDGE_SNAPSHOT"
+        snapshot = service.self_knowledge_snapshot(owner_scope="selftest")
+        identity = snapshot.get("identity") or {}
+        capabilities = {row.get("name"): row for row in (snapshot.get("capabilities") or [])}
+        agents = {row.get("name"): row for row in (snapshot.get("agents") or [])}
+        tools = {row.get("name"): row for row in (snapshot.get("tools") or [])}
+        specialized = {
+            "developer": ["github_repo_read", "developer_propose"],
+            "tester": ["github_repo_read", "python_test"],
+            "reviewer": ["github_repo_read", "python_test", "code_review"],
+        }
+        problems = []
+        if identity.get("name") != "Akira" or identity.get("root_schema_version") != "identity_root.v1":
+            problems.append("identity_root_incorrecto")
+        for required in (
+            "session_auth", "persistent_memory", "memory_recall",
+            "learning_persistent", "graph_persistent", "selftest_capability",
+        ):
+            if required not in capabilities:
+                problems.append(f"capability_missing:{required}")
+            elif capabilities[required].get("effective_state") != "verified":
+                problems.append(f"capability_not_verified:{required}")
+        for agent_name, allowed_tools in specialized.items():
+            agent = agents.get(agent_name)
+            if agent is None:
+                problems.append(f"agent_missing:{agent_name}")
+                continue
+            if list(agent.get("allowed_tools") or []) != allowed_tools:
+                problems.append(f"agent_tools:{agent_name}")
+            for tool_name in allowed_tools:
+                if tool_name not in tools:
+                    problems.append(f"tool_missing:{tool_name}")
+        ok = not problems
+        return _res(
+            name,
+            ok,
+            "snapshot autoritativo consistente" if ok else "; ".join(problems),
+        )
+
+    def t_agent_tool_reference_integrity():
+        name = "TEST_AGENT_TOOL_REFERENCE_INTEGRITY"
+        tools = {
+            row.get("name")
+            for row in service.repo.search("tools", {}, limit=500, order_by="name", descending=False)
+        }
+        problems = []
+        for agent in service.repo.search("agents", {}, limit=500, order_by="name", descending=False):
+            for tool_name in (agent.get("allowed_tools") or []):
+                if tool_name not in tools:
+                    problems.append(
+                        f"agent={agent.get('name')}:missing_tool={tool_name}"
+                    )
+        return _res(
+            name,
+            not problems,
+            "todas las referencias agent.allowed_tools apuntan a tools existentes"
+            if not problems else "; ".join(problems),
+        )
+
     def t_agent_state_transition():
         name = "TEST_AGENT_STATE_TRANSITION"
         _ensure_tools(service)
@@ -1678,6 +1738,8 @@ def run_logic_tests(service, fresh_service_factory=None):
         ("TEST_AGENT_TASK_MISSION_FILTER", t_agent_task_mission_filter),
         ("TEST_AGENT_TASK_OWNER_SCOPE_FILTER", t_agent_task_owner_scope_filter),
         ("TEST_SPECIALIZED_AGENTS_PERSISTENCE", t_specialized_agents_persistence),
+        ("TEST_SELF_KNOWLEDGE_SNAPSHOT", t_self_knowledge_snapshot),
+        ("TEST_AGENT_TOOL_REFERENCE_INTEGRITY", t_agent_tool_reference_integrity),
         ("TEST_AGENT_STATE_TRANSITION", t_agent_state_transition),
         ("TEST_LEARNING_STATE_CONTRACT", t_learning_state_contract),
         ("TEST_CAPABILITY_ENGINE_CONTRACT", t_capability_engine_contract),
