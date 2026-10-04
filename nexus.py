@@ -887,8 +887,20 @@ def _validate_mission_plan(plan, service):
                     return False, f"step_{i}_invalid_relation_type:{relation_type.strip()}"
         else:
             if isinstance(receives, list):
-                return False, f"step_{i}_receives_list_not_allowed"
-            if receives is not None:
+                if tool_name != "code_review":
+                    return False, f"step_{i}_receives_list_not_allowed"
+                if len(receives) != 2:
+                    return False, f"step_{i}_review_requires_two_dependencies"
+                for dep in receives:
+                    try:
+                        dep = int(dep)
+                    except Exception:
+                        return False, f"step_{i}_receives_not_int"
+                    if isinstance(dep, bool) or dep >= order:
+                        return False, f"step_{i}_receives_not_previous"
+                    if dep not in orders_seen:
+                        return False, f"step_{i}_receives_unknown:{dep}"
+            elif receives is not None:
                 if isinstance(receives, str):
                     try:
                         receives = int(receives)
@@ -1225,6 +1237,50 @@ def _build_tool_inputs(tool_name, step, outputs_by_order, mission_id):
     if tool_name == "image_generate":
         if not task: return None
         return {"prompt": with_dependency(500, task)}
+    if tool_name == "developer_propose":
+        repo = str(step.get("repo") or "").strip()
+        paths = step.get("paths")
+        queries = step.get("queries")
+        if not repo or not isinstance(paths, list) or not paths or not task:
+            return None
+        instruction = with_dependency(3500, task)
+        if expected:
+            instruction = with_dependency(3500, f"{instruction}\nExpected output: {expected}")
+        return {
+            "repo": repo,
+            "paths": paths[:4],
+            "instruction": instruction,
+            "queries": queries if isinstance(queries, list) else [],
+        }
+    if tool_name == "python_test":
+        tests = step.get("tests")
+        compile_paths = step.get("compile_paths")
+        if tests is None and compile_paths is None:
+            return None
+        return {
+            "tests": tests if isinstance(tests, list) else [],
+            "compile_paths": compile_paths if isinstance(compile_paths, list) else [],
+        }
+    if tool_name == "code_review":
+        repo = str(step.get("repo") or "").strip()
+        paths = step.get("paths")
+        receives = step.get("receives_from")
+        if not repo or not isinstance(paths, list) or not paths:
+            return None
+        if not isinstance(receives, list) or len(receives) != 2:
+            return None
+        proposal_output = outputs_by_order.get(int(receives[0]))
+        test_output = outputs_by_order.get(int(receives[1]))
+        if not isinstance(proposal_output, dict) or "proposal" not in proposal_output:
+            return None
+        if not isinstance(test_output, dict):
+            return None
+        return {
+            "repo": repo,
+            "paths": paths[:4],
+            "proposal": proposal_output.get("proposal"),
+            "test_results": test_output,
+        }
     if tool_name == "cognitive_cycle":
         if not task: return None
         return {"message": with_dependency(1500, task)}
