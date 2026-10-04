@@ -1907,6 +1907,7 @@ def v8_self(request: Request):
         "ok": True,
         "self_model": sm,
         "capabilities_registry": service.capabilities_for_self_model(limit=200),
+        "self_knowledge": service.self_knowledge_snapshot(owner_scope=s["owner_scope"], limit=200),
         "read_by": s["email"],
     }
 
