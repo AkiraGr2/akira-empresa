@@ -886,9 +886,9 @@ def _validate_mission_plan(plan, service):
                 ):
                     return False, f"step_{i}_invalid_relation_type:{relation_type.strip()}"
         else:
-            if isinstance(receives, list):
-                if tool_name != "code_review":
-                    return False, f"step_{i}_receives_list_not_allowed"
+            if tool_name == "code_review":
+                if not isinstance(receives, list):
+                    return False, f"step_{i}_review_requires_two_dependencies"
                 if len(receives) != 2:
                     return False, f"step_{i}_review_requires_two_dependencies"
                 for dep in receives:
@@ -900,6 +900,8 @@ def _validate_mission_plan(plan, service):
                         return False, f"step_{i}_receives_not_previous"
                     if dep not in orders_seen:
                         return False, f"step_{i}_receives_unknown:{dep}"
+            elif isinstance(receives, list):
+                return False, f"step_{i}_receives_list_not_allowed"
             elif receives is not None:
                 if isinstance(receives, str):
                     try:
