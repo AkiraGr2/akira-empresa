@@ -624,7 +624,8 @@ class PersistenceService:
                     "weight": 1.0,
                     "confidence": 0.5,
                     "privacy_level": "PRIVATE",
-                }, actor=actor, idempotency_key=f"learning_mission_node:{mission_id}")
+                }, actor=actor, idempotency_key=f"learning_mission_node:{mission_id}",
+                   owner_scope=effective_scope)
                 mission_node = mission_node_result["record"]
                 source_nodes = [mission_node["id"]]
                 if mission_node["id"] not in knowledge_nodes:
@@ -674,7 +675,7 @@ class PersistenceService:
             except Exception:
                 continue
 
-        learning = self.get_learning(learning_id) or learning
+        learning = self.get_learning(learning_id, owner_scope=effective_scope) or learning
         clean_relations = learning.get("relationships") if isinstance(learning.get("relationships"), list) else []
         relation_keys = set()
         merged_relations = []
