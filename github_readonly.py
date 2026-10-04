@@ -109,6 +109,17 @@ def _api_url(repo: str, path: str = "") -> str:
     return f"https://api.github.com/repos/{safe_repo}/contents{suffix}?ref={DEFAULT_BRANCH}"
 
 
+def _head_commit_sha(repo: str) -> str:
+    safe_repo = _validate_repo(repo)
+    data = _get_json(
+        f"https://api.github.com/repos/{safe_repo}/git/ref/heads/{DEFAULT_BRANCH}"
+    )
+    sha = str(((data.get("object") or {}).get("sha")) if isinstance(data, dict) else "").strip()
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
+        raise GitHubReadUpstreamError("invalid_head_commit_sha")
+    return sha.lower()
+
+
 def _decode_content(item: dict[str, Any]) -> str:
     return _decode_content_with_limit(item, MAX_FILE_BYTES)
 
@@ -203,6 +214,7 @@ def read_repo_path(repo: str, path: str = "", max_items: int = MAX_FILES) -> dic
             "repository": repo,
             "branch": DEFAULT_BRANCH,
             "path": path,
+            "source_url": f"https://github.com/{repo}/blob/{DEFAULT_BRANCH}/{path}",
             "size_bytes": len(content.encode("utf-8")),
             "content": content,
         }
@@ -252,6 +264,7 @@ def inspect_repository(
         if str(q or "").strip()
     ][:12]
 
+    head_commit_sha = _head_commit_sha(repo)
     root = read_repo_path(repo, "", max_items=MAX_FILES)
     files = []
     total_bytes = 0
@@ -264,6 +277,7 @@ def inspect_repository(
                     files.append({
                         "path": path,
                         "status": "skipped_total_size_limit",
+                        "source_url": f"https://github.com/{repo}/blob/{DEFAULT_BRANCH}/{path}",
                         "size_bytes": size,
                     })
                     continue
@@ -273,6 +287,7 @@ def inspect_repository(
                     "path": path,
                     "status": "ok",
                     "mode": "full_file",
+                    "source_url": f"https://github.com/{repo}/blob/{DEFAULT_BRANCH}/{path}",
                     "size_bytes": size,
                     "content": content,
                 })
@@ -293,6 +308,7 @@ def inspect_repository(
                     "path": path,
                     "status": evidence.get("status", "ok") if kept else "no_targeted_evidence_within_limit",
                     "mode": evidence.get("mode", "targeted_snippets"),
+                    "source_url": f"https://github.com/{repo}/blob/{DEFAULT_BRANCH}/{path}",
                     "size_bytes": size,
                     "queries": evidence.get("queries", []),
                     "matches": kept,
@@ -304,6 +320,7 @@ def inspect_repository(
                     "path": path,
                     "status": "too_large_for_direct_read",
                     "mode": "metadata_only",
+                    "source_url": f"https://github.com/{repo}/blob/{DEFAULT_BRANCH}/{path}",
                     "size_bytes": size,
                 })
         elif isinstance(data, list):
@@ -319,6 +336,7 @@ def inspect_repository(
         "operation": "inspect_repository",
         "repository": repo,
         "branch": DEFAULT_BRANCH,
+        "head_commit_sha": head_commit_sha,
         "root": root.get("entries") or [],
         "files": files,
         "total_bytes": total_bytes,
