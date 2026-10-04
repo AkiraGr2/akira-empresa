@@ -10,6 +10,7 @@ contaminando la tabla memories. Ahora no queda rastro.
 from __future__ import annotations
 
 import hashlib
+import json
 import inspect
 import time
 import uuid
@@ -443,6 +444,141 @@ def run_logic_tests(service, fresh_service_factory=None):
             ok,
             "snapshot autoritativo consistente" if ok else "; ".join(problems),
         )
+
+    def t_self_knowledge_runtime_capability():
+        name = "TEST_SELF_KNOWLEDGE_RUNTIME_CAPABILITY"
+        rows = service.list_capabilities(filters={"name": "self_knowledge_runtime"}, limit=1)
+        if not rows:
+            return _res(name, False, "capacidad self_knowledge_runtime no fue registrada por la migracion")
+        capability = rows[0]
+        scope = "selftest:self-knowledge-runtime"
+        checks = {}
+        before_counts = {}
+        after_counts = {}
+        try:
+            for entity in ("capabilities", "agents", "tools"):
+                before_counts[entity] = len(service.repo.search(
+                    entity, {}, limit=500, order_by="name", descending=False
+                ))
+
+            snapshot = service.self_knowledge_snapshot(owner_scope=scope, limit=200)
+            identity = snapshot.get("identity") or {}
+            capabilities = {
+                row.get("name"): row
+                for row in (snapshot.get("capabilities") or [])
+                if row.get("name")
+            }
+            agents = {
+                row.get("name"): row
+                for row in (snapshot.get("agents") or [])
+                if row.get("name")
+            }
+            tools = {
+                row.get("name"): row
+                for row in (snapshot.get("tools") or [])
+                if row.get("name")
+            }
+
+            required_capabilities = (
+                "session_auth",
+                "persistent_memory",
+                "memory_recall",
+                "learning_persistent",
+                "graph_persistent",
+                "selftest_capability",
+            )
+            checks["authoritative_source"] = (
+                snapshot.get("source") == "runtime_authoritative_registry"
+                and snapshot.get("identity_authority") == "identity_root"
+            )
+            checks["identity_authority"] = (
+                identity.get("name") == "Akira"
+                and identity.get("root_schema_version") == "identity_root.v1"
+            )
+            checks["capability_states_truthful"] = all(
+                capabilities.get(required, {}).get("effective_state") == "verified"
+                for required in required_capabilities
+            )
+            checks["agent_registry_present"] = bool(agents)
+            checks["tool_registry_present"] = bool(tools)
+            checks["agent_tool_references_resolve"] = all(
+                tool_name in tools
+                for agent in agents.values()
+                for tool_name in (agent.get("allowed_tools") or [])
+            )
+            checks["owner_scoped_memory_count"] = (
+                isinstance(snapshot.get("memory_active_count"), int)
+                and snapshot.get("memory_active_count") >= 0
+            )
+
+            for entity in ("capabilities", "agents", "tools"):
+                after_counts[entity] = len(service.repo.search(
+                    entity, {}, limit=500, order_by="name", descending=False
+                ))
+            checks["snapshot_non_mutating"] = before_counts == after_counts
+
+            fresh_service = fresh_service_factory() if fresh_service_factory else service
+            fresh_snapshot = fresh_service.self_knowledge_snapshot(owner_scope=scope, limit=200)
+            checks["fresh_connection_reproducible"] = fresh_snapshot == snapshot
+
+            ok = all(checks.values())
+            snapshot_digest = hashlib.sha256(
+                json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()[:16]
+            source_digest = hashlib.sha256(
+                inspect.getsource(PersistenceService.self_knowledge_snapshot).encode("utf-8")
+            ).hexdigest()[:16]
+            evidence = [{
+                "type": "selftest",
+                "title": "Self-knowledge runtime contract",
+                "reference": "selftest:self-knowledge-runtime/v1",
+                "summary": (
+                    "Snapshot autoritativo reproducible, no mutante y con referencias agent->tool integras."
+                    if ok else "El contrato de autoconocimiento runtime no supero todos los controles."
+                ),
+                "hash": snapshot_digest,
+            }]
+            event = {
+                "event_type": "verification",
+                "test_key": "self_knowledge_runtime_contract",
+                "test_version": "v1",
+                "result": "pass" if ok else "fail",
+                "evidence": evidence,
+                "environment": {
+                    "runtime": "selftest",
+                    "snapshot_source": snapshot.get("source"),
+                },
+                "dependency_snapshot": [
+                    {"kind": "authority", "id": "IdentityRoot", "version": identity.get("root_schema_version", "unknown")},
+                    {"kind": "registry", "id": "CapabilityEngine", "version": source_digest},
+                    {"kind": "storage", "id": "PostgreSQL.capabilities", "version": "runtime"},
+                    {"kind": "storage", "id": "PostgreSQL.agents", "version": "runtime"},
+                    {"kind": "storage", "id": "PostgreSQL.tools", "version": "runtime"},
+                    {"kind": "security", "id": "owner_scope", "version": "runtime"},
+                ],
+                "runtime_version": "selftest",
+                "build_ref": source_digest,
+                "actor": "selftest",
+                "executor": "selftest",
+                "evaluator": "system",
+                "error": None if ok else {"checks": checks},
+            }
+            idem = "selftest:self_knowledge_runtime:v1:" + source_digest + ":" + snapshot_digest
+            verification = service.record_capability_verification(
+                capability["id"],
+                event,
+                actor="selftest",
+                idempotency_key=idem,
+            )
+            effective = verification.get("effective_state")
+            verified = effective == "verified" if ok else effective in ("failed", "stale")
+            return _res(
+                name,
+                bool(ok and verified),
+                f"resultado={verification.get('outcome')}; effective_state={effective}; checks={checks}",
+            )
+        except Exception as exc:
+            return _res(name, False, f"excepcion {type(exc).__name__}: {str(exc)[:300]}")
 
     def t_agent_tool_reference_integrity():
         name = "TEST_AGENT_TOOL_REFERENCE_INTEGRITY"
@@ -1739,6 +1875,7 @@ def run_logic_tests(service, fresh_service_factory=None):
         ("TEST_AGENT_TASK_OWNER_SCOPE_FILTER", t_agent_task_owner_scope_filter),
         ("TEST_SPECIALIZED_AGENTS_PERSISTENCE", t_specialized_agents_persistence),
         ("TEST_SELF_KNOWLEDGE_SNAPSHOT", t_self_knowledge_snapshot),
+        ("TEST_SELF_KNOWLEDGE_RUNTIME_CAPABILITY", t_self_knowledge_runtime_capability),
         ("TEST_AGENT_TOOL_REFERENCE_INTEGRITY", t_agent_tool_reference_integrity),
         ("TEST_AGENT_STATE_TRANSITION", t_agent_state_transition),
         ("TEST_LEARNING_STATE_CONTRACT", t_learning_state_contract),
