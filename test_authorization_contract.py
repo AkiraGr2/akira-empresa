@@ -50,6 +50,9 @@ class AuthorizationContractTests(unittest.TestCase):
             "v8_tasks_list",
             "v8_tasks_get",
             "v8_agents_run_task",
+            "v8_capabilities_list",
+            "v8_capability_get",
+            "v8_capability_verifications",
             "v8_create_mission",
             "v8_list_missions",
             "v8_recent_missions",
@@ -90,6 +93,15 @@ class AuthorizationContractTests(unittest.TestCase):
             self.assertIn("_require_owner(request)", source, name)
     def test_legacy_maintenance_surfaces_are_owner_only(self):
         for name in ("countermeasures", "sync_to_r2"):
+            source = self._function_source(name)
+            self.assertIn("_require_owner(request)", source, name)
+    def test_self_surface_exposes_capability_registry_from_persistence(self):
+        source = self._function_source("v8_self")
+        self.assertIn("service.capabilities_for_self_model(limit=200)", source)
+        self.assertIn('"capabilities_registry"', source)
+
+    def test_capability_routes_are_owner_only(self):
+        for name in ("v8_capabilities_list", "v8_capability_get", "v8_capability_verifications"):
             source = self._function_source(name)
             self.assertIn("_require_owner(request)", source, name)
     def test_public_health_surface_does_not_leak_operational_secrets_or_counts(self):
