@@ -157,6 +157,56 @@ ENTITIES = {
         "orderable": ("created_at",),
         "idempotent": False,
     },
+    "capabilities": {
+        "table": "capabilities",
+        "columns": (
+            "id", "name", "description", "category", "kind",
+            "implementation_state", "verification_state", "availability_state",
+            "maturity", "cost_compatibility",
+            "dependencies", "limitations", "verification_spec", "provenance",
+            "version", "schema_version", "last_verification_id", "last_verified_at",
+            "idempotency_key", "created_at", "updated_at",
+        ),
+        "json_columns": ("dependencies", "limitations", "verification_spec", "provenance"),
+        "mutable": (
+            "description", "category", "kind",
+            "implementation_state", "verification_state", "availability_state",
+            "maturity", "cost_compatibility",
+            "dependencies", "limitations", "verification_spec", "provenance",
+            "last_verification_id", "last_verified_at",
+        ),
+        "filterable": (
+            "id", "name", "category", "kind", "implementation_state",
+            "verification_state", "availability_state", "maturity",
+            "cost_compatibility", "idempotency_key",
+        ),
+        "in_filterable": (
+            "category", "kind", "implementation_state", "verification_state",
+            "availability_state", "maturity", "cost_compatibility",
+        ),
+        "orderable": ("created_at", "updated_at", "last_verified_at", "name"),
+        "idempotent": True,
+    },
+    "capability_verifications": {
+        "table": "capability_verifications",
+        "columns": (
+            "id", "capability_id", "event_type", "test_key", "test_version", "result",
+            "evidence", "environment", "dependency_snapshot",
+            "runtime_version", "build_ref", "actor", "executor", "evaluator",
+            "started_at", "finished_at", "error", "observed_availability_state",
+            "state_before", "state_after", "schema_version", "version",
+            "idempotency_key", "created_at",
+        ),
+        "json_columns": (
+            "evidence", "environment", "dependency_snapshot", "error",
+            "state_before", "state_after",
+        ),
+        "mutable": (),
+        "filterable": ("id", "capability_id", "event_type", "test_key", "result", "idempotency_key"),
+        "in_filterable": ("event_type", "test_key", "result"),
+        "orderable": ("created_at",),
+        "idempotent": True,
+    },
     "learning_events": {
         "table": "learning_events",
         "columns": (
