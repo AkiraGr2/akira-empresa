@@ -179,6 +179,18 @@ class AuthorizationContractTests(unittest.TestCase):
         self.assertIn('if session and session.get("is_owner")', source)
         self.assertIn("else []", source)
 
+    def test_conversation_context_is_scoped_in_both_chat_paths(self):
+        normal = self._function_source("chat")
+        streaming = self._function_source("chat_stream")
+        self.assertIn("_format_conversation_context, service, conversation_id, msg, session[\"email\"]", normal)
+        self.assertIn("_format_conversation_context, service, conversation_id, msg, session[\"email\"]", streaming)
+
+    def test_conversation_add_message_passes_explicit_owner(self):
+        normal = self._function_source("chat")
+        streaming = self._function_source("chat_stream")
+        self.assertIn("owner=session[\"email\"]", normal)
+        self.assertIn("owner=session[\"email\"]", streaming)
+
     def test_memory_save_tool_has_no_undefined_mission_id_dependency(self):
         source = self._function_source("_invoke_tool")
         branch_start = source.index('if tool_name == "memory_save":')
