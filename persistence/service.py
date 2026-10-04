@@ -180,14 +180,17 @@ class PersistenceService:
         if memory is None or owner_scope is None:
             return memory
         return memory if _scope_matches(memory.get("owner_scope"), owner_scope) else None
-    def get_memory_embedding(self, memory_id):
+    def get_memory_embedding(self, memory_id, owner_scope=None):
+        memory = self.get_memory(memory_id, owner_scope=owner_scope)
+        if memory is None:
+            return None
         getter = getattr(self.repo, "get_memory_embedding", None)
         if getter is None:
             return None
         return getter(memory_id)
 
-    def upsert_memory_embedding(self, memory_id, model, embedding, source_hash):
-        memory = self.get_memory(memory_id)
+    def upsert_memory_embedding(self, memory_id, model, embedding, source_hash, owner_scope=None):
+        memory = self.get_memory(memory_id, owner_scope=owner_scope)
         if memory is None:
             raise NotFoundError(memory_id)
         if memory.get("status") != "active":
@@ -199,15 +202,20 @@ class PersistenceService:
             raise StorageError("vector_repository_not_available")
         return getter(memory_id, model, embedding, source_hash)
 
-    def search_memory_semantic(self, embedding, model, limit=20):
+    def search_memory_semantic(self, embedding, model, limit=20, owner_scope=None):
         if not isinstance(embedding, (list, tuple)) or len(embedding) != 768:
             raise ValidationError("embedding debe tener 768 dimensiones")
         searcher = getattr(self.repo, "search_memory_embeddings", None)
         if searcher is None:
             return []
+        if owner_scope is not None:
+            return searcher(embedding, model, limit=limit, owner_scope=owner_scope)
         return searcher(embedding, model, limit=limit)
 
-    def delete_memory_embedding(self, memory_id):
+    def delete_memory_embedding(self, memory_id, owner_scope=None):
+        memory = self.get_memory(memory_id, owner_scope=owner_scope)
+        if memory is None:
+            return False
         deleter = getattr(self.repo, "delete_memory_embedding", None)
         if deleter is None:
             return False
