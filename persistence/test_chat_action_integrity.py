@@ -56,7 +56,10 @@ class ChatActionIntegrityGuardTests(unittest.TestCase):
     def test_github_evidence_policy_excludes_prior_chat_claims(self):
         with open("nexus.py", "r", encoding="utf-8") as handle:
             text = handle.read()
-        self.assertGreaterEqual(text.count("prior chat text is not evidence"), 2)
+        # The streaming endpoint delegates to the canonical /api/chat path,
+        # so the evidence policy has a single source of truth rather than a
+        # duplicated second copy in the SSE transport.
+        self.assertGreaterEqual(text.count("prior chat text is not evidence"), 1)
 
     def test_2d_brain_inspection_targets_renderer_and_panel_not_chat_client(self):
         with open("nexus.py", "r", encoding="utf-8") as handle:
@@ -82,10 +85,19 @@ class ChatActionIntegrityGuardTests(unittest.TestCase):
 
         stream_start = text.index('@app.post("/api/chat/stream")')
         stream_body = text[stream_start:]
-        self.assertIn('github_read = _detect_github_read_request(msg)', stream_body)
-        self.assertIn('service, "github_repo_read", github_read', stream_body)
-        self.assertIn("[GitHub READ-ONLY EVIDENCE — SERVER RESULT]", stream_body)
-        self.assertIn('conversation_context = (conversation_context + github_context)[:52000]', stream_body)
+        # SSE is transport-only: it must reuse the canonical chat path instead
+        # of duplicating persistence, GitHub evidence, and provider logic.
+        self.assertIn('cloned_request = Request(request.scope, receive=receive)', stream_body)
+        self.assertIn('result = await chat(cloned_request)', stream_body)
+        self.assertNotIn('github_read = _detect_github_read_request(msg)', stream_body)
+
+        chat_start = text.index('@app.post("/api/chat")')
+        chat_end = text.index('@app.post("/api/chat/stream")', chat_start)
+        chat_body = text[chat_start:chat_end]
+        self.assertIn('github_read = _detect_github_read_request(msg)', chat_body)
+        self.assertIn('service, "github_repo_read", github_read', chat_body)
+        self.assertIn("[GitHub READ-ONLY EVIDENCE — SERVER RESULT]", chat_body)
+        self.assertIn('conversation_context = (conversation_context + github_context)[:52000]', chat_body)
 
     def test_oversized_file_returns_targeted_evidence_instead_of_failing(self):
         import base64
