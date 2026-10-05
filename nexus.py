@@ -5983,8 +5983,14 @@ async def chat(request: Request):
             else []
         )
         recall_block = _format_recall_block(memories)
+        # Chat puede funcionar sin sesión; el contexto persistente solo existe cuando
+        # hay una sesión válida. No indexar session["email"] cuando session es None.
         conversation_context = await asyncio.to_thread(
-            _format_conversation_context, service, conversation_id, msg, session["email"]
+            _format_conversation_context,
+            service,
+            conversation_id,
+            msg,
+            session["email"] if session else None,
         )
 
         github_context = ""
