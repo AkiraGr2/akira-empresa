@@ -60,9 +60,16 @@ class ProviderFailoverRegressionTests(unittest.TestCase):
         )
 
     def test_user_does_not_receive_false_generic_key_exhaustion_message(self):
+        chat = self._function_source("chat")
         stream = self._function_source("chat_stream")
+        # The canonical chat path owns the final provider-exhaustion response.
+        # SSE is transport-only and must delegate to chat rather than duplicate
+        # a second copy of the provider fallback text.
+        self.assertNotIn("Keys agotadas. {str(ge)[:120]}", chat)
+        self.assertIn("No fue posible obtener respuesta de ningún proveedor configurado.", chat)
         self.assertNotIn("Keys agotadas. {str(ge)[:120]}", stream)
-        self.assertIn("No fue posible obtener respuesta de ningún proveedor configurado.", stream)
+        self.assertNotIn("No fue posible obtener respuesta de ningún proveedor configurado.", stream)
+        self.assertIn("result = await chat(cloned_request)", stream)
 
     def test_backend_workflow_runs_this_regression_suite(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
