@@ -138,10 +138,14 @@ jobs:
           assert '@app.post("/api/v8/memory/semantic-reindex")' in text
           assert text.count('@app.get("/health")') == 1, "Health route must be registered exactly once"
 
+          chat_start = text.index('@app.post("/api/chat")')
           stream_start = text.index('@app.post("/api/chat/stream")')
+          chat_body = text[chat_start:stream_start]
+          assert 'teaching_lesson, teaching_mode = _extract_teaching_lesson(msg)' in chat_body
+          assert chat_body.index('teaching_lesson, teaching_mode = _extract_teaching_lesson(msg)') < chat_body.index('_run_absorption_shadow'), "Chat teaching branch must run before absorption shadow"
           stream_body = text[stream_start:]
-          stream_teaching = stream_body.index('teaching_lesson, teaching_mode = _extract_teaching_lesson(msg)')
-          stream_shadow = stream_body.index('_run_absorption_shadow')
-          assert stream_teaching < stream_shadow, "Stream teaching branch must run before absorption shadow"
-          assert 'return StreamingResponse(generate_teaching(), media_type="text/event-stream")' in stream_body
-          print("route ordering, health registration, and stream teaching guard OK")
+          assert 'cloned_request = Request(request.scope, receive=receive)' in stream_body
+          assert 'result = await chat(cloned_request)' in stream_body
+          assert 'teaching_lesson, teaching_mode = _extract_teaching_lesson(msg)' not in stream_body
+          assert '_run_absorption_shadow' not in stream_body
+          print("route ordering, health registration, canonical chat teaching, and single-source SSE guard OK")
