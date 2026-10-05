@@ -22,6 +22,10 @@ SENSITIVE_PREFIXES = (
 )
 ROUTE_RE = re.compile(r'^@(app)\.(get|post|patch|delete|put)\("([^"]+)"')
 
+PUBLIC_ROUTE_KEYS = {
+    ("GET", "/api/v8/graph/public-overview"),
+}
+
 def route_blocks(text):
     lines = text.splitlines()
     found = []
@@ -46,6 +50,9 @@ class SensitiveRouteSecurityContract(unittest.TestCase):
     def test_sensitive_routes_use_central_owner_guard(self):
         missing = []
         for route in self.routes:
+            route_key = (route["method"], route["path"])
+            if route_key in PUBLIC_ROUTE_KEYS:
+                continue
             if any(route["path"].startswith(prefix) for prefix in SENSITIVE_PREFIXES):
                 if "_require_owner(request)" not in route["source"]:
                     missing.append(
@@ -76,6 +83,18 @@ class SensitiveRouteSecurityContract(unittest.TestCase):
                 ("created_by" in route["source"] or "owner=" in route["source"] or 'actor=s["email"]' in route["source"]),
             )
 
+    def test_public_graph_route_contains_no_private_query_access(self):
+        route = next(
+            r for r in self.routes
+            if (r["method"], r["path"]) == ("GET", "/api/v8/graph/public-overview")
+        )
+        for forbidden in ("owner_scope", "privacy_level", "list_graph_nodes", "list_graph_edges"):
+            self.assertNotIn(
+                forbidden,
+                route["source"],
+                "Public graph route must not query private graph persistence",
+            )
+
     def test_no_sensitive_route_uses_client_identity_as_authority(self):
         forbidden = (
             'payload.get("is_owner"',
@@ -84,6 +103,9 @@ class SensitiveRouteSecurityContract(unittest.TestCase):
             "localStorage.getItem('akira_is_owner'",
         )
         for route in self.routes:
+            route_key = (route["method"], route["path"])
+            if route_key in PUBLIC_ROUTE_KEYS:
+                continue
             if any(route["path"].startswith(prefix) for prefix in SENSITIVE_PREFIXES):
                 for fragment in forbidden:
                     self.assertNotIn(
