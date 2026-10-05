@@ -6194,245 +6194,91 @@ async def chat(request: Request):
 
 @app.post("/api/chat/stream")
 async def chat_stream(request: Request):
+    """
+    Transporte SSE estable con una única fuente de verdad: /api/chat.
+
+    El endpoint /api/chat/stream no vuelve a ejecutar su propia cadena de
+    persistencia/memoria/proveedores. Reusa exactamente el camino que ya
+    responde correctamente y solo adapta el resultado final a SSE.
+    """
     try:
-        data = await request.json()
-        msg = data.get("message","")[:1500]
-        requested_conv_id = data.get("conversation_id")
-        if requested_conv_id is not None and not isinstance(requested_conv_id, str):
-            requested_conv_id = None
+        body = await request.body()
+        sent = False
 
-        user_key = data.get("user_api_key","").strip()
-        gemini_keys = [user_key] if user_key else _pick_gemini_keys()
-        service = _persistence_service()
-        session = get_session(request)
+        async def receive():
+            nonlocal sent
+            if sent:
+                return {"type": "http.disconnect"}
+            sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
 
-        conversation_id = None
-        persist = bool(session and service is not None)
-        if persist:
-            conv, err = _ensure_conversation(service, requested_conv_id, msg, session["email"])
-            if err:
-                async def gen_err():
-                    yield f'data: {json_lib.dumps({"text": f"Error: {err}"})}\n\n'
-                    yield f'data: {json_lib.dumps({"done": True, "conversation_id": None})}\n\n'
-                return StreamingResponse(gen_err(), media_type="text/event-stream")
-            conversation_id = conv["id"]
+        cloned_request = Request(request.scope, receive=receive)
+        result = await chat(cloned_request)
+
+        if isinstance(result, JSONResponse):
             try:
-                service.add_message(
-                    conversation_id, "user", msg,
-                    actor=session["email"], owner=session["email"]
-                )
-            except Exception as e:
-                print(f"[chat/stream] add_message user fallo: {type(e).__name__}: {str(e)[:200]}")
+                payload = json_lib.loads((result.body or b"{}").decode("utf-8"))
+            except Exception:
+                payload = {
+                    "response": "Error procesando la respuesta del chat.",
+                    "model": "system",
+                    "conversation_id": None,
+                }
+        elif isinstance(result, dict):
+            payload = result
+        else:
+            payload = {
+                "response": str(result),
+                "model": "system",
+                "conversation_id": None,
+            }
 
-        teaching_lesson, teaching_mode = _extract_teaching_lesson(msg)
-        if teaching_mode:
-            if not teaching_lesson:
-                teaching_response = "Claro. ¿Qué quieres enseñarme? Explícamelo con tus palabras y lo registraré como conocimiento candidato para después verificarlo."
-            elif not persist:
-                teaching_response = "Puedo recibir la enseñanza, pero no puedo registrarla de forma persistente en este momento."
-            else:
-                try:
-                    learning_rec, memory_rec, node_rec = await asyncio.to_thread(
-                        _create_teaching_candidate, service, teaching_lesson, session["email"]
-                    )
-                    teaching_response = (
-                        "🧠 Recibido. Lo registré como conocimiento candidato. "
-                        "Todavía no lo trataré como un hecho verificado; primero debe pasar por revisión/validación. "
-                        f"ID de aprendizaje: {learning_rec['id']}."
-                    )
-                except Exception as e:
-                    teaching_response = f"No pude registrar la enseñanza: {type(e).__name__}."
-
-            async def generate_teaching():
-                yield f'data: {json_lib.dumps({"text": teaching_response})}\\n\\n'
-                yield f'data: {json_lib.dumps({"done": True, "conversation_id": conversation_id})}\\n\\n'
-                if persist and teaching_response:
-                    try:
-                        await asyncio.to_thread(
-                            service.add_message,
-                            conversation_id, "assistant", teaching_response,
-                            "learning_engine", [], 0, None, session["email"],
-                            owner=session["email"]
-                        )
-                    except Exception as e:
-                        print(f"[chat/stream] add_message teaching response fallo: {type(e).__name__}")
-
-            return StreamingResponse(generate_teaching(), media_type="text/event-stream")
-
-        memories = (
-            await asyncio.to_thread(_recall_memories, service, msg)
-            if session and session.get("is_owner")
-            else []
-        )
-        recall_block = _format_recall_block(memories)
-        conversation_context = await asyncio.to_thread(_format_conversation_context, service, conversation_id, msg, session["email"] if session else None)
-
-        github_context = ""
-        github_read = _detect_github_read_request(msg)
-        if github_read and persist:
-            try:
-                github_outputs, github_error = _invoke_tool(
-                    service, "github_repo_read", github_read, actor=session["email"]
-                )
-                try:
-                    service.log_invocation(
-                        "github_repo_read",
-                        github_read,
-                        github_outputs or {},
-                        "success" if github_error is None else "failure",
-                        session["email"],
-                        0,
-                        error=github_error,
-                    )
-                except Exception as log_error:
-                    print(f"[github-read/stream] log fallo: {type(log_error).__name__}")
-                if github_error is None and isinstance(github_outputs, dict):
-                    github_context = (
-                        "\n[GitHub READ-ONLY EVIDENCE — SERVER RESULT]\n"
-                        + "EVIDENCE POLICY: prior chat text is not evidence. Only direct code evidence from the current server result may support a file-control claim. A script/import reference does not prove functional ownership. Prefer the most specific file whose code directly implements the requested behavior.\n"
-                        + json_lib.dumps(
-                            github_outputs.get("result", {}),
-                            ensure_ascii=False,
-                        )[:45000]
-                        + "\n[END GITHUB EVIDENCE]\n"
-                    )
-                elif github_error:
-                    github_context = (
-                        "\n[GitHub READ-ONLY RESULT — ERROR]\n"
-                        + json_lib.dumps(github_error, ensure_ascii=False)[:3000]
-                        + "\n[END GITHUB RESULT]\n"
-                    )
-            except Exception as github_exc:
-                github_context = (
-                    "\n[GitHub READ-ONLY RESULT — ERROR]\n"
-                    + json_lib.dumps(
-                        {"type": type(github_exc).__name__},
-                        ensure_ascii=False,
-                    )
-                    + "\n[END GITHUB RESULT]\n"
-                )
-        elif github_read and not persist:
-            github_context = (
-                "\n[GitHub READ-ONLY RESULT — AUTH REQUIRED]\n"
-                + "La inspección del repositorio requiere una sesión autenticada."
-                + "\n[END GITHUB RESULT]\n"
-            )
-        if github_context:
-            conversation_context = (conversation_context + github_context)[:52000]
-        if persist and ABSORPTION_MODE == "shadow":
-            asyncio.create_task(
-                _run_absorption_shadow(msg, memories, conversation_context)
-            )
-        elif persist and ABSORPTION_MODE == "candidate":
-            await _run_absorption_candidate(
-                msg,
-                service,
-                session["email"],
-                memories,
-                conversation_context,
-                conversation_id,
-            )
-        t0 = time.time()
+        answer = str(payload.get("response") or "")
+        conversation_id = payload.get("conversation_id")
+        model_used = payload.get("model") or "unknown"
 
         async def generate():
-            full_answer = ""
-            model_used = "fallback"
-            error_meta = None
-            try:
-                if not gemini_keys:
-                    g = await asyncio.to_thread(get_groq_fallback, msg, conversation_context)
-                    if g:
-                        ans = enforce_akira_identity_global(g)
-                        model_used = "groq"
-                    else:
-                        o = await asyncio.to_thread(
-                            get_openrouter_fallback, msg, conversation_context, recall_block
-                        )
-                        if o:
-                            ans = o.get("response")
-                            model_used = o.get("model") or "openrouter/free"
-                        else:
-                            m = await asyncio.to_thread(
-                                get_mistral_fallback, msg, conversation_context, recall_block
-                            )
-                            if m:
-                                ans = m.get("response")
-                                model_used = m.get("model") or "mistral-small-latest"
-                            else:
-                                ans = "No fue posible obtener respuesta de ningún proveedor configurado."
-                                model_used = "fallback"
-                                error_meta = {
-                                    "type": "no_response",
-                                    "message": "Groq, OpenRouter y Mistral sin respuesta"
-                                }
-                    full_answer = ans
-                    for w in ans.split(" "):
-                        yield f'data: {json_lib.dumps({"text": w + " "})}\n\n'
-                        await asyncio.sleep(0.05)
-                    yield f'data: {json_lib.dumps({"done": True, "conversation_id": conversation_id})}\n\n'
-                    return
-                try:
-                    ans = await asyncio.to_thread(
-                        _stream_call_gemini, gemini_keys, msg, recall_block, conversation_context
-                    )
-                    model_used = "gemini"
-                except Exception as ge:
-                    print(f"Gemini stream agotado, fallback Groq: {ge}")
-                    g = await asyncio.to_thread(
-                        get_groq_fallback, msg, conversation_context
-                    )
-                    if g:
-                        ans = enforce_akira_identity_global(g)
-                        model_used = "groq"
-                    else:
-                        o = await asyncio.to_thread(
-                            get_openrouter_fallback, msg, conversation_context, recall_block
-                        )
-                        if o:
-                            ans = o.get("response")
-                            model_used = o.get("model") or "openrouter/free"
-                        else:
-                            m = await asyncio.to_thread(
-                                get_mistral_fallback, msg, conversation_context, recall_block
-                            )
-                            if m:
-                                ans = m.get("response")
-                                model_used = m.get("model") or "mistral-small-latest"
-                            else:
-                                ans = "No fue posible obtener respuesta de ningún proveedor configurado."
-                                error_meta = {
-                                    "type": "stream_failed",
-                                    "message": "Gemini, Groq, OpenRouter y Mistral sin respuesta"
-                                }
-                full_answer = ans
-                for w in ans.split(" "):
-                    yield f'data: {json_lib.dumps({"text": w + " "})}\n\n'
-                    await asyncio.sleep(0.03)
-                yield f'data: {json_lib.dumps({"done": True, "conversation_id": conversation_id})}\n\n'
-            except Exception as e:
-                error_meta = {"type": type(e).__name__, "message": str(e)[:200]}
-                yield f'data: {json_lib.dumps({"text": f"Error: {str(e)[:150]}"})}\n\n'
-                yield f'data: {json_lib.dumps({"done": True, "conversation_id": conversation_id})}\n\n'
-            finally:
-                if persist and full_answer:
-                    duration_ms = int((time.time() - t0) * 1000)
-                    try:
-                        await asyncio.to_thread(
-                            service.add_message,
-                            conversation_id, "assistant", full_answer,
-                            model_used,
-                            [m.get("id") for m in memories if m.get("id")],
-                            duration_ms,
-                            error_meta,
-                            session["email"],
-                            owner=session["email"]
-                        )
-                    except Exception as e:
-                        print(f"[chat/stream] add_message assistant fallo: {type(e).__name__}: {str(e)[:200]}")
+            # Fragmentación de transporte: conserva la sensación de streaming
+            # sin duplicar el motor LLM ni abrir una segunda ruta de persistencia.
+            if answer:
+                words = answer.split(" ")
+                chunk = []
+                chunk_len = 0
+                for word in words:
+                    extra = len(word) + (1 if chunk else 0)
+                    if chunk and chunk_len + extra > 140:
+                        text_chunk = " ".join(chunk)
+                        yield f'data: {json_lib.dumps({"text": text_chunk + " "}, ensure_ascii=False)}\n\n'
+                        chunk = []
+                        chunk_len = 0
+                    chunk.append(word)
+                    chunk_len += extra
+                if chunk:
+                    text_chunk = " ".join(chunk)
+                    yield f'data: {json_lib.dumps({"text": text_chunk}, ensure_ascii=False)}\n\n'
+            else:
+                yield f'data: {json_lib.dumps({"text": ""})}\n\n'
 
-        return StreamingResponse(generate(), media_type="text/event-stream")
+            yield f'data: {json_lib.dumps({"done": True, "conversation_id": conversation_id, "model": model_used}, ensure_ascii=False)}\n\n'
+
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "X-Accel-Buffering": "no",
+            },
+        )
     except Exception as e:
-        return JSONResponse({"error": str(e)[:200]}, status_code=500)
+        print(
+            f"[chat/stream] route failure type={type(e).__name__} "
+            f"detail={str(e)[:300].replace(chr(10), ' ')}",
+            flush=True,
+        )
+        return JSONResponse(
+            {"error": "stream_route_failure", "error_type": type(e).__name__},
+            status_code=500,
+        )
 
 try:
     import pymupdf as _fitz
