@@ -5984,7 +5984,11 @@ async def chat(request: Request):
         )
         recall_block = _format_recall_block(memories)
         conversation_context = await asyncio.to_thread(
-            _format_conversation_context, service, conversation_id, msg, session["email"]
+            _format_conversation_context,
+            service,
+            conversation_id,
+            msg,
+            session["email"] if session else None,
         )
 
         github_context = ""
@@ -6221,7 +6225,11 @@ async def chat_stream(request: Request):
         )
         recall_block = _format_recall_block(memories)
         conversation_context = await asyncio.to_thread(
-            _format_conversation_context, service, conversation_id, msg, session["email"]
+            _format_conversation_context,
+            service,
+            conversation_id,
+            msg,
+            session["email"] if session else None,
         )
 
         github_context = ""
