@@ -187,20 +187,23 @@ class AuthorizationContractTests(unittest.TestCase):
 
     def test_chat_stream_recall_requires_owner_session(self):
         source = self._function_source("chat_stream")
-        self.assertIn('if session and session.get("is_owner")', source)
-        self.assertIn("else []", source)
+        # SSE delegates to the canonical chat path, where owner-scoped recall
+        # is enforced. Keeping the auth logic in one path prevents drift.
+        self.assertIn("result = await chat(cloned_request)", source)
+        self.assertNotIn('if session and session.get("is_owner")', source)
 
     def test_conversation_context_is_scoped_in_both_chat_paths(self):
         normal = self._function_source("chat")
         streaming = self._function_source("chat_stream")
         self.assertIn("_format_conversation_context, service, conversation_id, msg, session[\"email\"]", normal)
-        self.assertIn("_format_conversation_context, service, conversation_id, msg, session[\"email\"]", streaming)
+        self.assertIn("result = await chat(cloned_request)", streaming)
 
     def test_conversation_add_message_passes_explicit_owner(self):
         normal = self._function_source("chat")
         streaming = self._function_source("chat_stream")
         self.assertIn("owner=session[\"email\"]", normal)
-        self.assertIn("owner=session[\"email\"]", streaming)
+        self.assertIn("result = await chat(cloned_request)", streaming)
+        self.assertNotIn("owner=session[\"email\"]", streaming)
 
     def test_memory_save_tool_has_no_undefined_mission_id_dependency(self):
         source = self._function_source("_invoke_tool")
