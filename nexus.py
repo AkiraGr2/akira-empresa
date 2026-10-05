@@ -3772,6 +3772,53 @@ def v8_graph_overview(request: Request, limit_nodes: int = 500, limit_edges: int
             "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
 
 # ============================================================
+# CEREBRO PUBLICO — vista segura sin autenticacion
+# No expone nodos privados, memorias, IDs de propietario ni contenido
+# personal. Es una topologia publica de la arquitectura observable.
+# ============================================================
+PUBLIC_BRAIN_GRAPH = {
+    "version": "public-architecture-v1",
+    "scope": "public_architecture",
+    "nodes": [
+        {"id": "public:akira", "node_type": "concept", "label": "Akira"},
+        {"id": "public:memory", "node_type": "skill", "label": "Memoria"},
+        {"id": "public:learning", "node_type": "skill", "label": "Aprendizaje"},
+        {"id": "public:graph", "node_type": "skill", "label": "Grafo"},
+        {"id": "public:agents", "node_type": "skill", "label": "Agentes"},
+        {"id": "public:missions", "node_type": "skill", "label": "Misiones"},
+        {"id": "public:tools", "node_type": "tool", "label": "Herramientas"},
+        {"id": "public:conversations", "node_type": "experience", "label": "Conversaciones"},
+        {"id": "public:cognitive", "node_type": "skill", "label": "Ciclo cognitivo"},
+    ],
+    "edges": [
+        {"id": "public:e1", "from_node": "public:akira", "to_node": "public:memory", "relation_type": "uses", "weight": 1, "frequency": 1},
+        {"id": "public:e2", "from_node": "public:akira", "to_node": "public:learning", "relation_type": "uses", "weight": 1, "frequency": 1},
+        {"id": "public:e3", "from_node": "public:akira", "to_node": "public:graph", "relation_type": "uses", "weight": 1, "frequency": 1},
+        {"id": "public:e4", "from_node": "public:akira", "to_node": "public:agents", "relation_type": "uses", "weight": 1, "frequency": 1},
+        {"id": "public:e5", "from_node": "public:akira", "to_node": "public:missions", "relation_type": "uses", "weight": 1, "frequency": 1},
+        {"id": "public:e6", "from_node": "public:akira", "to_node": "public:tools", "relation_type": "uses", "weight": 1, "frequency": 1},
+        {"id": "public:e7", "from_node": "public:akira", "to_node": "public:conversations", "relation_type": "uses", "weight": 1, "frequency": 1},
+        {"id": "public:e8", "from_node": "public:akira", "to_node": "public:cognitive", "relation_type": "uses", "weight": 1, "frequency": 1},
+    ],
+}
+
+@app.get("/api/v8/graph/public-overview")
+def v8_graph_public_overview():
+    return {
+        "ok": True,
+        "public": True,
+        "scope": PUBLIC_BRAIN_GRAPH["scope"],
+        "version": PUBLIC_BRAIN_GRAPH["version"],
+        "nodes": PUBLIC_BRAIN_GRAPH["nodes"],
+        "edges": PUBLIC_BRAIN_GRAPH["edges"],
+        "counts": {
+            "nodes": len(PUBLIC_BRAIN_GRAPH["nodes"]),
+            "edges": len(PUBLIC_BRAIN_GRAPH["edges"]),
+        },
+        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }
+
+# ============================================================
 # V8-Fase10: MISIONES
 # ============================================================
 @app.post("/api/v8/missions")
