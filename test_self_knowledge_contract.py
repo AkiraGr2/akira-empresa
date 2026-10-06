@@ -216,6 +216,20 @@ class SelfKnowledgeSnapshotTests(unittest.TestCase):
             {"provider": "gemini", "model": "gemini-3.1-pro-preview", "role": "reasoning"},
             model["models"],
         )
+    def test_runtime_model_routes_are_registry_backed(self):
+        from persistence.model_registry import model_registry_snapshot
+        snapshot = model_registry_snapshot()
+        routes = {(row["provider"], row["model"], row["role"]) for row in snapshot["routes"]}
+        self.assertIn(("gemini", "gemini-3.8-flash", "primary_chat"), routes)
+        self.assertIn(("gemini", "gemini-3.1-pro-preview", "reasoning"), routes)
+        self.assertIn(("gemini", "gemini-flash-latest", "chat_fallback_variant"), routes)
+        self.assertIn(("groq", "openai/gpt-oss-120b", "fallback"), routes)
+        self.assertIn(("groq", "openai/gpt-oss-20b", "fallback"), routes)
+        self.assertIn(("groq", "qwen/qwen3.8-27b", "fallback"), routes)
+        self.assertIn(("openrouter", "openrouter/free", "fallback_dynamic"), routes)
+        self.assertIn(("mistral", "mistral-small-latest", "fallback"), routes)
+        self.assertIn(("gemini", "gemini-embedding-2", "memory_embedding"), routes)
+
     def test_self_model_rejects_manual_derived_registry_updates(self):
         from persistence.core import ValidationError
         service = PersistenceService(FakeRepo())
