@@ -177,10 +177,7 @@ def _task_scope_filters(owner_scope):
     scope = str(owner_scope).strip()
     if not scope:
         raise ValidationError("owner_scope requerido")
-    scopes = [scope]
-    if scope != LEGACY_OWNER_SCOPE:
-        scopes.append(LEGACY_OWNER_SCOPE)
-    return {"owner_scope__in": scopes}
+    return {"owner_scope": scope}
 
 class PersistenceService:
     def __init__(self, repo):
