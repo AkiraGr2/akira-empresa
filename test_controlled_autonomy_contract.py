@@ -237,9 +237,10 @@ class ControlledAutonomyContractTests(unittest.TestCase):
             )
 
         self.assertEqual(result["status"], "proposal")
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 3)
         self.assertIn("docs/new.txt", calls[0])
         self.assertEqual(calls[1], [])
+        self.assertEqual(calls[2], ["docs/new.txt"])
     def test_workspace_testing_uses_non_shell_commands(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
