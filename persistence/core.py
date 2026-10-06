@@ -385,6 +385,7 @@ ENTITIES = {
         "in_filterable": ("status", "flow_type", "created_by"),
         "orderable": ("created_at", "updated_at", "priority", "started_at", "completed_at"),
         "idempotent": True,
+        "idempotency_scope": ("created_by",),
     },
     # Fase 10.7.2: persistencia de conversaciones.
     "conversations": {
