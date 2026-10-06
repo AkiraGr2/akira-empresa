@@ -1970,6 +1970,7 @@ def v8_repair_create(request: Request, payload: dict):
         return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     if not isinstance(payload, dict):
         return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
+    from persistence.core import PersistenceError, ValidationError
     try:
         repair = service.create_repair(
             target=str(payload.get("target") or ""),
