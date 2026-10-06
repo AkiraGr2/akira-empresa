@@ -219,6 +219,47 @@ def _normalize_queries(queries: Any) -> list[str]:
     ))
 
 
+def _canonicalize_generated_patch(change: dict[str, Any]) -> dict[str, Any]:
+    """Normalize safe model patch variants before any sandbox execution."""
+    operation = str(change.get("operation") or "").strip()
+    path = str(change.get("path") or "").strip()
+    patch = str(change.get("patch") or "")
+    if operation != "create":
+        # Modify patches are never repaired heuristically: line context must remain exact.
+        if any(line.startswith("@@") and not re.match(r"^@@ -(\\d+)(?:,(\\d+))? \\+(\\d+)(?:,(\\d+))? @@", line.rstrip("\\n"))
+               for line in patch.splitlines()):
+            raise SpecializedAgentError(f"proposal_invalid_patch_hunk:{path}")
+        return change
+
+    lines = patch.splitlines(keepends=True)
+    hunk_indexes = [i for i, line in enumerate(lines) if line.startswith("@@")]
+    if len(hunk_indexes) != 1:
+        return change
+
+    idx = hunk_indexes[0]
+    hunk_header = lines[idx].rstrip("\n")
+    if re.match(r"^@@ -(\\d+)(?:,(\\d+))? \\+(\\d+)(?:,(\\d+))? @@", hunk_header):
+        return change
+    if hunk_header.strip() != "@@":
+        raise SpecializedAgentError(f"proposal_invalid_patch_hunk:{path}")
+
+    body = lines[idx + 1:]
+    if not body or any(not line.startswith("+") for line in body):
+        raise SpecializedAgentError(f"proposal_invalid_create_patch:{path}")
+
+    additions = len(body)
+    canonical = "".join(lines[:idx]) + f"@@ -0,0 +1,{additions} @@\\n" + "".join(body)
+    return {**change, "patch": canonical}
+
+
+def _prepare_generated_proposal(proposal: dict[str, Any]) -> dict[str, Any]:
+    """Apply deterministic safety normalization to model output without writing anything."""
+    changes = proposal.get("changes")
+    if not isinstance(changes, list):
+        return proposal
+    return {**proposal, "changes": [_canonicalize_generated_patch(dict(item)) for item in changes]}
+
+
 def _context_from_inspection(inspection: dict[str, Any]) -> str:
     parts = []
     for item in inspection.get("files") or []:
@@ -345,6 +386,7 @@ EVIDENCIA:
 </repository_evidence>
 """
     result = _specialist_json_call(prompt, max_output_tokens=3200)
+    result = _prepare_generated_proposal(result)
     result["write_performed"] = False
     result["requires_human_approval"] = True
     result["repository"] = repo
