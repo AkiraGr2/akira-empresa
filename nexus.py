@@ -2810,7 +2810,8 @@ def v8_learning_selftest(request: Request):
             "outcome": "failure",
             "status": "candidate",
             "evidence": [],
-        }, actor=s["email"], idempotency_key="learning_selftest:auto:" + auto_marker)
+        }, actor=s["email"], idempotency_key="learning_selftest:auto:" + auto_marker,
+           owner_scope=s["owner_scope"])
         auto_id = auto_created["record"]["id"]
         add(
             "autonomous_candidate_created",
@@ -2896,11 +2897,12 @@ def v8_learning_selftest(request: Request):
             {"id": teach_id, "memory": bool(taught_memory), "node": bool(taught_node)},
         )
         if teach_id:
-            current_teach = service.get_learning(teach_id)
+            current_teach = service.get_learning(teach_id, owner_scope=s["owner_scope"])
             service.update_learning_status(
                 teach_id, "discarded",
                 expected_version=current_teach["version"],
                 actor=s["email"],
+                owner_scope=s["owner_scope"],
             )
     except Exception as e:
         add(

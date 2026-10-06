@@ -1121,4 +1121,13 @@ MIGRATIONS = [
         """
     ),
 
+    (
+        "036_learning_owner_scoped_uniqueness",
+        """
+        DROP INDEX IF EXISTS learning_events_idempotency_key_uq;
+        CREATE UNIQUE INDEX learning_events_owner_idempotency_key_uq
+            ON public.learning_events (owner_scope, idempotency_key);
+        """
+    ),
+
 ]

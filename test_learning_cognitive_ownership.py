@@ -70,11 +70,11 @@ class OwnershipServiceTests(unittest.TestCase):
     def test_learning_is_scoped(self):
         self.assertIsNotNone(self.service.get_learning("learn_a", owner_scope="scope:A"))
         self.assertIsNone(self.service.get_learning("learn_a", owner_scope="scope:B"))
-        self.assertIsNotNone(self.service.get_learning("learn_legacy", owner_scope="scope:A"))
+        self.assertIsNone(self.service.get_learning("learn_legacy", owner_scope="scope:A"))
 
     def test_learning_list_is_scoped(self):
         rows = self.service.search_learning(owner_scope="scope:A", limit=50)
-        self.assertEqual({r["id"] for r in rows}, {"learn_a", "learn_legacy"})
+        self.assertEqual({r["id"] for r in rows}, {"learn_a"})
 
     def test_cognitive_cycle_is_scoped_and_events_follow_parent(self):
         self.assertIsNotNone(self.service.get_cycle("cycle_a", owner_scope="scope:A"))
