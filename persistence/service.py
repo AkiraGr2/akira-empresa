@@ -205,8 +205,8 @@ class PersistenceService:
             if not scope:
                 raise ValidationError("owner_scope requerido")
             fields["owner_scope"] = scope
-        if "created_by" not in fields:
-            fields["created_by"] = actor
+        # La autoría de persistencia se deriva del actor confiable del servicio.
+        fields["created_by"] = actor
         record = dict(fields, id=new_id("mem"), status="active", schema_version=MEMORY_SCHEMA_VERSION)
         if idempotency_key is not None:
             if not isinstance(idempotency_key, str) or not 0 < len(idempotency_key.strip()) <= 200:
@@ -1826,6 +1826,7 @@ class PersistenceService:
                          descending=True, owner_scope=None):
         limit = max(1, min(int(limit), 200))
         base = dict(filters or {})
+        base.setdefault("status", "active")
         if owner_scope is not None:
             scope = str(owner_scope).strip()
             if not scope:
