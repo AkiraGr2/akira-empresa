@@ -1143,4 +1143,13 @@ MIGRATIONS = [
         """
     ),
 
+    (
+        "038_agent_task_owner_scoped_idempotency",
+        """
+        DROP INDEX IF EXISTS agent_tasks_idempotency_key_uq;
+        CREATE UNIQUE INDEX agent_tasks_owner_idempotency_key_uq
+            ON public.agent_tasks (owner_scope, idempotency_key);
+        """
+    ),
+
 ]
