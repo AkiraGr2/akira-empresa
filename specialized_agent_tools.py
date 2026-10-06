@@ -449,3 +449,80 @@ EVIDENCIA DE PRUEBAS:
     result["model"] = result.get("_model")
     result.pop("_model", None)
     return result
+
+
+# F14 workspace execution extension
+
+def run_python_tests_in_workspace(workspace: str, tests: Any = None, compile_paths: Any = None) -> dict[str, Any]:
+    modules = _normalize_test_modules(tests)
+    paths = _normalize_compile_paths(compile_paths)
+    root = Path(workspace).resolve()
+    if not root.is_dir():
+        raise SpecializedAgentError("workspace_not_found")
+
+    commands: list[list[str]] = []
+    resolved = []
+    for path in paths:
+        target = (root / path).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError as exc:
+            raise SpecializedAgentError("compile_target_escape") from exc
+        if not target.is_file():
+            raise SpecializedAgentError(f"compile_target_not_found:{path}")
+        resolved.append(path)
+    if resolved:
+        commands.append([sys.executable, "-m", "py_compile", *resolved])
+
+    for module in modules:
+        file_path = root.joinpath(*module.split(".")).with_suffix(".py")
+        try:
+            file_path.resolve().relative_to(root)
+        except ValueError as exc:
+            raise SpecializedAgentError("test_module_escape") from exc
+        if not file_path.is_file():
+            raise SpecializedAgentError(f"test_module_not_found:{module}")
+    if modules:
+        commands.append([sys.executable, "-m", "unittest", "-v", *modules])
+
+    if not commands:
+        raise SpecializedAgentError("no_test_or_compile_target")
+
+    reports = []
+    overall_ok = True
+    for command in commands:
+        try:
+            proc = subprocess.run(
+                command,
+                cwd=str(root),
+                capture_output=True,
+                text=True,
+                timeout=TEST_TIMEOUT_S,
+                check=False,
+                shell=False,
+            )
+            ok = proc.returncode == 0
+            overall_ok = overall_ok and ok
+            reports.append({
+                "command": command,
+                "returncode": proc.returncode,
+                "status": "passed" if ok else "failed",
+                "stdout": proc.stdout[-6000:],
+                "stderr": proc.stderr[-6000:],
+            })
+        except subprocess.TimeoutExpired as exc:
+            overall_ok = False
+            reports.append({
+                "command": command,
+                "returncode": None,
+                "status": "timeout",
+                "stdout": str(exc.stdout or "")[-4000:],
+                "stderr": str(exc.stderr or "")[-4000:],
+            })
+    return {
+        "status": "passed" if overall_ok else "failed",
+        "tests": reports,
+        "workspace_mode": True,
+        "commands_are_non_shell": True,
+        "timeout_s": TEST_TIMEOUT_S,
+    }
