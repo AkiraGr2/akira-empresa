@@ -102,6 +102,15 @@ class MissionTaskOwnershipTests(unittest.TestCase):
         source = Path("persistence/service.py").read_text(encoding="utf-8")
         self.assertIn('changes["authorized_by"] = owner or actor', source)
 
+    def test_mission_cancel_route_uses_cascade_service(self):
+        source = Path("nexus.py").read_text(encoding="utf-8")
+        start = source.index('@app.post("/api/v8/missions/{mission_id}/cancel")')
+        end = source.index("\n# ============================================================", start)
+        block = source[start:end]
+        self.assertIn("service.cancel_mission(", block)
+        self.assertNotIn('service.update_mission_status(mission_id, "paused"', block)
+        self.assertNotIn('service.update_mission_status(mission_id, "cancelled"', block)
+
     def test_orphan_mission_cleanup_is_boot_only(self):
         source = Path("nexus.py").read_text(encoding="utf-8")
         boot_call = "_cleanup_orphan_missions(_persistence_service())"
