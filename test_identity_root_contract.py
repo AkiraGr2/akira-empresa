@@ -1,5 +1,6 @@
 import ast
 from pathlib import Path
+import ast
 import unittest
 
 from persistence.core import ValidationError, validate_self_model
@@ -75,6 +76,43 @@ class IdentityRootContractTests(unittest.TestCase):
         self.assertIn(
             "pregunta quien eres, responde SIEMPRE: Soy Akira.",
             self.nexus,
+        )
+
+    def test_identity_filter_is_surgical_at_runtime(self):
+        tree = ast.parse(self.nexus)
+        wanted = []
+        for node in tree.body:
+            if isinstance(node, (ast.Assign, ast.FunctionDef)) and (
+                (isinstance(node, ast.Assign) and any(
+                    isinstance(tgt, ast.Name) and tgt.id in {"_IDENTITY_BANNED_PHRASES", "_IDENTITY_REPLACEMENT"}
+                    for tgt in node.targets
+                ))
+                or (isinstance(node, ast.FunctionDef) and node.name == "enforce_akira_identity_global")
+            ):
+                wanted.append(node)
+        namespace = {}
+        exec(compile(ast.Module(body=wanted, type_ignores=[]), "identity-filter-test", "exec"), namespace)
+
+        sanitize = namespace["enforce_akira_identity_global"]
+        self.assertEqual(sanitize("Soy ChatGPT y no soy Akira."), "Soy Akira.")
+        self.assertEqual(
+            sanitize("Como modelo de lenguaje, puedo explicar qué es una IA."),
+            "Como modelo de lenguaje, puedo explicar qué es una IA.",
+        )
+        self.assertEqual(
+            sanitize("No puedo afirmar que poseo conciencia subjetiva. Sí puedo decirte quién soy: Akira."),
+            "No puedo afirmar que poseo conciencia subjetiva. Sí puedo decirte quién soy: Akira.",
+        )
+
+    def test_identity_audit_contract_covers_all_root_fields(self):
+        root_module = ast.parse(self.root)
+        root_node = next(node for node in root_module.body if isinstance(node, ast.Assign) and any(
+            isinstance(tgt, ast.Name) and tgt.id == "IDENTITY_ROOT" for tgt in node.targets
+        ))
+        assigned = ast.literal_eval(root_node.value.args[0])
+        self.assertEqual(
+            set(assigned),
+            {"name", "creator", "essence", "language", "root_schema_version"},
         )
 
     def test_identity_filter_does_not_assert_unverified_consciousness(self):
