@@ -530,7 +530,12 @@ def review_code_change(
     if not proposal_text:
         raise SpecializedAgentError("proposal_required")
 
-    inspection = inspect_repository(repo, paths=clean_paths, max_files=len(clean_paths), queries=[])
+    inspection = _inspect_for_proposal(
+        inspect_repository,
+        repo,
+        clean_paths,
+        [],
+    )
     context = _context_from_inspection(inspection)
     test_text = json.dumps(test_results, ensure_ascii=False)[:12000] if test_results is not None else "NO_TEST_EVIDENCE"
 
