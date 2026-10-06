@@ -1204,8 +1204,8 @@ MIGRATIONS = [
             updated_at = now()
         """
     ),
-,
-(
+
+    (
         "041_evolution_engine_v1",
         """
         CREATE TABLE IF NOT EXISTS public.evolution_records (
