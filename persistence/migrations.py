@@ -1476,7 +1476,7 @@ MIGRATIONS = [
             'agent_autonomy_orchestrator',
             'autonomy_orchestrator',
             'autonomy_orchestrator',
-            'Orquesta autonomia controlada hasta aprobacion humana; nunca puede aprobar ni aplicar el cambio.',
+            'Orquesta autonomia controlada hasta aprobacion humana, sin aprobar ni aplicar el cambio.',
             '["controlled_autonomy_start"]'::jsonb,
             'idle',
             'agent.v1',
