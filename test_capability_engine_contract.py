@@ -74,6 +74,11 @@ class _CapabilityRepo:
 
 
 class CapabilityEngineContractTests(unittest.TestCase):
+    def test_runtime_selftest_guard_receives_local_context(self):
+        source = Path("persistence/selftest.py").read_text(encoding="utf-8")
+        self.assertIn("def _guard(name, fn, service, created_ids):", source)
+        self.assertIn("results.append(_guard(name, fn, service, created_ids))", source)
+
     def test_valid_capability_and_effective_state(self):
         record = validate_capability({
             "name": "ci_capability_contract",
