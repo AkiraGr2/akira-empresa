@@ -42,6 +42,10 @@ class LearningPersistentContractTests(unittest.TestCase):
             if isinstance(node, ast.FunctionDef) and node.name == "entity_spec"
         )
         self.assertIn('"idempotency_scope": ("owner_scope",)', source)
+        self.assertIn(
+            '"filterable": ("id", "source", "outcome", "status", "owner_scope", "idempotency_key")',
+            source,
+        )
 
     def test_learning_selftest_propagates_owner_scope(self):
         source = Path("nexus.py").read_text(encoding="utf-8")
