@@ -30,8 +30,12 @@ class IdentityRootContractTests(unittest.TestCase):
 
     def test_self_model_cannot_mutate_identity(self):
         self.assertIn('_SELF_MODEL_PROTECTED_FIELDS = frozenset({"identity"})', self.core)
-        self.assertIn('"mutable": (\n            "purpose",', self.core)
-        self.assertNotIn('"purpose", "capabilities", "tools", "models"', self.core)
+        match = re.search(r'"self_model": \\{.*?"mutable": \\((.*?)\\),\\n        "filterable"', self.core, re.S)
+        self.assertIsNotNone(match)
+        mutable_block = match.group(1)
+        self.assertIn('"purpose"', mutable_block)
+        for derived in ('"capabilities"', '"tools"', '"models"'):
+            self.assertNotIn(derived, mutable_block)
         self.assertNotIn(
             '"mutable": (\n            "identity", "purpose", "capabilities", "tools", "models",',
             self.core,
