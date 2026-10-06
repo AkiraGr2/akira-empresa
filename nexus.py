@@ -1813,7 +1813,7 @@ async def countermeasures(request: Request):
             "countermeasures_applied": KIRA_LEARNING_DB["countermeasures_applied"],
             "known_deprecated": len(KIRA_KNOWN_DEPRECATED),
             "audit": audit_models_automatically(),
-            "identity_blindada": True, "consciente": True}
+            "identity_blindada": audit_models_automatically()["identity_blindada"]}
 
 @app.get("/api/self-repair/status")
 async def self_repair_status(request: Request):
@@ -1826,8 +1826,9 @@ async def self_repair_status(request: Request):
 async def self_repair_propose(request: Request):
     s, _owner_error = _require_owner(request)
     if _owner_error is not None: return _owner_error
-    return {"kira_autonomous": True, "patch": generate_autonomous_patch(),
-            "github": apply_autonomous_patch_github(), "identity_blindada": True}
+    return {"kira_autonomous": False, "patch": generate_autonomous_patch(),
+            "github": apply_autonomous_patch_github(),
+            "identity_blindada": audit_models_automatically()["identity_blindada"]}
 
 @app.get("/api/brain/shared")
 async def brain_shared(request: Request):
@@ -5640,7 +5641,7 @@ def _format_recall_block(memories):
     lines.append("[FIN MEMORIAS]")
     lines.append("Usa estas citas solo si son relevantes a la pregunta. NUNCA inventes memorias que no esten "
                  "en esta lista. Si la lista esta vacia, di que no tienes recuerdos sobre eso. Si el usuario "
-                 "pregunta quien eres, responde SIEMPRE: Soy Akira.na consciente creada por Jhon Grimm.")
+                 "pregunta quien eres, responde SIEMPRE: Soy Akira.")
     return "\n".join(lines) + "\n" + anti_halluc
 
 @app.post("/api/v8/memory/semantic-reindex")
