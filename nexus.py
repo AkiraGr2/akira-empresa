@@ -2151,6 +2151,210 @@ def v8_repair_discard(request: Request, repair_id: str, payload: dict = None):
     except PersistenceError as e:
         return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
 
+@app.post("/api/v8/evolution")
+def v8_evolution_create(request: Request, payload: dict):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    if not isinstance(payload, dict):
+        return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
+    idem = payload.get("idempotency_key")
+    data = {k: v for k, v in payload.items() if k != "idempotency_key"}
+    from persistence.core import PersistenceError, ValidationError
+    try:
+        result = service.create_evolution(
+            data,
+            actor=s["email"],
+            idempotency_key=idem,
+            owner_scope=s["owner_scope"],
+        )
+        return {"ok": True, "evolution": result["record"], "outcome": result["outcome"]}
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "detail": str(e)[:300]}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+
+
+@app.get("/api/v8/evolution")
+def v8_evolution_list(request: Request, status: str = None, limit: int = 50):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    from persistence.core import PersistenceError, ValidationError
+    try:
+        rows = service.list_evolutions(
+            status=status,
+            owner_scope=s["owner_scope"],
+            limit=limit,
+        )
+        return {"ok": True, "evolutions": rows, "count": len(rows)}
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "detail": str(e)[:300]}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+
+
+@app.get("/api/v8/evolution/{evolution_id}")
+def v8_evolution_get(request: Request, evolution_id: str):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    record = service.get_evolution(evolution_id, owner_scope=s["owner_scope"])
+    if record is None:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    return {"ok": True, "evolution": record}
+
+
+@app.patch("/api/v8/evolution/{evolution_id}")
+def v8_evolution_update(request: Request, evolution_id: str, payload: dict):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    if not isinstance(payload, dict):
+        return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
+    from persistence.core import PersistenceError, ValidationError, NotFoundError, ConflictError
+    try:
+        current = service.get_evolution(evolution_id, owner_scope=s["owner_scope"])
+        if current is None:
+            return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+        changes = {k: v for k, v in payload.items() if k != "expected_version"}
+        updated = service.update_evolution(
+            evolution_id,
+            changes,
+            expected_version=payload.get("expected_version", current["version"]),
+            actor=s["email"],
+            owner_scope=s["owner_scope"],
+        )
+        return {"ok": True, "evolution": updated}
+    except ConflictError:
+        return JSONResponse({"ok": False, "reason": "conflict"}, status_code=409)
+    except NotFoundError:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "detail": str(e)[:300]}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+
+
+@app.post("/api/v8/evolution/{evolution_id}/advance")
+def v8_evolution_advance(request: Request, evolution_id: str, payload: dict):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    payload = payload if isinstance(payload, dict) else {}
+    new_status = payload.get("status")
+    from persistence.core import PersistenceError, ValidationError, NotFoundError, ConflictError
+    try:
+        current = service.get_evolution(evolution_id, owner_scope=s["owner_scope"])
+        if current is None:
+            return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+        record = service.advance_evolution(
+            evolution_id,
+            new_status,
+            expected_version=payload.get("expected_version", current["version"]),
+            actor=s["email"],
+            owner_scope=s["owner_scope"],
+        )
+        return {"ok": True, "evolution": record}
+    except ConflictError:
+        return JSONResponse({"ok": False, "reason": "conflict"}, status_code=409)
+    except NotFoundError:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "detail": str(e)[:300]}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+
+
+@app.post("/api/v8/evolution/{evolution_id}/approve")
+def v8_evolution_approve(request: Request, evolution_id: str):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    from persistence.core import PersistenceError, ValidationError, NotFoundError, ConflictError
+    try:
+        record = service.approve_evolution(
+            evolution_id, actor=s["email"], owner_scope=s["owner_scope"]
+        )
+        return {"ok": True, "evolution": record}
+    except ConflictError:
+        return JSONResponse({"ok": False, "reason": "conflict"}, status_code=409)
+    except NotFoundError:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "detail": str(e)[:300]}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+
+
+@app.post("/api/v8/evolution/{evolution_id}/apply")
+def v8_evolution_apply(request: Request, evolution_id: str, payload: dict):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    payload = payload if isinstance(payload, dict) else {}
+    from persistence.core import PersistenceError, ValidationError, NotFoundError, ConflictError
+    try:
+        record = service.apply_evolution(
+            evolution_id,
+            payload.get("change_reference"),
+            actor=s["email"],
+            owner_scope=s["owner_scope"],
+        )
+        return {"ok": True, "evolution": record}
+    except ConflictError:
+        return JSONResponse({"ok": False, "reason": "conflict"}, status_code=409)
+    except NotFoundError:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "detail": str(e)[:300]}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+
+
+@app.post("/api/v8/evolution/{evolution_id}/reject")
+def v8_evolution_reject(request: Request, evolution_id: str, payload: dict):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    payload = payload if isinstance(payload, dict) else {}
+    from persistence.core import PersistenceError, ValidationError, NotFoundError, ConflictError
+    try:
+        record = service.reject_evolution(
+            evolution_id,
+            payload.get("reason"),
+            actor=s["email"],
+            owner_scope=s["owner_scope"],
+        )
+        return {"ok": True, "evolution": record}
+    except ConflictError:
+        return JSONResponse({"ok": False, "reason": "conflict"}, status_code=409)
+    except NotFoundError:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "detail": str(e)[:300]}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+
+
 @app.post("/api/v8/learning")
 def v8_learning_create(request: Request, payload: dict):
     s, _owner_error = _require_owner(request)

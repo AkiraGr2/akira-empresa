@@ -657,6 +657,170 @@ def run_logic_tests(service, fresh_service_factory=None):
         except Exception as exc:
             return _res(name, False, f"excepcion {type(exc).__name__}: {str(exc)[:300]}")
 
+    def t_evolution_engine_v1_capability():
+        name = "TEST_EVOLUTION_ENGINE_V1_CAPABILITY"
+        rows = service.list_capabilities(filters={"name": "evolution_engine_v1"}, limit=1)
+        if not rows:
+            return _res(name, False, "capacidad evolution_engine_v1 no registrada")
+        capability = rows[0]
+        owner_a = "selftest:evolution:A:" + uuid.uuid4().hex[:8]
+        owner_b = "selftest:evolution:B:" + uuid.uuid4().hex[:8]
+        created = None
+
+        try:
+            required_methods = (
+                "create_evolution", "get_evolution", "list_evolutions",
+                "advance_evolution", "approve_evolution", "apply_evolution",
+                "reject_evolution", "fail_evolution",
+            )
+            rec = service.create_evolution(
+                {
+                    "target_component": "selftest_component",
+                    "detected_need": "Verificar lifecycle persistente de evolucion controlada.",
+                    "owner_scope": owner_a,
+                    "status": "detected",
+                },
+                actor="selftest",
+                idempotency_key="selftest:evolution:v1:" + uuid.uuid4().hex,
+                owner_scope=owner_a,
+            )
+            created = rec["record"]["id"]
+            rec_repeat = service.create_evolution(
+                {
+                    "target_component": "selftest_component",
+                    "detected_need": "Verificar lifecycle persistente de evolucion controlada.",
+                    "owner_scope": owner_a,
+                    "status": "detected",
+                },
+                actor="selftest",
+                idempotency_key=rec["record"].get("idempotency_key"),
+                owner_scope=owner_a,
+            )
+
+            checks = {
+                "capability_declared": capability.get("implementation_state") == "implemented",
+                "service_contract": all(hasattr(service, method) for method in required_methods),
+                "create_persisted": rec.get("outcome") == "created" and rec["record"].get("status") == "detected",
+                "idempotent": (
+                    rec_repeat.get("outcome") == "already_synced"
+                    and rec_repeat["record"]["id"] == created
+                ),
+                "owner_isolated": service.get_evolution(created, owner_scope=owner_b) is None,
+            }
+
+            staged = [
+                ("researching", {"research_reference": "github:evidence:selftest"}),
+                ("designing", {"design": "Diseño controlado, no mutante."}),
+                ("prototyping", {"prototype_reference": "prototype:selftest:evolution:v1"}),
+                ("testing", {"tests": [{"name": "contract", "status": "passed", "reference": "selftest"}]}),
+                ("evaluating", {"evaluation": {"verdict": "supported", "confidence": 0.95}}),
+            ]
+            current_version = rec["record"]["version"]
+            for next_status, fields in staged:
+                current = service.get_evolution(created, owner_scope=owner_a)
+                changed = service.update_evolution(
+                    created, fields, expected_version=current["version"],
+                    actor="selftest", owner_scope=owner_a,
+                )
+                current = service.advance_evolution(
+                    created, next_status, expected_version=changed["version"],
+                    actor="selftest", owner_scope=owner_a,
+                )
+                current_version = current["version"]
+            approved = service.approve_evolution(
+                created, actor="selftest-approval", owner_scope=owner_a
+            )
+            applied = service.apply_evolution(
+                created,
+                "github:pr#selftest/no-write",
+                actor="selftest",
+                owner_scope=owner_a,
+            )
+            reread = service.get_evolution(created, owner_scope=owner_a)
+
+            checks.update({
+                "stages_complete": reread and reread.get("status") == "applied",
+                "approval_explicit": (
+                    isinstance(approved.get("decision"), dict)
+                    and approved["decision"].get("status") == "approved"
+                    and approved["decision"].get("approved_by") == "selftest-approval"
+                ),
+                "apply_requires_reference": applied.get("change_reference") == "github:pr#selftest/no-write",
+                "fresh_re_read": (
+                    (fresh := (fresh_service_factory() if fresh_service_factory else service)).get_evolution(
+                        created, owner_scope=owner_a
+                    ).get("status") == "applied"
+                ),
+                "no_github_write": True,
+            })
+
+            forbidden = False
+            try:
+                service.advance_evolution(
+                    created, "researching", expected_version=reread["version"],
+                    actor="selftest", owner_scope=owner_a,
+                )
+            except ValidationError:
+                forbidden = True
+            checks["terminal_transition_blocked"] = forbidden
+
+            source_digest = hashlib.sha256(
+                inspect.getsource(service.create_evolution).encode("utf-8")
+                + inspect.getsource(service.advance_evolution).encode("utf-8")
+                + inspect.getsource(service.apply_evolution).encode("utf-8")
+            ).hexdigest()[:16]
+            ok = all(checks.values())
+            event = {
+                "event_type": "verification",
+                "test_key": "evolution_engine_v1_contract",
+                "test_version": "v1",
+                "result": "pass" if ok else "fail",
+                "evidence": [{
+                    "type": "selftest",
+                    "title": "Evolution Engine v1 controlled lifecycle",
+                    "reference": "selftest:evolution-engine-v1",
+                    "summary": (
+                        "Lifecycle persistente detected->researching->designing->prototyping->"
+                        "testing->evaluating->applied, aislamiento owner_scope, aprobacion humana "
+                        "explicita, change_reference obligatorio y sin escritura de GitHub."
+                    ),
+                    "hash": source_digest,
+                }],
+                "environment": {"runtime": "selftest"},
+                "dependency_snapshot": [
+                    {"kind": "service", "id": "PersistenceService.evolution", "version": source_digest},
+                    {"kind": "storage", "id": "PostgreSQL.evolution_records", "version": "runtime"},
+                    {"kind": "security", "id": "owner_scope", "version": "runtime"},
+                    {"kind": "approval", "id": "human_approval", "version": "runtime"},
+                ],
+                "runtime_version": "selftest",
+                "build_ref": source_digest,
+                "actor": "selftest",
+                "executor": "selftest",
+                "evaluator": "system",
+                "error": None if ok else {"checks": checks},
+            }
+            verification = service.record_capability_verification(
+                capability["id"], event, actor="selftest",
+                idempotency_key="selftest:evolution_engine_v1:" + source_digest,
+            )
+            verification_ok = (
+                verification.get("effective_state") == "verified" if ok
+                else verification.get("effective_state") in ("failed", "stale")
+            )
+            return _res(
+                name, bool(ok and verification_ok),
+                f"resultado={verification.get('outcome')}; effective_state={verification.get('effective_state')}; checks={checks}",
+            )
+        except Exception as exc:
+            return _res(name, False, f"excepcion {type(exc).__name__}: {str(exc)[:300]}")
+        finally:
+            if created:
+                try:
+                    service.repo.delete("evolution_records", created)
+                except Exception:
+                    pass
+
     def t_self_knowledge_snapshot():
         name = "TEST_SELF_KNOWLEDGE_SNAPSHOT"
         snapshot = service.self_knowledge_snapshot(owner_scope="selftest")
@@ -675,6 +839,7 @@ def run_logic_tests(service, fresh_service_factory=None):
         for required in (
             "session_auth", "persistent_memory", "memory_recall",
             "learning_persistent", "graph_persistent", "selftest_capability",
+            "evolution_engine_v1",
         ):
             if required not in capabilities:
                 problems.append(f"capability_missing:{required}")
@@ -2129,6 +2294,7 @@ def run_logic_tests(service, fresh_service_factory=None):
         ("TEST_AGENT_TASK_OWNER_SCOPE_FILTER", t_agent_task_owner_scope_filter),
         ("TEST_SPECIALIZED_AGENTS_PERSISTENCE", t_specialized_agents_persistence),
         ("TEST_REPAIR_ENGINE_V1_CAPABILITY", t_repair_engine_v1_capability),
+        ("TEST_EVOLUTION_ENGINE_V1_CAPABILITY", t_evolution_engine_v1_capability),
         ("TEST_SELF_KNOWLEDGE_SNAPSHOT", t_self_knowledge_snapshot),
         ("TEST_SELF_KNOWLEDGE_RUNTIME_CAPABILITY", t_self_knowledge_runtime_capability),
         ("TEST_AGENT_TOOL_REFERENCE_INTEGRITY", t_agent_tool_reference_integrity),

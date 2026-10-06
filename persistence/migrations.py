@@ -1205,4 +1205,77 @@ MIGRATIONS = [
         """
     ),
 
+    (
+        "041_evolution_engine_v1",
+        """
+        CREATE TABLE IF NOT EXISTS public.evolution_records (
+            id TEXT PRIMARY KEY,
+            target_component TEXT NOT NULL,
+            detected_need TEXT NOT NULL,
+            research_reference TEXT NOT NULL DEFAULT '',
+            design TEXT NOT NULL DEFAULT '',
+            prototype_reference TEXT NOT NULL DEFAULT '',
+            tests JSONB NOT NULL DEFAULT '[]'::jsonb,
+            evaluation JSONB NOT NULL DEFAULT '{}'::jsonb,
+            decision JSONB NOT NULL DEFAULT '{}'::jsonb,
+            change_reference TEXT NOT NULL DEFAULT '',
+            learning_reference TEXT NOT NULL DEFAULT '',
+            failure_reason TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'detected'
+                CHECK (status IN ('detected','researching','designing','prototyping',
+                                  'testing','evaluating','applied','rejected','failed')),
+            owner_scope TEXT NOT NULL DEFAULT 'owner',
+            created_by TEXT NOT NULL,
+            started_at TIMESTAMPTZ,
+            completed_at TIMESTAMPTZ,
+            schema_version TEXT NOT NULL DEFAULT 'evolution.v1',
+            version INTEGER NOT NULL DEFAULT 1,
+            idempotency_key TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS evolution_owner_idempotency_key_uq
+            ON public.evolution_records (owner_scope, idempotency_key)
+            WHERE idempotency_key IS NOT NULL;
+
+        CREATE INDEX IF NOT EXISTS evolution_owner_status_idx
+            ON public.evolution_records (owner_scope, status, created_at DESC);
+        CREATE INDEX IF NOT EXISTS evolution_target_idx
+            ON public.evolution_records (target_component, created_at DESC);
+
+        ALTER TABLE public.evolution_records ENABLE ROW LEVEL SECURITY;
+
+        DROP POLICY IF EXISTS "akira_deny_anon_authenticated_select" ON public.evolution_records;
+        DROP POLICY IF EXISTS "akira_deny_anon_authenticated_insert" ON public.evolution_records;
+        DROP POLICY IF EXISTS "akira_deny_anon_authenticated_update" ON public.evolution_records;
+        DROP POLICY IF EXISTS "akira_deny_anon_authenticated_delete" ON public.evolution_records;
+
+        CREATE POLICY "akira_deny_anon_authenticated_select"
+            ON public.evolution_records AS RESTRICTIVE
+            FOR SELECT TO anon USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert"
+            ON public.evolution_records AS RESTRICTIVE
+            FOR INSERT TO anon WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update"
+            ON public.evolution_records AS RESTRICTIVE
+            FOR UPDATE TO anon USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete"
+            ON public.evolution_records AS RESTRICTIVE
+            FOR DELETE TO anon USING (false);
+
+        INSERT INTO public.audit_log (
+            actor, action, resource, resource_id, status, detail
+        ) VALUES (
+            'system',
+            'evolution.schema.v1',
+            'evolution_records',
+            NULL,
+            'success',
+            '{"schema":"evolution.v1","scope":"controlled_lifecycle","github_write":false}'::jsonb
+        )
+        ON CONFLICT DO NOTHING
+        """
+    ),
+
 ]
