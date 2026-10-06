@@ -114,7 +114,7 @@ _SELF_MODEL_DEFAULTS = {
             "kind": "evidence",
             "status": "open",
             "evidence": [],
-            "created_at": "2026-10-06T00:00:00+00:00",
+            "created_at": None,
         },
         {
             "id": "uncertainty_provider_quality",
@@ -388,6 +388,11 @@ class PersistenceService:
                   "idempotency_key": f"{SELF_MODEL_PRIMARY_ID}_v1"}
         for field, value in _SELF_MODEL_DEFAULTS.items():
             record[field] = value
+        record["uncertainties"] = [
+            dict(item, created_at=_now_iso())
+            if isinstance(item, dict) else item
+            for item in (record.get("uncertainties") or [])
+        ]
         record["identity"] = identity
         try:
             with self.repo.transaction() as tx:
