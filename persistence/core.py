@@ -391,6 +391,37 @@ ENTITIES = {
         "idempotent": True,
         "idempotency_scope": ("owner_scope",),
     },
+    "autonomy_runs": {
+        "table": "autonomy_runs",
+        "columns": (
+            "id", "goal", "repository", "base_branch", "base_commit_sha",
+            "branch_name", "paths", "instruction", "queries", "requested_tests",
+            "plan", "proposal", "sandbox", "tests", "evaluation", "decision",
+            "action", "learning_reference", "failure_reason", "status",
+            "owner_scope", "created_by", "started_at", "completed_at",
+            "schema_version", "version", "idempotency_key", "created_at", "updated_at",
+        ),
+        "json_columns": (
+            "paths", "queries", "requested_tests", "plan", "proposal",
+            "sandbox", "tests", "evaluation", "decision", "action",
+        ),
+        "mutable": (
+            "goal", "paths", "instruction", "queries", "requested_tests",
+            "plan", "proposal", "sandbox", "tests", "evaluation", "decision",
+            "action", "learning_reference", "failure_reason", "status",
+            "started_at", "completed_at", "base_commit_sha", "branch_name",
+        ),
+        "filterable": (
+            "id", "repository", "base_branch", "status", "owner_scope",
+            "created_by", "idempotency_key",
+        ),
+        "in_filterable": ("repository", "base_branch", "status", "owner_scope", "created_by"),
+        "orderable": (
+            "created_at", "updated_at", "started_at", "completed_at", "repository", "status",
+        ),
+        "idempotent": True,
+        "idempotency_scope": ("owner_scope",),
+    },
     "missions": {
         "table": "missions",
         "columns": (
