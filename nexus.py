@@ -276,8 +276,8 @@ KIRA_KNOWN_DEPRECATED = {
     "gemini-2.5-flash-lite": {"replacement": PRIMARY_CHAT_MODEL},
     "gemini-2.5-flash-8b": {"replacement": PRIMARY_CHAT_MODEL},
     "gemini-3.0-flash": {"replacement": PRIMARY_CHAT_MODEL},
-    "gemini-3.0-pro": {"replacement": "gemini-3.1-pro-preview"},
-    "mixtral-8x7b-32768": {"replacement": "openai/gpt-oss-120b"},
+    "gemini-3.0-pro": {"replacement": GEMINI_REASONING_MODEL},
+    "mixtral-8x7b-32768": {"replacement": GROQ_FALLBACK_MODELS[0]},
     "llama2-70b-4096": {"replacement": "llama-3.3-70b-versatile"},
 }
 
