@@ -138,8 +138,6 @@ class RepairEngineContractTests(unittest.TestCase):
             owner_scope="scope:A",
         )
         self.assertEqual(repair["stage"], "detected")
-        self.service.advance_repair("repair", "diagnosed", actor="owner@example.test", owner_scope="scope:A") if False else None
-
         repair = self.service.advance_repair(
             repair["id"], "diagnosed", actor="owner@example.test", owner_scope="scope:A"
         )
