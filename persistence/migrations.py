@@ -1458,7 +1458,7 @@ MIGRATIONS = [
             'experimental',
             'free',
             '[{"kind":"service","id":"PersistenceService.get_self_model","required":true},{"kind":"service","id":"PersistenceService.update_self_model","required":true},{"kind":"storage","id":"PostgreSQL.self_model","required":true},{"kind":"authority","id":"IdentityRoot","required":true},{"kind":"registry","id":"CapabilityEngine","required":true}]'::jsonb,
-            '["Capabilities, tools y models son proyecciones derivadas y no se editan manualmente.","El self-model conserva incertidumbres históricas; la proyección runtime usa fuentes autoritativas actuales."]'::jsonb,
+            '["Capabilities, tools y models son proyecciones derivadas y no se editan manualmente.","El self-model conserva incertidumbres históricas y la proyección runtime usa fuentes autoritativas actuales."]'::jsonb,
             '{
                 "method":"selftest",
                 "test_key":"self_model_persistent_contract",
@@ -1499,7 +1499,7 @@ MIGRATIONS = [
                     jsonb_build_object('id','AutonomyStore','kind','storage','observed_at',COALESCE((SELECT max(updated_at) FROM public.autonomy_runs),now())),
                     jsonb_build_object('id','CognitiveRuntime','kind','storage','observed_at',COALESCE((SELECT max(updated_at) FROM public.cognitive_cycles),now()))
                 ),
-                'notes', 'Estado observado desde fuentes autoritativas. Capabilities, tools y models se proyectan en runtime; no se duplican como autoridad persistida.'
+                'notes', 'Estado observado desde fuentes autoritativas. Capabilities, tools y models se proyectan en runtime y no se duplican como autoridad persistida.'
             ),
             version = version + 1,
             updated_at = now()
