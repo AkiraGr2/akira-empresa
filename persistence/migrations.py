@@ -1356,7 +1356,8 @@ MIGRATIONS = [
           AND m.status = 'cancelled'
           AND t.status IN ('pending','running')
         """
-    ),    (
+    ),
+    (
         "046_controlled_autonomy_runtime_registry",
         """
         INSERT INTO public.tools (
