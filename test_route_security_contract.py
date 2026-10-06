@@ -17,6 +17,7 @@ SENSITIVE_PREFIXES = (
     "/api/v8/agents",
     "/api/v8/tasks",
     "/api/v8/repair",
+    "/api/v8/autonomy",
     "/api/v8/memory",
     "/api/memory",
     "/api/brain",
@@ -85,6 +86,26 @@ class SensitiveRouteSecurityContract(unittest.TestCase):
         self.assertEqual(found, expected)
         for route in self.routes:
             if route["path"].startswith("/api/v8/repair"):
+                self.assertIn("_require_owner(request)", route["source"])
+
+    def test_controlled_autonomy_routes_are_owner_protected(self):
+        expected = {
+            ("POST", "/api/v8/autonomy"),
+            ("GET", "/api/v8/autonomy"),
+            ("GET", "/api/v8/autonomy/{run_id}"),
+            ("POST", "/api/v8/autonomy/{run_id}/approve"),
+            ("POST", "/api/v8/autonomy/{run_id}/act"),
+            ("POST", "/api/v8/autonomy/{run_id}/reject"),
+            ("POST", "/api/v8/autonomy/{run_id}/cancel"),
+        }
+        found = {
+            (r["method"], r["path"])
+            for r in self.routes
+            if r["path"].startswith("/api/v8/autonomy")
+        }
+        self.assertEqual(found, expected)
+        for route in self.routes:
+            if route["path"].startswith("/api/v8/autonomy"):
                 self.assertIn("_require_owner(request)", route["source"])
 
     def test_tool_invocation_history_is_owner_protected(self):

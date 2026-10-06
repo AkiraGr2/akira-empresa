@@ -308,4 +308,56 @@ EVOLUTION_ENGINE_CAPABILITY = {
     },
 }
 
-BASE_CAPABILITIES = (SESSION_AUTH_CAPABILITY, PERSISTENT_MEMORY_CAPABILITY, MEMORY_RECALL_CAPABILITY, LEARNING_PERSISTENT_CAPABILITY, GRAPH_PERSISTENT_CAPABILITY, EVOLUTION_ENGINE_CAPABILITY)
+
+CONTROLLED_AUTONOMY_CAPABILITY = {
+    "name": "controlled_autonomy_v1",
+    "description": "Orquestacion autonoma controlada que observa, planifica, delega, propone, prueba y evalua cambios; tras aprobacion humana crea una rama aislada y un Draft PR sin escribir main, fusionar ni forzar push.",
+    "category": "orchestration",
+    "kind": "composite",
+    "implementation_state": "implemented",
+    "verification_state": "unverified",
+    "availability_state": "available",
+    "maturity": "experimental",
+    "cost_compatibility": "conditional",
+    "dependencies": [
+        {"kind": "service", "id": "AutonomyService", "required": True},
+        {"kind": "gateway", "id": "github_controlled", "required": True},
+        {"kind": "verification", "id": "isolated_workspace_tests", "required": True},
+        {"kind": "security", "id": "owner_scope", "required": True},
+        {"kind": "approval", "id": "human_approval", "required": True},
+        {"kind": "configuration", "id": "GITHUB_TOKEN", "required": True},
+    ],
+    "limitations": [
+        "V1 solo permite AkiraGr2/akira-empresa y base main.",
+        "No escribe main, no hace merge y no hace force-push.",
+        "Los cambios se limitan a crear/modificar archivos de texto allowlisted y terminan en Draft PR.",
+        "Una review de IA no sustituye la aprobacion humana.",
+        "La verificacion de capacidad requiere una ejecucion productiva controlada; el selftest local no la marca como verified.",
+    ],
+    "verification_spec": {
+        "method": "production_controlled_run",
+        "test_key": "controlled_autonomy_v1_e2e",
+        "freshness_policy": {
+            "mode": "on_change",
+            "max_age_seconds": None,
+            "invalidate_on": [
+                "build_change",
+                "autonomy_schema_change",
+                "github_gateway_change",
+                "ownership_change",
+            ],
+        },
+    },
+    "provenance": {
+        "source": "architecture_rebaseline_f14",
+        "created_by": "system",
+        "basis": [
+            "persistence/autonomy.py",
+            "autonomy_engine.py",
+            "github_controlled.py",
+            "test_controlled_autonomy_contract.py",
+        ],
+    },
+}
+
+BASE_CAPABILITIES = (SESSION_AUTH_CAPABILITY, PERSISTENT_MEMORY_CAPABILITY, MEMORY_RECALL_CAPABILITY, LEARNING_PERSISTENT_CAPABILITY, GRAPH_PERSISTENT_CAPABILITY, EVOLUTION_ENGINE_CAPABILITY, CONTROLLED_AUTONOMY_CAPABILITY)

@@ -36,6 +36,13 @@ from specialized_agent_tools import (
     run_python_tests,
 )
 
+from autonomy_engine import (
+    ControlledAutonomyError,
+    apply_approved_controlled_autonomy,
+    start_controlled_autonomy,
+)
+from persistence.autonomy import AutonomyContractError, AutonomyService
+
 from persistence.absorption import (
     AbsorptionContractError,
     build_autonomous_candidate,
@@ -1956,6 +1963,166 @@ def v8_self_update(request: Request, payload: dict):
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
     return {"ok": True, "self_model": updated}
+
+# ============================================================
+# V8-F14 — CONTROLLED AUTONOMY v1
+# Observa/planifica/delega/prueba/evalua y se detiene ante aprobacion humana.
+# La unica accion externa permitida es rama aislada + Draft PR.
+# ============================================================
+@app.post("/api/v8/autonomy")
+def v8_autonomy_start(request: Request, payload: dict):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    if not isinstance(payload, dict):
+        return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
+    try:
+        result = start_controlled_autonomy(
+            service,
+            payload,
+            actor=s["email"],
+            owner_scope=s["owner_scope"],
+        )
+        status_code = 200 if result.get("status") == "awaiting_approval" else 422
+        return JSONResponse(
+            {"ok": result.get("status") == "awaiting_approval", "autonomy": result},
+            status_code=status_code,
+        )
+    except AutonomyContractError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "detail": str(e)[:300]}, status_code=400)
+    except ControlledAutonomyError as e:
+        return JSONResponse({"ok": False, "reason": "autonomy_failed", "detail": str(e)[:500]}, status_code=422)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+
+
+@app.get("/api/v8/autonomy")
+def v8_autonomy_list(request: Request, status: str = None, limit: int = 50):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    try:
+        rows = AutonomyService(service).list_runs(
+            owner_scope=s["owner_scope"],
+            status=status,
+            limit=limit,
+        )
+        return {"ok": True, "autonomy": rows, "count": len(rows)}
+    except AutonomyContractError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "detail": str(e)[:300]}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+
+
+@app.get("/api/v8/autonomy/{run_id}")
+def v8_autonomy_get(request: Request, run_id: str):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    run = AutonomyService(service).get_run(run_id, owner_scope=s["owner_scope"])
+    if run is None:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    return {"ok": True, "autonomy": run}
+
+
+@app.post("/api/v8/autonomy/{run_id}/approve")
+def v8_autonomy_approve(request: Request, run_id: str):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    try:
+        run = AutonomyService(service).approve(
+            run_id, actor=s["email"], owner_scope=s["owner_scope"]
+        )
+        return {"ok": True, "autonomy": run}
+    except AutonomyContractError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "detail": str(e)[:300]}, status_code=400)
+    except KeyError:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+
+
+@app.post("/api/v8/autonomy/{run_id}/act")
+def v8_autonomy_act(request: Request, run_id: str):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    try:
+        run = apply_approved_controlled_autonomy(
+            service,
+            run_id=run_id,
+            actor=s["email"],
+            owner_scope=s["owner_scope"],
+        )
+        return {"ok": True, "autonomy": run}
+    except ControlledAutonomyError as e:
+        current = AutonomyService(service).get_run(run_id, owner_scope=s["owner_scope"])
+        return JSONResponse(
+            {"ok": False, "reason": "autonomy_action_failed", "detail": str(e)[:500], "autonomy": current},
+            status_code=422,
+        )
+    except KeyError:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+
+
+@app.post("/api/v8/autonomy/{run_id}/reject")
+def v8_autonomy_reject(request: Request, run_id: str, payload: dict = None):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    reason = "rejected_by_owner"
+    if isinstance(payload, dict) and payload.get("reason"):
+        reason = str(payload.get("reason"))[:1000]
+    try:
+        run = AutonomyService(service).reject(
+            run_id, actor=s["email"], owner_scope=s["owner_scope"], reason=reason
+        )
+        return {"ok": True, "autonomy": run}
+    except AutonomyContractError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "detail": str(e)[:300]}, status_code=400)
+    except KeyError:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+
+
+@app.post("/api/v8/autonomy/{run_id}/cancel")
+def v8_autonomy_cancel(request: Request, run_id: str, payload: dict = None):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    reason = "cancelled_by_owner"
+    if isinstance(payload, dict) and payload.get("reason"):
+        reason = str(payload.get("reason"))[:1000]
+    try:
+        run = AutonomyService(service).cancel(
+            run_id, actor=s["email"], owner_scope=s["owner_scope"], reason=reason
+        )
+        return {"ok": True, "autonomy": run}
+    except AutonomyContractError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "detail": str(e)[:300]}, status_code=400)
+    except KeyError:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+
 
 # ============================================================
 # V8-F12 — REPAIR ENGINE v1
