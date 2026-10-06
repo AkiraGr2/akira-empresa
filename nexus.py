@@ -1274,32 +1274,6 @@ def _build_tool_inputs(tool_name, step, outputs_by_order, mission_id):
         if not task: return None
         return {"prompt": with_dependency(500, task)}
     if tool_name == "controlled_autonomy_start":
-        try:
-            request_data = {
-                "goal": inputs.get("goal") or inputs.get("instruction"),
-                "repository": inputs.get("repository") or inputs.get("repo") or "AkiraGr2/akira-empresa",
-                "base_branch": inputs.get("base_branch") or "main",
-                "paths": inputs.get("paths"),
-                "instruction": inputs.get("instruction") or inputs.get("goal"),
-                "queries": inputs.get("queries") if isinstance(inputs.get("queries"), list) else [],
-                "tests": inputs.get("tests") if isinstance(inputs.get("tests"), list) else [],
-                "idempotency_key": inputs.get("idempotency_key") or "",
-            }
-            run = start_controlled_autonomy(
-                service,
-                request_data,
-                actor=actor,
-                owner_scope=owner_scope,
-            )
-            return {
-                "autonomy": run,
-                "awaits_human_approval": run.get("status") == "awaiting_approval",
-                "external_write_performed": False,
-            }, None
-        except Exception as e:
-            return None, {"type": type(e).__name__, "message": str(e)[:300]}
-
-    if tool_name == "controlled_autonomy_start":
         repo = str(step.get("repo") or step.get("repository") or "AkiraGr2/akira-empresa").strip()
         paths = step.get("paths")
         if not isinstance(paths, list) or not paths or not task:
@@ -4022,6 +3996,32 @@ def _invoke_tool(service, tool_name, inputs, actor, owner_scope=None):
         return None, {"type": "OwnerRequiredError", "message": "las tools de agentes especializados requieren owner_scope"}
     if tool_name in {"memory_save", "memory_search"} and owner_scope is None:
         return None, {"type": "OwnerRequiredError", "message": "las tools de memoria persistente requieren owner_scope"}
+    if tool_name == "controlled_autonomy_start":
+        try:
+            request_data = {
+                "goal": inputs.get("goal") or inputs.get("instruction"),
+                "repository": inputs.get("repository") or inputs.get("repo") or "AkiraGr2/akira-empresa",
+                "base_branch": inputs.get("base_branch") or "main",
+                "paths": inputs.get("paths"),
+                "instruction": inputs.get("instruction") or inputs.get("goal"),
+                "queries": inputs.get("queries") if isinstance(inputs.get("queries"), list) else [],
+                "tests": inputs.get("tests") if isinstance(inputs.get("tests"), list) else [],
+                "idempotency_key": inputs.get("idempotency_key") or "",
+            }
+            run = start_controlled_autonomy(
+                service,
+                request_data,
+                actor=actor,
+                owner_scope=owner_scope,
+            )
+            return {
+                "autonomy": run,
+                "awaits_human_approval": run.get("status") == "awaiting_approval",
+                "external_write_performed": False,
+            }, None
+        except Exception as e:
+            return None, {"type": type(e).__name__, "message": str(e)[:300]}
+
     if tool_name == "developer_propose":
         try:
             result = propose_code_change(
