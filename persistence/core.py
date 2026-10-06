@@ -361,6 +361,7 @@ ENTITIES = {
         "in_filterable": ("agent_name", "tool_name", "status", "owner_scope"),
         "orderable": ("created_at", "updated_at", "duration_ms", "started_at", "completed_at"),
         "idempotent": True,
+        "idempotency_scope": ("owner_scope",),
     },
     "missions": {
         "table": "missions",

@@ -125,6 +125,14 @@ def boot(backend_factory=None, attempts=3, wait_seconds=(5, 10), sleep=time.slee
         except Exception as e:
             STATE["selftest_this_boot"] = {"summary": {"FAIL": 1}, "error_type": type(e).__name__}
             print(f"[persistence] selftest fallo: {type(e).__name__}: {str(e)[:200]}", flush=True)
+        finally:
+            try:
+                from .selftest import _disable_test_agent
+                if STATE.get("service") is not None:
+                    _disable_test_agent(STATE["service"])
+            except Exception:
+                pass
+            _close_extra_pools()
 
 
 def start_background():
