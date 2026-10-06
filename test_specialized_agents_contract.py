@@ -152,7 +152,7 @@ class SpecializedAgentsContractTests(unittest.TestCase):
                         "path": "docs/new.txt",
                         "operation": "create",
                         "reason": "test",
-                        "patch": "--- /dev/null\\n+++ b/docs/new.txt\\n@@ -0,0 +1 @@\\n+hola\\n",
+                        "patch": "--- /dev/null\n+++ b/docs/new.txt\n@@ -0,0 +1 @@\n+hola\n",
                     }],
                 },
                 {"status": "passed"},
