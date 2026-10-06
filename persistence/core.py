@@ -92,6 +92,12 @@ MISSION_STATUSES = (
 )
 MISSION_FLOW_TYPES = ("generic",)
 
+EVOLUTION_SCHEMA_VERSION = "evolution.v1"
+EVOLUTION_STATUSES = (
+    "detected", "researching", "designing", "prototyping",
+    "testing", "evaluating", "applied", "rejected", "failed",
+)
+
 # Fase 10.7.2: persistencia de conversaciones.
 CONVERSATION_SCHEMA_VERSION = "conversation.v1"
 CONVERSATION_MESSAGE_SCHEMA_VERSION = "conversation_message.v1"
@@ -363,6 +369,28 @@ ENTITIES = {
         "idempotent": True,
         "idempotency_scope": ("owner_scope",),
     },
+    "evolution_records": {
+        "table": "evolution_records",
+        "columns": (
+            "id", "target_component", "detected_need", "research_reference",
+            "design", "prototype_reference", "tests", "evaluation", "decision",
+            "change_reference", "learning_reference", "failure_reason",
+            "status", "owner_scope", "created_by", "started_at", "completed_at",
+            "schema_version", "version", "idempotency_key", "created_at", "updated_at",
+        ),
+        "json_columns": ("tests", "evaluation", "decision"),
+        "mutable": (
+            "target_component", "detected_need", "research_reference",
+            "design", "prototype_reference", "tests", "evaluation", "decision",
+            "change_reference", "learning_reference", "failure_reason",
+            "status", "started_at", "completed_at",
+        ),
+        "filterable": ("id", "target_component", "status", "owner_scope", "created_by", "idempotency_key"),
+        "in_filterable": ("status", "owner_scope", "created_by"),
+        "orderable": ("created_at", "updated_at", "started_at", "completed_at", "target_component"),
+        "idempotent": True,
+        "idempotency_scope": ("owner_scope",),
+    },
     "missions": {
         "table": "missions",
         "columns": (
@@ -556,6 +584,67 @@ _SELF_MODEL_REPAIR_ACTIONS = (
     "recover_stale_selftest_task",
 )
 _SELF_MODEL_EVOLUTION_STATUSES = ("proposed", "approved", "implemented", "rejected", "deferred")
+
+_EVOLUTION_INPUT = {
+    "target_component", "detected_need", "research_reference", "design",
+    "prototype_reference", "tests", "evaluation", "decision",
+    "change_reference", "learning_reference", "failure_reason",
+    "status", "owner_scope",
+}
+_EVOLUTION_UPDATABLE = _EVOLUTION_INPUT - {"owner_scope"}
+
+def validate_evolution_record(data, partial: bool = False) -> dict:
+    if not isinstance(data, dict):
+        raise ValidationError("el registro de evolucion debe ser un objeto")
+    allowed = _EVOLUTION_UPDATABLE if partial else _EVOLUTION_INPUT
+    extra = sorted(set(data) - allowed)
+    if extra:
+        raise ValidationError(f"campos no permitidos: {extra}")
+    if partial and not data:
+        raise ValidationError("no hay cambios")
+    if not partial:
+        for req in ("target_component", "detected_need"):
+            if req not in data:
+                raise ValidationError(f"falta el campo obligatorio {req}")
+
+    out = {}
+    if "target_component" in data:
+        out["target_component"] = _str("target_component", data["target_component"], 200)
+    if "detected_need" in data:
+        out["detected_need"] = _str("detected_need", data["detected_need"], 2000)
+    for key, maximum in (
+        ("research_reference", 1000), ("design", 4000), ("prototype_reference", 1000),
+        ("change_reference", 1000), ("learning_reference", 1000), ("failure_reason", 1000),
+    ):
+        if key in data:
+            out[key] = _str(key, data[key], maximum, allow_empty=True)
+    if "tests" in data or not partial:
+        value = data.get("tests", [])
+        if not isinstance(value, list) or len(value) > 20:
+            raise ValidationError("evolution.tests debe ser una lista de maximo 20 elementos")
+        out["tests"] = []
+        for item in value:
+            if isinstance(item, str):
+                out["tests"].append(_str("evolution.tests", item, 1000))
+            elif isinstance(item, dict) and len(item) <= 20:
+                out["tests"].append(item)
+            else:
+                raise ValidationError("cada evolution.tests debe ser texto u objeto pequeno")
+    for key in ("evaluation", "decision"):
+        if key in data or not partial:
+            value = data.get(key, {})
+            if not isinstance(value, dict):
+                raise ValidationError(f"{key} debe ser un objeto (dict)")
+            out[key] = value
+    if "status" in data or not partial:
+        out["status"] = _choice("status", data.get("status", "detected"), EVOLUTION_STATUSES)
+    if "owner_scope" in data or not partial:
+        out["owner_scope"] = _str("owner_scope", data.get("owner_scope", "owner"), 64)
+    if "started_at" in data:
+        out["started_at"] = _str("started_at", data["started_at"], 64, allow_empty=True)
+    if "completed_at" in data:
+        out["completed_at"] = _str("completed_at", data["completed_at"], 64, allow_empty=True)
+    return out
 
 def _self_model_text(name, value, maximum=500, allow_empty=False):
     if not isinstance(value, str):
