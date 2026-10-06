@@ -24,6 +24,12 @@ class StubService:
                 "status": "idle",
                 "allowed_tools": ["github_repo_read", "python_test", "code_review"],
             },
+            {
+                "name": "autonomy_orchestrator",
+                "role": "autonomy_orchestrator",
+                "status": "idle",
+                "allowed_tools": ["controlled_autonomy_start"],
+            },
         ]
 
     def list_tools(self, limit=200):
@@ -32,6 +38,7 @@ class StubService:
             {"name": "developer_propose", "status": "available"},
             {"name": "python_test", "status": "available"},
             {"name": "code_review", "status": "available"},
+            {"name": "controlled_autonomy_start", "status": "available"},
         ]
 
 
@@ -116,6 +123,39 @@ class SpecializedAgentMissionWiringTests(unittest.TestCase):
         self.assertEqual(review_inputs["repo"], "AkiraGr2/akira-empresa")
         self.assertEqual(review_inputs["proposal"]["status"], "proposal")
         self.assertEqual(review_inputs["test_results"]["status"], "passed")
+
+    def test_controlled_autonomy_inputs_are_bounded_and_idempotent(self):
+        step = {
+            "order": 4,
+            "task": "mejorar un archivo pequeño",
+            "expected_output": "cambio probado y propuesto",
+            "repo": "AkiraGr2/akira-empresa",
+            "paths": ["README.md"],
+            "queries": ["controlled autonomy"],
+            "tests": ["test_controlled_autonomy_contract"],
+        }
+        inputs = _build_tool_inputs("controlled_autonomy_start", step, {}, "mission_test")
+        self.assertEqual(inputs["repository"], "AkiraGr2/akira-empresa")
+        self.assertEqual(inputs["base_branch"], "main")
+        self.assertEqual(inputs["paths"], ["README.md"])
+        self.assertEqual(inputs["idempotency_key"], "mission:mission_test:autonomy:4")
+        self.assertEqual(inputs["tests"], ["test_controlled_autonomy_contract"])
+
+    def test_controlled_autonomy_is_visible_to_planner(self):
+        plan = {
+            "steps": [{
+                "order": 1,
+                "task": "mejorar README de forma controlada",
+                "agent": "autonomy_orchestrator",
+                "tool": "controlled_autonomy_start",
+                "repo": "AkiraGr2/akira-empresa",
+                "paths": ["README.md"],
+                "expected_output": "ejecucion detenida ante aprobacion humana",
+                "receives_from": None,
+            }]
+        }
+        ok, reason = _validate_mission_plan(plan, StubService())
+        self.assertTrue(ok, reason)
 
     def test_review_cannot_use_one_dependency(self):
         plan = {
