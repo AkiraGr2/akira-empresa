@@ -689,6 +689,7 @@ _TOOL_SEED = [
     {"name": "developer_propose", "description": "Genera una propuesta de cambio de codigo sin escribir en GitHub.", "category": "code", "permissions": ["owner"], "inputs_schema": {"repo": "str", "paths": "list", "instruction": "str", "queries": "list"}, "outputs_schema": {"proposal": "dict"}, "limits_json": {"max_paths": 4, "max_instruction": 4000}, "risks": ["inferencia externa", "propuesta de codigo"]},
     {"name": "python_test", "description": "Ejecuta pruebas Python seleccionadas sin shell.", "category": "code", "permissions": ["owner"], "inputs_schema": {"tests": "list", "compile_paths": "list"}, "outputs_schema": {"status": "str", "tests": "list"}, "limits_json": {"max_tests": 6, "timeout_s": 45}, "risks": ["ejecucion de pruebas del repositorio"]},
     {"name": "code_review", "description": "Revisa una propuesta de codigo contra el repositorio y evidencia de pruebas; no escribe.", "category": "code", "permissions": ["owner"], "inputs_schema": {"repo": "str", "paths": "list", "proposal": "dict", "test_results": "dict"}, "outputs_schema": {"review": "dict"}, "limits_json": {"max_paths": 4, "max_proposal_chars": 24000}, "risks": ["inferencia externa", "revision de codigo"]},
+    {"name": "controlled_autonomy_start", "description": "Inicia la autonomia controlada F14 hasta una compuerta de aprobacion humana; no aprueba ni aplica cambios.", "category": "code", "permissions": ["owner"], "inputs_schema": {"goal": "str", "repository": "str", "base_branch": "str", "paths": "list", "instruction": "str", "queries": "list", "tests": "list", "idempotency_key": "str"}, "outputs_schema": {"autonomy": "dict"}, "limits_json": {"max_paths": 4, "max_instruction": 4000, "max_files": 4}, "risks": ["propone y prueba cambios de codigo", "requiere aprobacion humana antes de escribir GitHub"]},
 ]
 
 _AGENT_SEED = [
@@ -700,6 +701,7 @@ _AGENT_SEED = [
     {"name": "developer", "role": "developer", "description": "Prepara propuestas de cambios de codigo sin escribir directamente en GitHub.", "allowed_tools": ["github_repo_read", "developer_propose"]},
     {"name": "tester", "role": "tester", "description": "Ejecuta pruebas seleccionadas y reporta evidencia reproducible.", "allowed_tools": ["github_repo_read", "python_test"]},
     {"name": "reviewer", "role": "reviewer", "description": "Revisa propuestas de codigo y evidencia de pruebas sin aplicar cambios.", "allowed_tools": ["github_repo_read", "python_test", "code_review"]},
+    {"name": "autonomy_orchestrator", "role": "autonomy_orchestrator", "description": "Orquesta autonomia controlada hasta aprobacion humana; nunca puede aprobar ni aplicar el cambio.", "allowed_tools": ["controlled_autonomy_start"]},
 ]
 
 def _seed_tools_and_agents():
@@ -1271,6 +1273,53 @@ def _build_tool_inputs(tool_name, step, outputs_by_order, mission_id):
     if tool_name == "image_generate":
         if not task: return None
         return {"prompt": with_dependency(500, task)}
+    if tool_name == "controlled_autonomy_start":
+        try:
+            request_data = {
+                "goal": inputs.get("goal") or inputs.get("instruction"),
+                "repository": inputs.get("repository") or inputs.get("repo") or "AkiraGr2/akira-empresa",
+                "base_branch": inputs.get("base_branch") or "main",
+                "paths": inputs.get("paths"),
+                "instruction": inputs.get("instruction") or inputs.get("goal"),
+                "queries": inputs.get("queries") if isinstance(inputs.get("queries"), list) else [],
+                "tests": inputs.get("tests") if isinstance(inputs.get("tests"), list) else [],
+                "idempotency_key": inputs.get("idempotency_key") or "",
+            }
+            run = start_controlled_autonomy(
+                service,
+                request_data,
+                actor=actor,
+                owner_scope=owner_scope,
+            )
+            return {
+                "autonomy": run,
+                "awaits_human_approval": run.get("status") == "awaiting_approval",
+                "external_write_performed": False,
+            }, None
+        except Exception as e:
+            return None, {"type": type(e).__name__, "message": str(e)[:300]}
+
+    if tool_name == "controlled_autonomy_start":
+        repo = str(step.get("repo") or step.get("repository") or "AkiraGr2/akira-empresa").strip()
+        paths = step.get("paths")
+        if not isinstance(paths, list) or not paths or not task:
+            return None
+        tests = step.get("tests")
+        queries = step.get("queries")
+        instruction = with_dependency(3500, task)
+        if expected:
+            instruction = with_dependency(3500, f"{instruction}
+Expected output: {expected}")
+        return {
+            "goal": task[:4000],
+            "repository": repo,
+            "base_branch": "main",
+            "paths": paths[:4],
+            "instruction": instruction,
+            "queries": queries if isinstance(queries, list) else [],
+            "tests": tests if isinstance(tests, list) else [],
+            "idempotency_key": f"mission:{mission_id}:autonomy:{step.get('order')}",
+        }
     if tool_name == "developer_propose":
         repo = str(step.get("repo") or "").strip()
         paths = step.get("paths")
