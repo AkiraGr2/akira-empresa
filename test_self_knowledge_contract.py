@@ -212,6 +212,10 @@ class SelfKnowledgeSnapshotTests(unittest.TestCase):
         service = PersistenceService(FakeRepo())
         model = service.get_self_model()
         self.assertEqual(model["models"], model_registry_snapshot()["routes"])
+        self.assertIn(
+            {"provider": "gemini", "model": "gemini-3.1-pro-preview", "role": "reasoning"},
+            model["models"],
+        )
     def test_self_model_rejects_manual_derived_registry_updates(self):
         from persistence.core import ValidationError
         service = PersistenceService(FakeRepo())
