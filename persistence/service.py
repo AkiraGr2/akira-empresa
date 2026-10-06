@@ -54,6 +54,7 @@ _AUTO_LEARNING_WEIGHT = 0.8
 _AUTO_MEMORY_WEIGHT = 0.4
 _AUTO_EDGE_MAX_WEIGHT = 1.0
 _AUTO_REINFORCE_MIN_FREQ = 5
+_SYNTHETIC_MEMORY_SOURCES = frozenset({"selftest", "semantic_selftest", "persistent_memory_selftest"})
 
 _CORE_NODE_LABEL = "Akira"
 _CORE_NODE_TAGS = ["core", "akira", "nucleo"]
@@ -219,6 +220,16 @@ class PersistenceService:
             self._audit_failure_generic(actor, "memory.create", "memories", None, e)
             raise StorageError(type(e).__name__) from e
         verified = self.repo.get("memories", stored["id"])
+        if (
+            verified is None
+            or (
+                owner_scope is not None
+                and str(verified.get("owner_scope") or "").strip() != str(owner_scope).strip()
+            )
+        ):
+            conflict = ConflictError("idempotency key pertenece a otro owner_scope")
+            self._audit_failure_generic(actor, "memory.create", "memories", stored.get("id"), conflict)
+            raise conflict
         if verified is None:
             raise VerificationError("escritura no confirmada")
         expected = stored if not created else fields
@@ -228,7 +239,7 @@ class PersistenceService:
         result = {"outcome": "created" if created else "already_synced", "record": verified}
         if created and str(verified.get("source") or "") not in {
             "learning_candidate", "learning_engine", "learning_promoted"
-        }:
+        } and str(verified.get("source") or "") not in _SYNTHETIC_MEMORY_SOURCES:
             try:
                 self.auto_connect_memory_tags(
                     verified["id"],
@@ -2118,6 +2129,8 @@ class PersistenceService:
 
     def auto_connect_memory_tags(self, memory_id, actor="auto-connect", owner_scope=None):
         memory = self.repo.get("memories", memory_id)
+        if memory is not None and str(memory.get("source") or "") in _SYNTHETIC_MEMORY_SOURCES:
+            return {"connected": 0}
         if memory is None or memory.get("status") != "active":
             return {"connected": 0}
         scope = str(owner_scope or memory.get("owner_scope") or "").strip()

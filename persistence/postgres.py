@@ -168,15 +168,33 @@ class PostgresRepository(PersistenceRepository):
                 raise StorageError("insert sin resultado")
             return _out(row), True
 
-        sql = (f"INSERT INTO {spec['table']} ({', '.join(cols)}) VALUES ({', '.join(['%s'] * len(cols))}) "
-               "ON CONFLICT (idempotency_key) DO NOTHING RETURNING *")
+        idem_scope = tuple(spec.get("idempotency_scope") or ())
+        if idem_scope:
+            conflict_columns = ", ".join((*idem_scope, "idempotency_key"))
+            sql = (
+                f"INSERT INTO {spec['table']} ({', '.join(cols)}) VALUES ({', '.join(['%s'] * len(cols))}) "
+                f"ON CONFLICT ({conflict_columns}) DO NOTHING RETURNING *"
+            )
+        else:
+            sql = (
+                f"INSERT INTO {spec['table']} ({', '.join(cols)}) VALUES ({', '.join(['%s'] * len(cols))}) "
+                "ON CONFLICT (idempotency_key) DO NOTHING RETURNING *"
+            )
         with self._cursor() as cur:
             cur.execute(sql, vals)
             row = cur.fetchone()
             if row is not None:
                 return _out(row), True
             key = record.get("idempotency_key")
-            cur.execute(f"SELECT * FROM {spec['table']} WHERE idempotency_key = %s", (key,))
+            if idem_scope:
+                scope_values = tuple(record.get(field) for field in idem_scope)
+                where_scope = " AND ".join(f"{field} = %s" for field in idem_scope)
+                cur.execute(
+                    f"SELECT * FROM {spec['table']} WHERE {where_scope} AND idempotency_key = %s",
+                    (*scope_values, key),
+                )
+            else:
+                cur.execute(f"SELECT * FROM {spec['table']} WHERE idempotency_key = %s", (key,))
             existing = cur.fetchone()
         if existing is None:
             raise StorageError("insert sin efecto y sin registro existente")

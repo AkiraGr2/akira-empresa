@@ -37,7 +37,13 @@ class FakeRepo:
         key = record.get("idempotency_key")
         if key:
             for current in table.values():
-                if current.get("idempotency_key") == key:
+                if (
+                    current.get("idempotency_key") == key
+                    and (
+                        entity != "memories"
+                        or current.get("owner_scope") == record.get("owner_scope")
+                    )
+                ):
                     return dict(current), False
         table[record["id"]] = dict(record, version=1)
         return dict(table[record["id"]]), True
@@ -143,6 +149,24 @@ class PersistentMemoryContractTests(unittest.TestCase):
         self.assertEqual(second["outcome"], "already_synced")
         self.assertEqual(first["record"]["id"], second["record"]["id"])
         self.assertEqual(self.service.count_memory({"idempotency_key": key}), 1)
+
+    def test_idempotency_is_scoped_to_owner(self):
+        key = "persistent-memory:idem:owner-scope:v1"
+        first = self.service.save_memory(
+            self.memory("memoria scope A", "g:user-A"),
+            actor="owner@example.test",
+            owner_scope="g:user-A",
+            idempotency_key=key,
+        )
+        second = self.service.save_memory(
+            self.memory("memoria scope B", "g:user-B"),
+            actor="owner2@example.test",
+            owner_scope="g:user-B",
+            idempotency_key=key,
+        )
+        self.assertEqual(first["outcome"], "created")
+        self.assertEqual(second["outcome"], "created")
+        self.assertNotEqual(first["record"]["id"], second["record"]["id"])
 
     def test_owner_scope_isolation(self):
         a = self.service.save_memory(

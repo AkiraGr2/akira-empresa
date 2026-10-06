@@ -1092,6 +1092,16 @@ MIGRATIONS = [
         WHERE id = 'akira_primary'
           AND schema_version = 'self_model.v2'
         """
-    )
+    ),
+
+    (
+        "034_memory_owner_scoped_idempotency",
+        """
+        DROP INDEX IF EXISTS memories_idempotency_key_uq;
+        CREATE UNIQUE INDEX memories_owner_idempotency_key_uq
+            ON public.memories (owner_scope, idempotency_key)
+        """
+    ),
+
 
 ]

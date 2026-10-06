@@ -54,6 +54,7 @@ def _mem(marker, **over):
 
 
 def _guard(name, fn):
+    before_memory_ids = set(created_ids)
     try:
         result = fn()
         if result.get("status") == "FAIL":
@@ -67,6 +68,19 @@ def _guard(name, fn):
         detail = f"excepcion {type(e).__name__}: {str(e)[:120]}"
         print(f"[persistence] selftest {name} FAIL: {detail}", flush=True)
         return _res(name, False, detail)
+    finally:
+        new_memory_ids = [mid for mid in created_ids if mid not in before_memory_ids]
+        for mid in new_memory_ids:
+            try:
+                service.repo.delete("memories", mid)
+            except Exception as cleanup_error:
+                print(
+                    f"[persistence] selftest memory cleanup warning: "
+                    f"{mid}: {type(cleanup_error).__name__}",
+                    flush=True,
+                )
+        if new_memory_ids:
+            created_ids[:] = [mid for mid in created_ids if mid not in new_memory_ids]
 
 
 def _ensure_tools(service):

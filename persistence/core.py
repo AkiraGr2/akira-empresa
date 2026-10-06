@@ -122,6 +122,7 @@ ENTITIES = {
         "in_filterable": ("memory_type", "privacy_level", "status", "owner_scope", "source"),
         "orderable": ("created_at", "updated_at", "importance", "last_accessed_at"),
         "idempotent": True,
+        "idempotency_scope": ("owner_scope",),
     },
     "self_model": {
         "table": "self_model",
