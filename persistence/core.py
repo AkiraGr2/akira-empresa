@@ -226,6 +226,7 @@ ENTITIES = {
         "in_filterable": ("source", "outcome", "status"),
         "orderable": ("created_at", "updated_at", "reuse_count", "last_reused_at"),
         "idempotent": True,
+        "idempotency_scope": ("owner_scope",),
     },
     "graph_nodes": {
         "table": "graph_nodes",
