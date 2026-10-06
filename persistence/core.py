@@ -527,7 +527,7 @@ def validate_memory(data, partial: bool = False) -> dict:
 _SELF_MODEL_OBJECT_FIELDS = ("identity", "purpose", "current_state", "knowledge_state")
 _SELF_MODEL_LIST_FIELDS = ("capabilities", "tools", "models", "uncertainties", "errors", "repairs", "evolution")
 _SELF_MODEL_PROTECTED_FIELDS = frozenset({"identity"})
-_SELF_MODEL_DERIVED_FIELDS = frozenset({"capabilities", "tools", "models"})
+_SELF_MODEL_DERIVED_FIELDS = frozenset({"capabilities", "tools"})
 _SELF_MODEL_UPDATABLE = frozenset(
     set(_SELF_MODEL_OBJECT_FIELDS + _SELF_MODEL_LIST_FIELDS)
     - set(_SELF_MODEL_PROTECTED_FIELDS)
