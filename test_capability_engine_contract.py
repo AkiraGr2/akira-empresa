@@ -114,6 +114,45 @@ class CapabilityEngineContractTests(unittest.TestCase):
         self.assertIn("def _guard(name, fn, service, created_ids):", source)
         self.assertIn("results.append(_guard(name, fn, service, created_ids))", source)
 
+    def test_canonical_capability_catalog_uses_valid_categories(self):
+        from persistence.capability_catalog import BASE_CAPABILITIES
+        for capability in BASE_CAPABILITIES:
+            record = validate_capability(capability)
+            self.assertIn(record["category"], {
+                "identity", "memory", "knowledge", "learning", "graph", "cognitive",
+                "tooling", "agents", "missions", "security", "storage", "multimedia",
+                "orchestration", "repair", "evolution", "hive", "external", "general",
+            })
+
+    def test_migrations_do_not_contain_semicolons_inside_sql_literals(self):
+        from persistence.migrations import MIGRATIONS
+
+        def invalid_semicolons(sql):
+            in_single_quote = False
+            escaped = False
+            problems = []
+            for line_no, line in enumerate(sql.splitlines(), start=1):
+                i = 0
+                while i < len(line):
+                    ch = line[i]
+                    if ch == "'" and not escaped:
+                        if in_single_quote and i + 1 < len(line) and line[i + 1] == "'":
+                            i += 2
+                            continue
+                        in_single_quote = not in_single_quote
+                    elif ch == ";" and in_single_quote:
+                        problems.append(line_no)
+                    escaped = False
+                    i += 1
+            return problems
+
+        offenders = {
+            version: invalid_semicolons(sql)
+            for version, sql in MIGRATIONS
+            if invalid_semicolons(sql)
+        }
+        self.assertEqual(offenders, {})
+
     def test_valid_capability_and_effective_state(self):
         record = validate_capability({
             "name": "ci_capability_contract",
