@@ -520,7 +520,7 @@ def run_logic_tests(service, fresh_service_factory=None):
                     "type": "selftest",
                     "title": "Repair Engine v1 controlled lifecycle",
                     "reference": "selftest:repair-engine-v1",
-                    "note": (
+                    "summary": (
                         "Lifecycle persistente con acciones allowlisted, sandbox, tests, "
                         "evaluacion, aprobacion explicita, apply controlado y learn."
                     ),
