@@ -1677,4 +1677,106 @@ MIGRATIONS = [
         )
         """
     ),
+    (
+        "049_knowledge_first_class_and_graph_fk",
+        """
+        CREATE TABLE knowledge_records (
+            id TEXT PRIMARY KEY,
+            concept TEXT NOT NULL,
+            content TEXT NOT NULL,
+            domain TEXT NOT NULL,
+            source TEXT NOT NULL,
+            source_id TEXT,
+            source_reference TEXT,
+            created_by TEXT NOT NULL,
+            confidence DOUBLE PRECISION NOT NULL DEFAULT 0.5 CHECK (confidence BETWEEN 0 AND 1),
+            verification_status TEXT NOT NULL DEFAULT 'unverified'
+                CHECK (verification_status IN ('unknown','unverified','partially_verified','verified','deprecated','contradicted')),
+            evidence JSONB NOT NULL DEFAULT '[]'::jsonb,
+            tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+            related_nodes JSONB NOT NULL DEFAULT '[]'::jsonb,
+            owner_scope TEXT NOT NULL DEFAULT 'owner',
+            privacy_level TEXT NOT NULL DEFAULT 'PRIVATE'
+                CHECK (privacy_level IN ('PRIVATE','SENSITIVE','SHAREABLE','COLLECTIVE')),
+            status TEXT NOT NULL DEFAULT 'active'
+                CHECK (status IN ('active','archived','deleted')),
+            schema_version TEXT NOT NULL DEFAULT 'knowledge.v1',
+            version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+            idempotency_key TEXT,
+            last_verified_at TIMESTAMPTZ,
+            verified_by TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            CONSTRAINT knowledge_verified_requires_evidence CHECK (
+                verification_status <> 'verified'
+                OR (
+                    jsonb_array_length(evidence) > 0
+                    AND last_verified_at IS NOT NULL
+                    AND verified_by IS NOT NULL
+                    AND length(trim(verified_by)) > 0
+                )
+            ),
+            CONSTRAINT knowledge_unverified_has_no_verifier CHECK (
+                verification_status = 'verified'
+                OR (
+                    last_verified_at IS NULL
+                    AND verified_by IS NULL
+                )
+            )
+        );
+        CREATE UNIQUE INDEX knowledge_owner_idempotency_key_uq
+            ON knowledge_records (owner_scope, idempotency_key);
+        CREATE INDEX knowledge_owner_status_idx
+            ON knowledge_records (owner_scope, status);
+        CREATE INDEX knowledge_verification_idx
+            ON knowledge_records (verification_status, updated_at DESC);
+        CREATE INDEX knowledge_domain_idx
+            ON knowledge_records (domain, status);
+        CREATE INDEX knowledge_source_idx
+            ON knowledge_records (source, created_at DESC);
+        CREATE INDEX knowledge_confidence_idx
+            ON knowledge_records (confidence DESC, updated_at DESC);
+        CREATE INDEX knowledge_tags_idx
+            ON knowledge_records USING GIN (tags);
+
+        ALTER TABLE public.graph_edges
+            ADD CONSTRAINT graph_edges_from_node_fk
+            FOREIGN KEY (from_node) REFERENCES public.graph_nodes(id) ON DELETE RESTRICT;
+        ALTER TABLE public.graph_edges
+            ADD CONSTRAINT graph_edges_to_node_fk
+            FOREIGN KEY (to_node) REFERENCES public.graph_nodes(id) ON DELETE RESTRICT;
+
+        ALTER TABLE public.knowledge_records ENABLE ROW LEVEL SECURITY;
+        REVOKE ALL ON TABLE public.knowledge_records FROM anon, authenticated;
+        CREATE POLICY "akira_deny_anon_authenticated_select"
+            ON public.knowledge_records AS RESTRICTIVE
+            FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert"
+            ON public.knowledge_records AS RESTRICTIVE
+            FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update"
+            ON public.knowledge_records AS RESTRICTIVE
+            FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete"
+            ON public.knowledge_records AS RESTRICTIVE
+            FOR DELETE TO anon, authenticated USING (false);
+
+        INSERT INTO public.audit_log (
+            actor, action, resource, resource_id, status, detail
+        )
+        VALUES (
+            'system',
+            'knowledge.schema.f4_v1',
+            'knowledge_records',
+            NULL,
+            'success',
+            jsonb_build_object(
+                'schema_version','knowledge.v1',
+                'graph_foreign_keys',true,
+                'on_delete','restrict',
+                'reason','first_class_knowledge_and_graph_integrity'
+            )
+        );
+        """
+    ),
 ]
