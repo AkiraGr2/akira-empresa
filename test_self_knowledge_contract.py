@@ -9,6 +9,14 @@ class FakeRepo:
             "self_model": {
                 "id": "akira_primary",
                 "identity": {"name": "Akira"},
+                "purpose": {},
+                "models": [],
+                "current_state": {},
+                "knowledge_state": {},
+                "uncertainties": [],
+                "errors": [],
+                "repairs": [],
+                "evolution": [],
                 "version": 1,
             },
             "capabilities": [
