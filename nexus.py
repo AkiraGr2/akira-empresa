@@ -3214,7 +3214,7 @@ def _execute_cognitive_cycle(service, trigger, input_data, actor, owner_scope=No
         interpretation = "learning_query"
     record("interpret", {"interpretation": interpretation, "keywords": keywords, "message_length": len(message)})
 
-    memories = _recall_memories(service, message, limit=5, owner_scope=s["owner_scope"]) if message else []
+    memories = _recall_memories(service, message, limit=5, owner_scope=owner_scope) if message else []
     answer = None; model_used = "none"
     if message:
         try:
