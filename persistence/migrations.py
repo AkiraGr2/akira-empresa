@@ -1161,4 +1161,48 @@ MIGRATIONS = [
         """
     ),
 
+    (
+        "040_repair_engine_v1_capability",
+        """
+        INSERT INTO public.capabilities (
+            id, name, description, category, kind,
+            implementation_state, verification_state, availability_state,
+            maturity, cost_compatibility, dependencies, limitations,
+            verification_spec, provenance, schema_version, idempotency_key
+        )
+        VALUES (
+            'cap_repair_engine_v1',
+            'repair_engine_v1',
+            'Motor de reparación controlada de estado con lifecycle persistente, sandbox, tests, evaluación, aprobación explícita, aplicación allowlisted y aprendizaje posterior.',
+            'repair',
+            'composite',
+            'implemented',
+            'unverified',
+            'available',
+            'experimental',
+            'free',
+            '[{"id":"IdentityRoot","kind":"authority","required":true},{"id":"SelfModel","kind":"state","required":true},{"id":"PersistenceService.repair","kind":"service","required":true},{"id":"specialized_agent_tools","kind":"verification","required":true},{"id":"owner_scope","kind":"security","required":true}]'::jsonb,
+            '["V1 solo repara estado persistente explícitamente allowlisted.","No ejecuta escritura arbitraria de código ni mutación automática de GitHub.","Toda aplicación requiere sandbox, tests, evaluación y aprobación explícita."]'::jsonb,
+            '{"method":"selftest","test_key":"repair_engine_v1_contract","freshness_policy":{"mode":"on_change","max_age_seconds":null,"invalidate_on":["build_change","repair_code_change","self_model_change","owner_scope_change"]}}'::jsonb,
+            '{"source":"architecture_rebaseline_f12","created_by":"system"}'::jsonb,
+            'capability.v1',
+            'bootstrap:capability:repair_engine_v1:v1'
+        )
+        ON CONFLICT (name) DO UPDATE SET
+            description = EXCLUDED.description,
+            category = EXCLUDED.category,
+            kind = EXCLUDED.kind,
+            implementation_state = EXCLUDED.implementation_state,
+            availability_state = EXCLUDED.availability_state,
+            maturity = EXCLUDED.maturity,
+            cost_compatibility = EXCLUDED.cost_compatibility,
+            dependencies = EXCLUDED.dependencies,
+            limitations = EXCLUDED.limitations,
+            verification_spec = EXCLUDED.verification_spec,
+            provenance = EXCLUDED.provenance,
+            schema_version = EXCLUDED.schema_version,
+            updated_at = now()
+        """
+    ),
+
 ]
