@@ -72,6 +72,10 @@ jobs:
         run: |
           python -m unittest test_memory_recall_contract -v
 
+      - name: Test memory gate fail-closed contract
+        run: |
+          python -m unittest test_memory_gate_contract -v
+
       - name: Test learning persistent capability contract
         run: |
           python -m unittest test_learning_persistent_contract -v
