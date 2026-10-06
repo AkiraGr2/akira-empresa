@@ -1562,6 +1562,43 @@ MIGRATIONS = [
     ),
 
     (
+        "048_self_model_capability_contract_sync",
+        """
+        UPDATE public.capabilities
+        SET
+            description = 'Self-Model persistente de Akira con singleton versionado, identidad autoritativa y proyecciones actuales de capabilities, tools y models.',
+            category = 'identity',
+            kind = 'composite',
+            implementation_state = 'implemented',
+            maturity = 'experimental',
+            cost_compatibility = 'free',
+            dependencies = '[{"kind":"service","id":"PersistenceService.get_self_model","required":true},{"kind":"service","id":"PersistenceService.update_self_model","required":true},{"kind":"storage","id":"PostgreSQL.self_model","required":true},{"kind":"authority","id":"IdentityRoot","required":true},{"kind":"registry","id":"CapabilityEngine","required":true}]'::jsonb,
+            limitations = '["Capabilities, tools y models son proyecciones derivadas y no son editables manualmente dentro del self-model.","El self-model persistente conserva incertidumbres históricas; el runtime self-knowledge prioriza fuentes autoritativas actuales.","La verificación de escritura se cubre por el contrato de persistencia y el runtime no altera la identidad raíz."]'::jsonb,
+            verification_spec = '{"method":"selftest","test_key":"self_model_persistent_contract","freshness_policy":{"mode":"on_change","max_age_seconds":null,"invalidate_on":["build_change","self_model_schema_change","identity_root_change","capability_registry_change"]}}'::jsonb,
+            provenance = '{"source":"architecture_rebaseline_f2","created_by":"system","basis":["persistence/core.py","persistence/service.py","persistence/selftest.py","test_self_knowledge_contract.py"]}'::jsonb,
+            schema_version = 'capability.v1',
+            idempotency_key = 'bootstrap:capability:self_model_persistent:v1',
+            updated_at = now()
+        WHERE name = 'self_model_persistent';
+
+        INSERT INTO public.audit_log (
+            actor, action, resource, resource_id, status, detail
+        )
+        VALUES (
+            'system',
+            'self_model.capability_contract_sync',
+            'capabilities',
+            'cap_self_model_persistent',
+            'success',
+            jsonb_build_object(
+                'reason','align_seed_catalog_with_persisted_contract',
+                'capability','self_model_persistent'
+            )
+        );
+        """
+    ),
+
+    (
         "046_controlled_autonomy_runtime_registry",
         """
         INSERT INTO public.tools (
