@@ -427,6 +427,11 @@ class PersistenceService:
         verified["models"] = model_registry_snapshot()["routes"]
         return verified
     def update_self_model(self, changes, expected_version, actor="system"):
+        if not isinstance(changes, dict):
+            raise ValidationError("self-model changes debe ser un objeto")
+        manual_derived = sorted(set(changes) & {"capabilities", "tools", "models"})
+        if manual_derived:
+            raise ValidationError(f"campos derivados, no editables: {manual_derived}")
         clean = validate_self_model(changes, partial=True)
         if isinstance(expected_version, bool) or not isinstance(expected_version, int) or expected_version < 1:
             raise ValidationError("expected_version debe ser un entero >= 1")
