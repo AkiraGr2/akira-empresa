@@ -212,6 +212,50 @@ def _run_sandbox_tests_from_existing_archive(
         )
 
 
+def _record_controlled_autonomy_verification(service, run, action):
+    """Persist formal F14 capability evidence after a successful production action."""
+    rows = service.list_capabilities({"name": "controlled_autonomy_v1"}, limit=5)
+    capability = rows[0] if rows else None
+    if capability is None:
+        raise ControlledAutonomyError("f14_capability_not_registered")
+    decision = run.get("decision") if isinstance(run.get("decision"), dict) else {}
+    run_id = str(run.get("id") or "").strip()
+    pr_url = str(action.get("pr_url") or "").strip()
+    evidence = [
+        {"type": "e2e_test", "title": "Controlled Autonomy v1 production run", "reference": run_id,
+         "summary": "Ejecución real de F14 completó propuesta, sandbox, pruebas y revisión.",
+         "hash": hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:32]},
+        {"type": "human_validation", "title": "Aprobación explícita del propietario",
+         "reference": str(decision.get("approved_by") or run.get("created_by") or "owner"),
+         "summary": "La compuerta humana fue aprobada antes de la acción externa.",
+         "hash": hashlib.sha256(f"{decision.get('approved_by','')}:{decision.get('approved_at','')}".encode("utf-8")).hexdigest()[:32]},
+        {"type": "external_check", "title": "Draft PR y rama aislada verificados", "reference": pr_url or run_id,
+         "summary": "La rama de autonomía coincide con la acción y el Draft PR permanece sin merge.",
+         "hash": hashlib.sha256(str(action).encode("utf-8")).hexdigest()[:32]},
+    ]
+    return service.record_capability_verification(
+        capability["id"],
+        {
+            "event_type": "verification",
+            "test_key": "controlled_autonomy_v1_e2e",
+            "test_version": "v1",
+            "result": "pass",
+            "evidence": evidence,
+            "environment": {
+                "repository": run.get("repository"), "base_branch": run.get("base_branch"),
+                "base_commit_sha": run.get("base_commit_sha"), "branch_name": action.get("branch_name"),
+                "draft_pr": action.get("pr_draft") is True, "merged": action.get("merged"),
+            },
+            "dependency_snapshot": ["AutonomyService", "github_controlled", "isolated_workspace_tests", "owner_scope", "human_approval"],
+            "runtime_version": "controlled_autonomy_v1",
+            "build_ref": run.get("base_commit_sha") or "unknown",
+            "actor": str(run.get("created_by") or "owner"), "executor": "controlled_autonomy", "evaluator": "system",
+            "observed_availability_state": "available",
+        },
+        actor=str(run.get("created_by") or "owner"),
+        idempotency_key=f"f14:e2e:{run_id}",
+    )
+
 def apply_approved_controlled_autonomy(
     service,
     run_id: str,
@@ -287,6 +331,9 @@ def apply_approved_controlled_autonomy(
         "external_verification": verified,
         "verified_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
     })
+    capability_verification = _record_controlled_autonomy_verification(service, run, action)
+    evaluation["capability_verification_id"] = capability_verification["record"]["id"]
+    evaluation["capability_effective_state"] = capability_verification["effective_state"]
     _advance(a, run_id, "evaluated", actor, owner_scope, {"evaluation": evaluation})
 
     learning_reference = ""
