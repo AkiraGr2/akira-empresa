@@ -2857,6 +2857,8 @@ class PersistenceService:
 
     def create_evolution(self, data, actor="system", idempotency_key=None, owner_scope=None):
         fields = validate_evolution_record(data)
+        if fields.get("status") != "detected":
+            raise ValidationError("una evolucion nueva siempre inicia en detected")
         if owner_scope is not None:
             fields["owner_scope"] = str(owner_scope).strip()
         if not fields.get("owner_scope"):
@@ -2924,17 +2926,41 @@ class PersistenceService:
             descending=True,
         )
 
-    def update_evolution(self, evolution_id, changes, expected_version=None, actor="system", owner_scope=None):
+    def update_evolution(
+        self,
+        evolution_id,
+        changes,
+        expected_version=None,
+        actor="system",
+        owner_scope=None,
+        _allow_control_fields=False,
+    ):
         current = self.get_evolution(evolution_id, owner_scope=owner_scope)
         if current is None:
             raise NotFoundError(evolution_id)
         clean = validate_evolution_record(changes, partial=True)
+        control_fields = {"status", "decision", "started_at", "completed_at"}
+        if not _allow_control_fields and control_fields.intersection(clean):
+            raise ValidationError(
+                "status/decision/timestamps solo pueden cambiar mediante el lifecycle controlado"
+            )
         if "owner_scope" in clean:
             raise ValidationError("owner_scope no es mutable")
+        if current.get("status") in ("applied", "rejected", "failed"):
+            raise ValidationError("una evolucion terminal no es mutable")
+        current_decision = current.get("decision")
+        if (
+            isinstance(current_decision, dict)
+            and current_decision.get("status") == "approved"
+            and any(key in clean for key in (
+                "target_component", "detected_need", "research_reference",
+                "design", "prototype_reference", "tests", "evaluation",
+                "change_reference",
+            ))
+        ):
+            raise ValidationError("una evolucion aprobada no puede alterar su evidencia")
         if expected_version is None:
             expected_version = current["version"]
-        if "status" in clean and clean["status"] != current.get("status"):
-            self._validate_evolution_transition(current.get("status"), clean["status"])
         try:
             with self.repo.transaction() as tx:
                 updated = tx.update("evolution_records", evolution_id, clean, expected_version)
@@ -3040,6 +3066,7 @@ class PersistenceService:
             expected_version=current["version"],
             actor=actor,
             owner_scope=owner_scope,
+            _allow_control_fields=True,
         )
 
     def reject_evolution(self, evolution_id, reason, actor="system", owner_scope=None):
@@ -3060,6 +3087,7 @@ class PersistenceService:
             expected_version=current["version"],
             actor=actor,
             owner_scope=owner_scope,
+            _allow_control_fields=True,
         )
         return self.advance_evolution(
             evolution_id,
