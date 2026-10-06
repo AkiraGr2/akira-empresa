@@ -1448,7 +1448,7 @@ MIGRATIONS = [
         VALUES (
             'tool_controlled_autonomy_start',
             'controlled_autonomy_start',
-            'Inicia la autonomia controlada F14 hasta una compuerta de aprobacion humana; no aprueba ni aplica cambios.',
+            'Inicia la autonomia controlada F14 hasta una compuerta de aprobacion humana, sin aprobar ni aplicar cambios.',
             'code',
             '["owner"]'::jsonb,
             '{"goal":"str","repository":"str","base_branch":"str","paths":"list","instruction":"str","queries":"list","tests":"list","idempotency_key":"str"}'::jsonb,
