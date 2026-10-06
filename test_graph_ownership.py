@@ -38,6 +38,7 @@ class FakeRepo:
                 {"id": "a1", "label": "A", "owner_scope": "scope:A", "status": "active", "version": 1},
                 {"id": "b1", "label": "B", "owner_scope": "scope:B", "status": "active", "version": 1},
                 {"id": "legacy", "label": "Legacy", "owner_scope": "owner", "status": "active", "version": 1},
+                {"id": "archived", "label": "Archived", "owner_scope": "scope:A", "status": "archived", "version": 1},
             ],
             "graph_edges": [
                 {"id": "e1", "from_node": "a1", "to_node": "core", "status": "active", "version": 1},
@@ -96,6 +97,13 @@ class GraphOwnershipTests(unittest.TestCase):
         with self.assertRaises(NotFoundError):
             self.service.create_edge(
                 {"from_node": "a1", "to_node": "b1", "relation_type": "related_to"},
+                owner_scope="scope:A",
+            )
+
+    def test_edge_rejects_archived_endpoint(self):
+        with self.assertRaises(ValidationError):
+            self.service.create_edge(
+                {"from_node": "archived", "to_node": "a1", "relation_type": "related_to"},
                 owner_scope="scope:A",
             )
 
