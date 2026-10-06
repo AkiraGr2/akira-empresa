@@ -102,6 +102,19 @@ class MissionTaskOwnershipTests(unittest.TestCase):
         source = Path("persistence/service.py").read_text(encoding="utf-8")
         self.assertIn('changes["authorized_by"] = owner or actor', source)
 
+    def test_orphan_mission_cleanup_is_boot_only(self):
+        source = Path("nexus.py").read_text(encoding="utf-8")
+        self.assertIn("_cleanup_orphan_missions(_persistence_service())", source)
+        route_functions = [
+            block for block in source.split("@app.", 1)[1:]
+            if "def " in block.split(")", 1)[-1]
+        ]
+        self.assertTrue(route_functions)
+        self.assertNotIn(
+            "_cleanup_orphan_missions(",
+            source[source.index('@app.post("/api/v8/missions")'):]
+        )
+
     def test_mission_read_is_owner_scoped(self):
         self.assertIsNotNone(self.service.get_mission("m_a", owner="a@example.test"))
         self.assertIsNone(self.service.get_mission("m_a", owner="b@example.test"))
