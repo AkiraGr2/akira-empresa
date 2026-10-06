@@ -335,6 +335,18 @@ class PersistenceService:
         current = self.repo.get("self_model", SELF_MODEL_PRIMARY_ID)
         if current is not None:
             current["identity"] = self.get_identity_root()
+            current["capabilities"] = self.capabilities_for_self_model(limit=200)
+            current["tools"] = [
+                {
+                    "name": t.get("name"),
+                    "category": t.get("category"),
+                    "status": t.get("status"),
+                    "permissions": list(t.get("permissions") or []),
+                }
+                for t in self.repo.search(
+                    "tools", {}, limit=200, order_by="name", descending=False,
+                )
+            ]
             return current
         identity = self.get_identity_root()
         record = {"id": SELF_MODEL_PRIMARY_ID, "schema_version": SELF_MODEL_SCHEMA_VERSION,
@@ -353,6 +365,16 @@ class PersistenceService:
         verified = self.repo.get("self_model", SELF_MODEL_PRIMARY_ID)
         if verified is None: raise VerificationError("self-model no confirmado")
         verified["identity"] = identity
+        verified["capabilities"] = self.capabilities_for_self_model(limit=200)
+        verified["tools"] = [
+            {
+                "name": t.get("name"),
+                "category": t.get("category"),
+                "status": t.get("status"),
+                "permissions": list(t.get("permissions") or []),
+            }
+            for t in self.repo.search("tools", {}, limit=200, order_by="name", descending=False)
+        ]
         return verified
     def update_self_model(self, changes, expected_version, actor="system"):
         clean = validate_self_model(changes, partial=True)
