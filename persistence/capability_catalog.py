@@ -101,7 +101,7 @@ PERSISTENT_MEMORY_CAPABILITY = {
 SELF_MODEL_PERSISTENT_CAPABILITY = {
     "name": "self_model_persistent",
     "description": "Self-Model persistente de Akira: singleton versionado con identidad derivada del Identity Root, estado semánticamente validado, lecturas confirmadas y proyecciones autoritativas de capabilities, tools y models.",
-    "category": "self",
+    "category": "identity",
     "kind": "composite",
     "implementation_state": "implemented",
     "verification_state": "unverified",
