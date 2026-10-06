@@ -31,6 +31,7 @@ from .core import (AGENT_SCHEMA_VERSION, AGENT_TASK_SCHEMA_VERSION,
                    CONVERSATION_SCHEMA_VERSION, GRAPH_EDGE_SCHEMA_VERSION,
                    GRAPH_NODE_SCHEMA_VERSION, HIVE_VISIBLE, LEARNING_SCHEMA_VERSION, RELATION_TYPES,
                    MEMORY_SCHEMA_VERSION, MISSION_SCHEMA_VERSION, MISSION_STATUSES,
+                   EVOLUTION_SCHEMA_VERSION, EVOLUTION_STATUSES,
                    SELF_MODEL_PRIMARY_ID, SELF_MODEL_SCHEMA_VERSION,
                    TOOL_INVOCATION_SCHEMA_VERSION, TOOL_SCHEMA_VERSION,
                    ConflictError, NotFoundError, PersistenceError, StorageError,
@@ -39,7 +40,7 @@ from .core import (AGENT_SCHEMA_VERSION, AGENT_TASK_SCHEMA_VERSION,
                    validate_cognitive_event, validate_conversation,
                    validate_conversation_message, validate_graph_edge,
                    validate_graph_node, validate_learning_event, validate_memory,
-                   validate_mission, validate_self_model, validate_tool,
+                   validate_mission, validate_evolution_record, validate_self_model, validate_tool,
                    validate_tool_invocation)
 
 _COMPARE_FIELDS = ("content", "memory_type", "importance", "confidence", "tags", "privacy_level",
@@ -2830,6 +2831,292 @@ class PersistenceService:
             return self._upsert_edge(node_id, core["id"], "part_of", delta_weight=w, actor=actor)
         except Exception:
             return None
+
+    # ============================================================
+    # F13: EVOLUTION ENGINE V1
+    # ============================================================
+
+    def _validate_evolution_transition(self, current, new):
+        transitions = {
+            "detected": {"researching", "failed"},
+            "researching": {"designing", "failed"},
+            "designing": {"prototyping", "failed"},
+            "prototyping": {"testing", "failed"},
+            "testing": {"evaluating", "failed"},
+            "evaluating": {"applied", "rejected", "failed"},
+            "applied": set(),
+            "rejected": set(),
+            "failed": set(),
+        }
+        if current == new:
+            return
+        if new not in transitions.get(current, set()):
+            raise ValidationError(
+                f"transicion de evolucion no permitida: {current} -> {new}"
+            )
+
+    def create_evolution(self, data, actor="system", idempotency_key=None, owner_scope=None):
+        fields = validate_evolution_record(data)
+        if owner_scope is not None:
+            fields["owner_scope"] = str(owner_scope).strip()
+        if not fields.get("owner_scope"):
+            raise ValidationError("owner_scope requerido")
+        record = dict(
+            fields,
+            id=new_id("evol"),
+            created_by=str(actor or "system").strip()[:256],
+            schema_version=EVOLUTION_SCHEMA_VERSION,
+            version=1,
+        )
+        if idempotency_key is not None:
+            key = str(idempotency_key).strip()
+            if not 0 < len(key) <= 200:
+                raise ValidationError("idempotency_key debe ser texto de 1 a 200 caracteres")
+            record["idempotency_key"] = key
+        try:
+            with self.repo.transaction() as tx:
+                stored, created = tx.create("evolution_records", record)
+                tx.append_audit({
+                    "actor": actor,
+                    "action": "evolution.create" if created else "evolution.create.already_synced",
+                    "resource": "evolution_records",
+                    "resource_id": stored["id"],
+                    "status": "success",
+                    "detail": {
+                        "status": stored.get("status"),
+                        "target_component": stored.get("target_component"),
+                    },
+                })
+        except PersistenceError:
+            raise
+        except Exception as exc:
+            raise StorageError(type(exc).__name__) from exc
+        verified = self.get_evolution(stored["id"], owner_scope=fields["owner_scope"])
+        if verified is None or verified.get("owner_scope") != fields["owner_scope"]:
+            raise VerificationError("evolution create no confirmada")
+        return {"outcome": "created" if created else "already_synced", "record": verified}
+
+    def get_evolution(self, evolution_id, owner_scope=None):
+        record = self.repo.get("evolution_records", evolution_id)
+        if record is None:
+            return None
+        if owner_scope is None:
+            return record
+        scope = str(owner_scope).strip()
+        if not scope:
+            return None
+        return record if str(record.get("owner_scope") or "").strip() == scope else None
+
+    def list_evolutions(self, status=None, owner_scope=None, target_component=None, limit=50):
+        filters = {}
+        if status is not None:
+            filters["status"] = status
+        if owner_scope is not None:
+            filters["owner_scope"] = owner_scope
+        if target_component is not None:
+            filters["target_component"] = target_component
+        return self.repo.search(
+            "evolution_records",
+            filters,
+            limit=max(1, min(int(limit), 200)),
+            offset=0,
+            order_by="created_at",
+            descending=True,
+        )
+
+    def update_evolution(self, evolution_id, changes, expected_version=None, actor="system", owner_scope=None):
+        current = self.get_evolution(evolution_id, owner_scope=owner_scope)
+        if current is None:
+            raise NotFoundError(evolution_id)
+        clean = validate_evolution_record(changes, partial=True)
+        if "owner_scope" in clean:
+            raise ValidationError("owner_scope no es mutable")
+        if expected_version is None:
+            expected_version = current["version"]
+        if "status" in clean and clean["status"] != current.get("status"):
+            self._validate_evolution_transition(current.get("status"), clean["status"])
+        try:
+            with self.repo.transaction() as tx:
+                updated = tx.update("evolution_records", evolution_id, clean, expected_version)
+                tx.append_audit({
+                    "actor": actor,
+                    "action": "evolution.update",
+                    "resource": "evolution_records",
+                    "resource_id": evolution_id,
+                    "status": "success",
+                    "detail": {"fields": sorted(clean), "new_version": updated["version"]},
+                })
+        except PersistenceError:
+            raise
+        except Exception as exc:
+            raise StorageError(type(exc).__name__) from exc
+        verified = self.get_evolution(evolution_id, owner_scope=owner_scope)
+        if verified is None or verified.get("version") != expected_version + 1:
+            raise VerificationError("evolution update no confirmada")
+        return verified
+
+    def advance_evolution(self, evolution_id, next_status, expected_version=None, actor="system", owner_scope=None):
+        current = self.get_evolution(evolution_id, owner_scope=owner_scope)
+        if current is None:
+            raise NotFoundError(evolution_id)
+        next_status = str(next_status or "").strip()
+        if next_status not in EVOLUTION_STATUSES:
+            raise ValidationError(f"estado de evolucion invalido: {next_status!r}")
+        if next_status == current.get("status"):
+            return current
+        self._validate_evolution_transition(current.get("status"), next_status)
+
+        requirements = {
+            "researching": ("research_reference", "research_reference requerido"),
+            "designing": ("design", "design requerido"),
+            "prototyping": ("prototype_reference", "prototype_reference requerido"),
+            "testing": ("tests", "tests requerido"),
+            "evaluating": ("evaluation", "evaluation requerido"),
+        }
+        if next_status in requirements:
+            field, message = requirements[next_status]
+            value = current.get(field)
+            if not value:
+                raise ValidationError(message)
+        if next_status == "applied":
+            decision = current.get("decision")
+            if not isinstance(decision, dict) or decision.get("status") != "approved":
+                raise ValidationError("apply requiere decision.status=approved")
+            if not str(current.get("change_reference") or "").strip():
+                raise ValidationError("apply requiere change_reference verificable")
+        if next_status == "rejected":
+            decision = current.get("decision")
+            if not isinstance(decision, dict) or decision.get("status") != "rejected":
+                raise ValidationError("reject requiere decision.status=rejected")
+
+        changes = {"status": next_status}
+        if next_status != "detected" and not current.get("started_at"):
+            changes["started_at"] = _now_iso()
+        if next_status in ("applied", "rejected", "failed"):
+            changes["completed_at"] = _now_iso()
+        if next_status == "failed" and not current.get("failure_reason"):
+            changes["failure_reason"] = "evolution_failed"
+        if expected_version is None:
+            expected_version = current["version"]
+        try:
+            with self.repo.transaction() as tx:
+                updated = tx.update("evolution_records", evolution_id, changes, expected_version)
+                tx.append_audit({
+                    "actor": actor,
+                    "action": "evolution.status.update",
+                    "resource": "evolution_records",
+                    "resource_id": evolution_id,
+                    "status": "success",
+                    "detail": {"status": next_status, "new_version": updated["version"]},
+                })
+        except PersistenceError:
+            raise
+        except Exception as exc:
+            raise StorageError(type(exc).__name__) from exc
+        verified = self.get_evolution(evolution_id, owner_scope=owner_scope)
+        if verified is None or verified.get("status") != next_status:
+            raise VerificationError("evolution status no confirmada")
+        return verified
+
+    def approve_evolution(self, evolution_id, actor="system", owner_scope=None):
+        current = self.get_evolution(evolution_id, owner_scope=owner_scope)
+        if current is None:
+            raise NotFoundError(evolution_id)
+        if current.get("status") != "evaluating":
+            raise ValidationError("solo se puede aprobar una evolucion en evaluating")
+        if not current.get("tests"):
+            raise ValidationError("approval requiere tests")
+        if not current.get("evaluation"):
+            raise ValidationError("approval requiere evaluation")
+        decision = {
+            "status": "approved",
+            "approved_by": str(actor or "system").strip()[:256],
+            "approved_at": _now_iso(),
+        }
+        clean = {"decision": decision}
+        return self.update_evolution(
+            evolution_id,
+            clean,
+            expected_version=current["version"],
+            actor=actor,
+            owner_scope=owner_scope,
+        )
+
+    def reject_evolution(self, evolution_id, reason, actor="system", owner_scope=None):
+        current = self.get_evolution(evolution_id, owner_scope=owner_scope)
+        if current is None:
+            raise NotFoundError(evolution_id)
+        if current.get("status") != "evaluating":
+            raise ValidationError("solo se puede rechazar una evolucion en evaluating")
+        decision = {
+            "status": "rejected",
+            "rejected_by": str(actor or "system").strip()[:256],
+            "rejected_at": _now_iso(),
+            "reason": str(reason or "").strip()[:1000],
+        }
+        changed = self.update_evolution(
+            evolution_id,
+            {"decision": decision},
+            expected_version=current["version"],
+            actor=actor,
+            owner_scope=owner_scope,
+        )
+        return self.advance_evolution(
+            evolution_id,
+            "rejected",
+            expected_version=changed["version"],
+            actor=actor,
+            owner_scope=owner_scope,
+        )
+
+    def fail_evolution(self, evolution_id, reason, actor="system", owner_scope=None):
+        current = self.get_evolution(evolution_id, owner_scope=owner_scope)
+        if current is None:
+            raise NotFoundError(evolution_id)
+        if current.get("status") in ("applied", "rejected", "failed"):
+            return current
+        changed = {"failure_reason": str(reason or "evolution_failed").strip()[:1000]}
+        updated = self.update_evolution(
+            evolution_id,
+            changed,
+            expected_version=current["version"],
+            actor=actor,
+            owner_scope=owner_scope,
+        )
+        return self.advance_evolution(
+            evolution_id,
+            "failed",
+            expected_version=updated["version"],
+            actor=actor,
+            owner_scope=owner_scope,
+        )
+
+    def apply_evolution(self, evolution_id, change_reference, actor="system", owner_scope=None):
+        current = self.get_evolution(evolution_id, owner_scope=owner_scope)
+        if current is None:
+            raise NotFoundError(evolution_id)
+        if current.get("status") != "evaluating":
+            raise ValidationError("solo se puede aplicar una evolucion en evaluating")
+        decision = current.get("decision")
+        if not isinstance(decision, dict) or decision.get("status") != "approved":
+            raise ValidationError("apply requiere aprobacion humana explicita")
+        reference = str(change_reference or "").strip()[:1000]
+        if not reference:
+            raise ValidationError("change_reference requerido")
+        changed = self.update_evolution(
+            evolution_id,
+            {"change_reference": reference},
+            expected_version=current["version"],
+            actor=actor,
+            owner_scope=owner_scope,
+        )
+        return self.advance_evolution(
+            evolution_id,
+            "applied",
+            expected_version=changed["version"],
+            actor=actor,
+            owner_scope=owner_scope,
+        )
 
     def _validate_mission_transition(self, current, new):
         if current == new:
