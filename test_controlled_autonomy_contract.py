@@ -14,6 +14,8 @@ from persistence.autonomy import (
 )
 from github_controlled import ControlledGitHubError, apply_unified_patch
 from specialized_agent_tools import run_python_tests_in_workspace
+from autonomy_engine import _record_controlled_autonomy_verification
+from unittest.mock import Mock
 
 
 class FakeTx:
@@ -233,6 +235,24 @@ class ControlledAutonomyContractTests(unittest.TestCase):
         self.assertIn("SELECT 1 / CASE", block)
         self.assertIn("status = 'available'", block)
         self.assertNotIn("DO $", block)
+
+    def test_production_f14_verification_persists_capability_evidence(self):
+        service = Mock()
+        service.list_capabilities.return_value = [{"id": "cap_f14", "name": "controlled_autonomy_v1"}]
+        service.record_capability_verification.return_value = {"record": {"id": "capver_f14"}, "effective_state": "verified"}
+        run = {"id": "autonomy_test_123", "created_by": "owner@example.com", "repository": "AkiraGr2/akira-empresa",
+               "base_branch": "main", "base_commit_sha": "a" * 40,
+               "decision": {"approved_by": "owner@example.com", "approved_at": "2026-10-06T17:00:00+00:00"}}
+        action = {"branch_name": "akira/autonomy/autonomy_test_123", "pr_url": "https://github.com/AkiraGr2/akira-empresa/pull/999",
+                  "pr_draft": True, "merged": False}
+        result = _record_controlled_autonomy_verification(service, run, action)
+        self.assertEqual(result["effective_state"], "verified")
+        call = service.record_capability_verification.call_args.kwargs
+        self.assertEqual(call["idempotency_key"], "f14:e2e:autonomy_test_123")
+        self.assertEqual(call["data"]["test_key"], "controlled_autonomy_v1_e2e")
+        self.assertEqual(call["data"]["result"], "pass")
+        self.assertEqual(len(call["data"]["evidence"]), 3)
+        self.assertEqual(call["data"]["evidence"][1]["type"], "human_validation")
 
     def test_controlled_gateway_contract_is_branch_only(self):
         source = Path("github_controlled.py").read_text(encoding="utf-8")
