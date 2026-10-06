@@ -198,17 +198,29 @@ class ControlledAutonomyContractTests(unittest.TestCase):
     def test_workspace_testing_uses_non_shell_commands(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            (root / "test_sample.py").write_text(
-                "import unittest\n\nclass T(unittest.TestCase):\n    def test_ok(self):\n        self.assertTrue(True)\n\nif __name__ == '__main__': unittest.main()\n",
+            (root / "sample.py").write_text(
+                "value = 1\n",
                 encoding="utf-8",
             )
             result = run_python_tests_in_workspace(
                 str(root),
-                tests=["test_sample"],
-                compile_paths=["test_sample.py"],
+                tests=[],
+                compile_paths=["sample.py"],
             )
             self.assertEqual(result["status"], "passed")
             self.assertTrue(result["commands_are_non_shell"])
+            self.assertEqual(result["tests"][0]["command"][:3], [
+                __import__("sys").executable, "-m", "py_compile"
+            ])
+
+    def test_workspace_testing_requires_allowlisted_tests(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with self.assertRaises(Exception):
+                run_python_tests_in_workspace(
+                    temp,
+                    tests=["test_not_allowlisted"],
+                    compile_paths=[],
+                )
 
     def test_controlled_gateway_contract_is_branch_only(self):
         source = Path("github_controlled.py").read_text(encoding="utf-8")
