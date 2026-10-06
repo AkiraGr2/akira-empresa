@@ -94,7 +94,7 @@ class EvolutionEngineContractTests(unittest.TestCase):
     def test_schema_contract_and_statuses(self):
         self.assertEqual(EVOLUTION_STATUSES[0], "detected")
         self.assertEqual(EVOLUTION_STATUSES[-1], "failed")
-        self.assertIn("evolution_records", entity_spec("evolution_records"))
+        self.assertEqual(entity_spec("evolution_records")["table"], "evolution_records")
         record = validate_evolution_record({
             "target_component": "component.test",
             "detected_need": "Necesidad",
