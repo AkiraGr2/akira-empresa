@@ -1322,6 +1322,41 @@ MIGRATIONS = [
     ),
 
     (
+        "044_reconcile_legacy_cancelled_mission_tasks",
+        """
+        INSERT INTO public.audit_log (
+            actor, action, resource, resource_id, status, detail
+        )
+        SELECT
+            'system',
+            'mission.task.legacy_reconcile',
+            'agent_tasks',
+            t.id,
+            'success',
+            jsonb_build_object(
+                'mission_id', t.mission_id,
+                'from', t.status,
+                'to', 'cancelled',
+                'reason', 'legacy_cancelled_mission_reconciliation'
+            )
+        FROM public.agent_tasks t
+        JOIN public.missions m ON m.id = t.mission_id
+        WHERE m.status = 'cancelled'
+          AND t.status IN ('pending','running');
+
+        UPDATE public.agent_tasks t
+        SET status = 'cancelled',
+            outputs = COALESCE(t.outputs, '{}'::jsonb) || jsonb_build_object(
+                'cancel_reason', 'legacy_cancelled_mission_reconciliation'
+            ),
+            completed_at = COALESCE(t.completed_at, now()),
+            updated_at = now()
+        FROM public.missions m
+        WHERE m.id = t.mission_id
+          AND m.status = 'cancelled'
+          AND t.status IN ('pending','running')
+        """
+    ),    (
         "045_controlled_autonomy_v1",
         """
         CREATE TABLE IF NOT EXISTS public.autonomy_runs (
@@ -1401,40 +1436,5 @@ MIGRATIONS = [
         ON CONFLICT DO NOTHING
         """
     ),
-    (
-        "044_reconcile_legacy_cancelled_mission_tasks",
-        """
-        INSERT INTO public.audit_log (
-            actor, action, resource, resource_id, status, detail
-        )
-        SELECT
-            'system',
-            'mission.task.legacy_reconcile',
-            'agent_tasks',
-            t.id,
-            'success',
-            jsonb_build_object(
-                'mission_id', t.mission_id,
-                'from', t.status,
-                'to', 'cancelled',
-                'reason', 'legacy_cancelled_mission_reconciliation'
-            )
-        FROM public.agent_tasks t
-        JOIN public.missions m ON m.id = t.mission_id
-        WHERE m.status = 'cancelled'
-          AND t.status IN ('pending','running');
 
-        UPDATE public.agent_tasks t
-        SET status = 'cancelled',
-            outputs = COALESCE(t.outputs, '{}'::jsonb) || jsonb_build_object(
-                'cancel_reason', 'legacy_cancelled_mission_reconciliation'
-            ),
-            completed_at = COALESCE(t.completed_at, now()),
-            updated_at = now()
-        FROM public.missions m
-        WHERE m.id = t.mission_id
-          AND m.status = 'cancelled'
-          AND t.status IN ('pending','running')
-        """
-    ),
 ]
