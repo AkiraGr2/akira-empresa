@@ -832,7 +832,7 @@ MIGRATIONS = [
         VALUES (
             'tool_code_review',
             'code_review',
-            'Revisa una propuesta de codigo contra el repositorio y evidencia de pruebas; no escribe.',
+            'Revisa una propuesta de codigo contra el repositorio y evidencia de pruebas, sin escribir.',
             'code',
             '["owner"]'::jsonb,
             '{"repo":"str","paths":"list","proposal":"dict","test_results":"dict"}'::jsonb,
@@ -1572,7 +1572,7 @@ MIGRATIONS = [
         VALUES (
             'tool_controlled_autonomy_start',
             'controlled_autonomy_start',
-            'Inicia la autonomia controlada F14 hasta una compuerta de aprobacion humana; no aprueba ni aplica cambios.',
+            'Inicia la autonomia controlada F14 hasta una compuerta de aprobacion humana, sin aprobar ni aplicar cambios.',
             'code',
             '["owner"]'::jsonb,
             '{"goal":"str","repository":"str","base_branch":"str","paths":"list","instruction":"str","queries":"list","tests":"list","idempotency_key":"str"}'::jsonb,
@@ -1602,7 +1602,7 @@ MIGRATIONS = [
             'agent_autonomy_orchestrator',
             'autonomy_orchestrator',
             'autonomy_orchestrator',
-            'Orquesta autonomia controlada hasta aprobacion humana; nunca puede aprobar ni aplicar el cambio.',
+            'Orquesta autonomia controlada hasta aprobacion humana, sin poder aprobar ni aplicar el cambio.',
             '["controlled_autonomy_start"]'::jsonb,
             'idle',
             'agent.v1',
