@@ -1461,11 +1461,11 @@ MIGRATIONS = [
         )
         ON CONFLICT (name) DO NOTHING;
 
-        SELECT CASE
+        SELECT 1 / CASE
             WHEN status = 'available'
              AND permissions = '["owner"]'::jsonb
             THEN 1
-            ELSE 1 / 0
+            ELSE 0
         END
         FROM public.tools
         WHERE name = 'controlled_autonomy_start';
@@ -1486,12 +1486,12 @@ MIGRATIONS = [
         )
         ON CONFLICT (name) DO NOTHING;
 
-        SELECT CASE
+        SELECT 1 / CASE
             WHEN 'controlled_autonomy_start' = ANY (
                 SELECT jsonb_array_elements_text(allowed_tools)
             )
             THEN 1
-            ELSE 1 / 0
+            ELSE 0
         END
         FROM public.agents
         WHERE name = 'autonomy_orchestrator';
