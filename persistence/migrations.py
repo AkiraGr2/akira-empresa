@@ -987,7 +987,7 @@ MIGRATIONS = [
             schema_version = EXCLUDED.schema_version,
             updated_at = now()
         """
-    )
+    ),
 
 
     (
