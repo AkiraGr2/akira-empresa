@@ -1358,6 +1358,86 @@ MIGRATIONS = [
         """
     ),
     (
+        "045_controlled_autonomy_v1",
+        """
+        CREATE TABLE IF NOT EXISTS public.autonomy_runs (
+            id TEXT PRIMARY KEY,
+            goal TEXT NOT NULL,
+            repository TEXT NOT NULL,
+            base_branch TEXT NOT NULL DEFAULT 'main',
+            base_commit_sha TEXT NOT NULL DEFAULT '',
+            branch_name TEXT NOT NULL DEFAULT '',
+            paths JSONB NOT NULL DEFAULT '[]'::jsonb,
+            instruction TEXT NOT NULL,
+            queries JSONB NOT NULL DEFAULT '[]'::jsonb,
+            requested_tests JSONB NOT NULL DEFAULT '[]'::jsonb,
+            plan JSONB NOT NULL DEFAULT '{}'::jsonb,
+            proposal JSONB NOT NULL DEFAULT '{}'::jsonb,
+            sandbox JSONB NOT NULL DEFAULT '{}'::jsonb,
+            tests JSONB NOT NULL DEFAULT '{}'::jsonb,
+            evaluation JSONB NOT NULL DEFAULT '{}'::jsonb,
+            decision JSONB NOT NULL DEFAULT '{}'::jsonb,
+            action JSONB NOT NULL DEFAULT '{}'::jsonb,
+            learning_reference TEXT NOT NULL DEFAULT '',
+            failure_reason TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'observing'
+                CHECK (status IN (
+                    'observing','planning','delegating','proposed','sandboxed','tested',
+                    'evaluating','awaiting_approval','acting','external_applied',
+                    'evaluated','learned','completed','rejected','failed','cancelled'
+                )),
+            owner_scope TEXT NOT NULL DEFAULT 'owner',
+            created_by TEXT NOT NULL,
+            started_at TIMESTAMPTZ,
+            completed_at TIMESTAMPTZ,
+            schema_version TEXT NOT NULL DEFAULT 'autonomy.v1',
+            version INTEGER NOT NULL DEFAULT 1,
+            idempotency_key TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS autonomy_owner_idempotency_key_uq
+            ON public.autonomy_runs (owner_scope, idempotency_key);
+        CREATE INDEX IF NOT EXISTS autonomy_owner_status_idx
+            ON public.autonomy_runs (owner_scope, status, created_at DESC);
+        CREATE INDEX IF NOT EXISTS autonomy_repository_status_idx
+            ON public.autonomy_runs (repository, base_branch, status, created_at DESC);
+
+        ALTER TABLE public.autonomy_runs ENABLE ROW LEVEL SECURITY;
+
+        DROP POLICY IF EXISTS "akira_deny_anon_autonomy_select" ON public.autonomy_runs;
+        DROP POLICY IF EXISTS "akira_deny_anon_autonomy_insert" ON public.autonomy_runs;
+        DROP POLICY IF EXISTS "akira_deny_anon_autonomy_update" ON public.autonomy_runs;
+        DROP POLICY IF EXISTS "akira_deny_anon_autonomy_delete" ON public.autonomy_runs;
+
+        CREATE POLICY "akira_deny_anon_autonomy_select"
+            ON public.autonomy_runs AS RESTRICTIVE
+            FOR SELECT TO anon USING (false);
+        CREATE POLICY "akira_deny_anon_autonomy_insert"
+            ON public.autonomy_runs AS RESTRICTIVE
+            FOR INSERT TO anon WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_autonomy_update"
+            ON public.autonomy_runs AS RESTRICTIVE
+            FOR UPDATE TO anon USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_autonomy_delete"
+            ON public.autonomy_runs AS RESTRICTIVE
+            FOR DELETE TO anon USING (false);
+
+        INSERT INTO public.audit_log (
+            actor, action, resource, resource_id, status, detail
+        ) VALUES (
+            'system',
+            'autonomy.schema.v1',
+            'autonomy_runs',
+            NULL,
+            'success',
+            '{"schema":"autonomy.v1","scope":"controlled_autonomy","main_write":false,"merge":false,"human_approval":true}'::jsonb
+        )
+        ON CONFLICT DO NOTHING
+        """
+    ),
+    (
         "046_controlled_autonomy_runtime_registry",
         """
         INSERT INTO public.tools (
