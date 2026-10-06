@@ -276,10 +276,11 @@ ENTITIES = {
         ),
         "json_columns": ("input",),
         "mutable": ("current_stage", "status", "completed_at"),
-        "filterable": ("id", "trigger", "status", "current_stage", "idempotency_key"),
+        "filterable": ("id", "trigger", "status", "current_stage", "owner_scope", "idempotency_key"),
         "in_filterable": ("trigger", "status", "current_stage"),
         "orderable": ("created_at", "updated_at", "started_at", "completed_at"),
         "idempotent": True,
+        "idempotency_scope": ("owner_scope",),
     },
     "cognitive_events": {
         "table": "cognitive_events",
@@ -293,6 +294,7 @@ ENTITIES = {
         "in_filterable": ("cycle_id", "stage", "status"),
         "orderable": ("created_at", "updated_at"),
         "idempotent": True,
+        "idempotency_scope": ("cycle_id",),
     },
     "tools": {
         "table": "tools",
