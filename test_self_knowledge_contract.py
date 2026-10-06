@@ -267,6 +267,12 @@ class SelfKnowledgeSnapshotTests(unittest.TestCase):
             with self.assertRaises(ValidationError):
                 service.update_self_model({field: []}, current["version"], actor="test")
 
+    def test_selftest_capability_verification_key_changes_after_failed_state(self):
+        source = __import__("pathlib").Path("persistence/selftest.py").read_text(encoding="utf-8")
+        self.assertIn('"selftest:self_model_persistent:v1:"', source)
+        self.assertIn('str(capability.get("verification_state") or "unknown")', source)
+        self.assertIn('"selftest:self_knowledge_runtime:v1:"', source)
+
     def test_self_model_capability_projection_matches_authoritative_registry(self):
         service = PersistenceService(FakeRepo())
         model = service.get_self_model()

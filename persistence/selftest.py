@@ -895,7 +895,12 @@ def run_logic_tests(service, fresh_service_factory=None):
                 capability["id"],
                 event,
                 actor="selftest",
-                idempotency_key="selftest:self_model_persistent:v1:" + source_digest,
+                idempotency_key=(
+                    "selftest:self_model_persistent:v1:"
+                    + source_digest
+                    + ":"
+                    + str(capability.get("verification_state") or "unknown")
+                ),
             )
             effective = verification.get("effective_state")
             verified = effective == "verified" if ok else effective in ("failed", "stale")
@@ -1076,7 +1081,14 @@ def run_logic_tests(service, fresh_service_factory=None):
                 "evaluator": "system",
                 "error": None if ok else {"checks": checks},
             }
-            idem = "selftest:self_knowledge_runtime:v1:" + source_digest + ":" + snapshot_digest
+            idem = (
+                "selftest:self_knowledge_runtime:v1:"
+                + source_digest
+                + ":"
+                + snapshot_digest
+                + ":"
+                + str(capability.get("verification_state") or "unknown")
+            )
             verification = service.record_capability_verification(
                 capability["id"],
                 event,
