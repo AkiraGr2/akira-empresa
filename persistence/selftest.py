@@ -217,6 +217,9 @@ def _disable_test_agent(service):
     disabled = True
     try:
         service.update_agent(_TEST_AGENT_NAME, {"status": "disabled"}, actor="selftest")
+    except NotFoundError:
+        # Si ya no existe, el estado efectivo ya es "limpio".
+        disabled = True
     except Exception:
         disabled = False
     cleanup = _cleanup_test_agent_graph(service)
