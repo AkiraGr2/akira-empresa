@@ -17,6 +17,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from github_readonly import GitHubReadUpstreamError
+
 MAX_PROPOSAL_FILES = 4
 MAX_PROPOSAL_QUERIES = 8
 MAX_INSTRUCTION_CHARS = 4000
@@ -232,6 +234,59 @@ def _context_from_inspection(inspection: dict[str, Any]) -> str:
     return "\n\n".join(parts)[:60000]
 
 
+def _inspect_for_proposal(
+    inspect_repository: Callable[..., dict[str, Any]],
+    repo: str,
+    clean_paths: list[str],
+    clean_queries: list[str],
+) -> dict[str, Any]:
+    """Inspect proposal targets while treating an absent create-target as expected."""
+    try:
+        return inspect_repository(
+            repo,
+            paths=clean_paths,
+            max_files=len(clean_paths),
+            queries=clean_queries,
+        )
+    except GitHubReadUpstreamError as exc:
+        if str(exc) != "not_found":
+            raise
+
+        # A requested file may legitimately be absent when the proposal is to create it.
+        # Re-read repository metadata and each target independently so existing files
+        # remain usable as evidence while missing files become explicit evidence.
+        root_inspection = inspect_repository(
+            repo,
+            paths=[],
+            max_files=1,
+            queries=[],
+        )
+        files: list[dict[str, Any]] = []
+        for path in clean_paths:
+            try:
+                one = inspect_repository(
+                    repo,
+                    paths=[path],
+                    max_files=1,
+                    queries=clean_queries,
+                )
+                files.extend(one.get("files") or [])
+            except GitHubReadUpstreamError as inner:
+                if str(inner) != "not_found":
+                    raise
+                files.append({
+                    "path": path,
+                    "status": "absent_not_created",
+                    "mode": "create_target",
+                    "source_url": f"https://github.com/{repo}/blob/{root_inspection.get('branch', 'main')}/{path}",
+                })
+
+        result = dict(root_inspection)
+        result["files"] = files
+        result["read_only"] = True
+        return result
+
+
 def propose_code_change(
     inspect_repository: Callable[..., dict[str, Any]],
     repo: str,
@@ -247,11 +302,11 @@ def propose_code_change(
     if len(request) > MAX_INSTRUCTION_CHARS:
         raise SpecializedAgentError("instruction_too_long")
 
-    inspection = inspect_repository(
+    inspection = _inspect_for_proposal(
+        inspect_repository,
         repo,
-        paths=clean_paths,
-        max_files=len(clean_paths),
-        queries=clean_queries,
+        clean_paths,
+        clean_queries,
     )
     context = _context_from_inspection(inspection)
 
@@ -263,6 +318,8 @@ REGLAS:
 2. Usa únicamente la evidencia del repositorio entregada abajo.
 3. No inventes rutas, funciones o APIs que no aparezcan en la evidencia.
 4. Si falta contexto suficiente, devuelve status="blocked" y explica qué evidencia falta.
+   Una ruta solicitada con STATUS="absent_not_created" significa que el archivo no existe todavía;
+   esto es evidencia válida para una operación "create" y no debe tratarse como error por sí sola.
 5. La propuesta debe ser pequeña, reversible y concreta.
 6. Devuelve JSON con:
 {{
