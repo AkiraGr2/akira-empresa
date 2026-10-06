@@ -1,4 +1,5 @@
 import hashlib
+import specialized_agent_tools
 import tempfile
 import unittest
 from pathlib import Path
@@ -137,7 +138,7 @@ class ControlledAutonomyContractTests(unittest.TestCase):
                     "path": "README.md",
                     "operation": "modify",
                     "reason": "x",
-                    "patch": "--- a/README.md\\n+++ b/README.md\\n@@\\n-old\\n+new\\n",
+                    "patch": "--- a/README.md\n+++ b/README.md\n@@\n-old\n+new\n",
                 }],
             })
 
@@ -267,11 +268,11 @@ class ControlledAutonomyContractTests(unittest.TestCase):
             }
 
         malformed = (
-            "--- /dev/null\\n"
-            "+++ b/docs/new.txt\\n"
-            "@@\\n"
-            "+hola\\n"
-            "+mundo\\n"
+            "--- /dev/null\n"
+            "+++ b/docs/new.txt\n"
+            "@@\n"
+            "+hola\n"
+            "+mundo\n"
         )
         with patch("specialized_agent_tools._specialist_json_call", return_value={
             "status": "proposal",
@@ -296,12 +297,12 @@ class ControlledAutonomyContractTests(unittest.TestCase):
         self.assertIn("@@ -0,0 +1,2 @@", canonical)
         self.assertEqual(
             apply_unified_patch("", canonical, "docs/new.txt", "create"),
-            "hola\\nmundo\\n",
+            "hola\nmundo\n",
         )
 
     def test_generated_modify_patch_with_malformed_hunk_fails_closed(self):
         def inspector(repo, paths=None, max_files=8, queries=None):
-            return {"files": [{"path": "README.md", "status": "ok", "content": "hello\\n"}]}
+            return {"files": [{"path": "README.md", "status": "ok", "content": "hello\n"}]}
         with patch("specialized_agent_tools._specialist_json_call", return_value={
             "status": "proposal",
             "summary": "modify target",
@@ -309,7 +310,7 @@ class ControlledAutonomyContractTests(unittest.TestCase):
                 "path": "README.md",
                 "operation": "modify",
                 "reason": "test",
-                "patch": "--- a/README.md\\n+++ b/README.md\\n@@\\n-hello\\n+hola\\n",
+                "patch": "--- a/README.md\n+++ b/README.md\n@@\n-hello\n+hola\n",
             }],
             "tests": [], "risks": [],
         }):
