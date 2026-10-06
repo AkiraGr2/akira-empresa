@@ -111,6 +111,9 @@ jobs:
       - name: Test repair engine contract
         run: |
           python -m unittest test_repair_engine_contract -v
+      - name: Test evolution engine contract
+        run: |
+          python -m unittest test_evolution_engine_contract -v
 
       - name: Test self-knowledge contract
         run: |
