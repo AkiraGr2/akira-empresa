@@ -1393,7 +1393,7 @@ class PersistenceService:
                 candidate
                 and candidate.get("status") == "active"
                 and str(metadata.get("learning_id") or "") == str(learning_id)
-                and str(candidate.get("label") or "").strip() != _CORE_NODE_LABEL
+                and not _is_canonical_core_node(candidate)
             ):
                 node = candidate
                 break
@@ -1629,7 +1629,7 @@ class PersistenceService:
             if (
                 node
                 and str(metadata.get("learning_id") or "") == str(learning_id)
-                and str(node.get("label") or "").strip() != _CORE_NODE_LABEL
+                and not _is_canonical_core_node(node)
             ):
                 learning_node_ids.add(node_id)
         context = learning.get("learning_context") if isinstance(learning.get("learning_context"), dict) else {}
@@ -1644,7 +1644,7 @@ class PersistenceService:
             if (
                 promoted_node
                 and str(promoted_metadata.get("learning_id") or "") == str(learning_id)
-                and str(promoted_node.get("label") or "").strip() != _CORE_NODE_LABEL
+                and not _is_canonical_core_node(promoted_node)
             ):
                 learning_node_ids.add(promoted_node_id)
         archived_nodes = 0
