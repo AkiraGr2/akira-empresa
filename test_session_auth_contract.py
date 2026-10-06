@@ -37,7 +37,7 @@ class SessionAuthContractTests(unittest.TestCase):
         self.assertEqual(session["sub"], "google-sub-123")
         self.assertEqual(session["email"], "owner@example.com")
         self.assertTrue(session["is_owner"])
-        self.assertEqual(session["owner_scope"], "g:google-sub-123")
+        self.assertEqual(session["owner_scope"], "owner")
         self.assertEqual(session["exp"], exp)
 
     def test_owner_status_is_derived_from_server_owner_list(self):
