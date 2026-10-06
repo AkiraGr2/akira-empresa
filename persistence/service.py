@@ -494,6 +494,47 @@ class PersistenceService:
             if not isinstance(idempotency_key, str) or not 0 < len(idempotency_key.strip()) <= 200:
                 raise ValidationError("idempotency_key debe ser texto de 1 a 200 caracteres")
             record["idempotency_key"] = idempotency_key.strip()
+
+        # Capability names are globally unique canonical registry entries.
+        # Re-bootstrap must be idempotent by both the canonical name and,
+        # when supplied, the idempotency key. Conflicting definitions are
+        # rejected instead of being silently merged.
+        existing_by_key = []
+        if record.get("idempotency_key") is not None:
+            existing_by_key = self.repo.search(
+                "capabilities",
+                {"idempotency_key": record["idempotency_key"]},
+                limit=1,
+            )
+        existing_by_name = self.repo.search(
+            "capabilities",
+            {"name": clean["name"]},
+            limit=1,
+        )
+        existing = existing_by_key[0] if existing_by_key else (existing_by_name[0] if existing_by_name else None)
+        if existing is not None:
+            same_definition = all(existing.get(field) == clean.get(field) for field in clean)
+            same_idempotency = (
+                record.get("idempotency_key") is None
+                or existing.get("idempotency_key") == record.get("idempotency_key")
+            )
+            if same_definition and same_idempotency:
+                try:
+                    self.record_audit(
+                        actor,
+                        "capability.create.already_synced",
+                        "capabilities",
+                        existing.get("id"),
+                        "success",
+                        {"name": existing.get("name"), "idempotent": True},
+                    )
+                except Exception:
+                    pass
+                return {"outcome": "already_synced", "record": existing}
+            raise ConflictError(
+                f"capability ya registrada con contrato diferente: {clean['name']}"
+            )
+
         try:
             with self.repo.transaction() as tx:
                 stored, created = tx.create("capabilities", record)
