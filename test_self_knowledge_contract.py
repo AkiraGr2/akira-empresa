@@ -205,6 +205,13 @@ class SelfKnowledgeSnapshotTests(unittest.TestCase):
             with self.assertRaises(ValidationError):
                 validate_self_model({field: []}, partial=True)
 
+    def test_self_model_read_rejects_invalid_persisted_semantics(self):
+        from persistence.core import ValidationError
+        service = PersistenceService(FakeRepo())
+        service.repo.data["self_model"]["current_state"] = {"cycles_completed": -1}
+        with self.assertRaises(ValidationError):
+            service.get_self_model()
+
     def test_self_model_exposes_live_registry_projection(self):
         service = PersistenceService(FakeRepo())
         model = service.get_self_model()
