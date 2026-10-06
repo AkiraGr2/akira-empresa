@@ -3334,12 +3334,14 @@ def v8_tools_list(request: Request, category: str = None, status: str = None):
 
 @app.get("/api/v8/tools/invocations")
 def v8_tools_invocations(request: Request, tool_name: str = None, status: str = None, limit: int = 20):
-    s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None:
+        return _owner_error
     service = _persistence_service()
-    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     limit = max(1, min(int(limit), 100))
-    invocations = service.list_invocations(tool_name=tool_name, status=status, limit=limit)
+    invocations = service.list_invocations(tool_name=tool_name, status=status, actor=s["email"], limit=limit)
     return {"ok": True, "invocations": invocations, "count": len(invocations)}
 
 @app.post("/api/v8/github/read")
