@@ -713,20 +713,27 @@ def _self_model_record_list(field, value, allowed, *, max_items=50):
 def _validate_self_model_current_state(value):
     if not isinstance(value, dict):
         raise ValidationError("current_state debe ser un objeto (dict)")
-    allowed = {"last_cycle_id", "last_cycle_at", "last_cycle_trigger", "last_cycle_model", "cycles_completed", "last_observed_at"}
+    allowed = {
+        "last_cycle_id", "last_cycle_at", "last_cycle_trigger", "last_cycle_model",
+        "cycles_completed", "last_observed_at", "owner_observation", "owner_observation_at",
+    }
     extra = sorted(set(value) - allowed)
     if extra:
         raise ValidationError(f"current_state contiene campos no permitidos: {extra}")
     out = dict(value)
     if "last_cycle_id" in out:
         out["last_cycle_id"] = _self_model_text("current_state.last_cycle_id", out["last_cycle_id"], 128)
-    for key in ("last_cycle_at", "last_observed_at"):
+    for key in ("last_cycle_at", "last_observed_at", "owner_observation_at"):
         if key in out:
             out[key] = _self_model_iso(f"current_state.{key}", out[key])
     if "last_cycle_trigger" in out:
         out["last_cycle_trigger"] = _self_model_text("current_state.last_cycle_trigger", out["last_cycle_trigger"], 64)
     if "last_cycle_model" in out:
         out["last_cycle_model"] = _self_model_text("current_state.last_cycle_model", out["last_cycle_model"], 128)
+    if "owner_observation" in out:
+        out["owner_observation"] = _self_model_text(
+            "current_state.owner_observation", out["owner_observation"], 2000
+        )
     if "cycles_completed" in out:
         value = out["cycles_completed"]
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
