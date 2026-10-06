@@ -5239,27 +5239,38 @@ def v8_cancel_mission(request: Request, mission_id: str):
     s, _owner_error = _require_owner(request)
     if _owner_error is not None: return _owner_error
     service = _persistence_service()
-    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
 
     m = service.get_mission(mission_id, owner=s["email"])
-    if m is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    if m is None:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
     if m.get("status") != "running":
-        return JSONResponse({"ok": False, "reason": "invalid_status",
-                             "current_status": m.get("status"),
-                             "expected": "running"}, status_code=409)
+        return JSONResponse({
+            "ok": False,
+            "reason": "invalid_status",
+            "current_status": m.get("status"),
+            "expected": "running",
+        }, status_code=409)
 
-    from persistence.core import (ConflictError, NotFoundError, PersistenceError,
-                                   ValidationError)
+    from persistence.core import ConflictError, NotFoundError, PersistenceError, ValidationError
 
     _mark_mission_cancelled(mission_id)
-
     try:
-        paused = service.update_mission_status(mission_id, "paused", m["version"],
-                                                actor=s["email"], owner=s["email"])
+        cancelled = service.cancel_mission(
+            mission_id,
+            reason="cancelled_by_owner",
+            actor=s["email"],
+            owner=s["email"],
+        )
+        return {
+            "ok": True,
+            "mission": cancelled,
+            "mensaje": "Mision cancelada y tareas activas cerradas. El orquestador se detendra en el siguiente paso.",
+        }
     except ValidationError as e:
         _clear_mission_cancelled(mission_id)
-        return JSONResponse({"ok": False, "reason": "invalid_transition_paused",
-                             "detail": str(e)[:200]}, status_code=409)
+        return JSONResponse({"ok": False, "reason": "invalid_transition", "detail": str(e)[:200]}, status_code=409)
     except ConflictError:
         _clear_mission_cancelled(mission_id)
         return JSONResponse({"ok": False, "reason": "conflict"}, status_code=409)
@@ -5268,24 +5279,11 @@ def v8_cancel_mission(request: Request, mission_id: str):
         return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
     except PersistenceError as e:
         _clear_mission_cancelled(mission_id)
-        return JSONResponse({"ok": False, "reason": "storage",
-                             "error_type": type(e).__name__}, status_code=503)
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
     except Exception as e:
         _clear_mission_cancelled(mission_id)
-        return JSONResponse({"ok": False, "reason": "internal",
-                             "error_type": type(e).__name__}, status_code=500)
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
 
-    try:
-        cancelled = service.update_mission_status(mission_id, "cancelled", paused["version"],
-                                                   actor=s["email"], owner=s["email"])
-    except Exception as e:
-        return JSONResponse({"ok": False, "reason": "cancelled_transition_failed",
-                             "current_status": "paused",
-                             "detail": str(e)[:200],
-                             "mission": paused}, status_code=500)
-
-    return {"ok": True, "mission": cancelled,
-            "mensaje": "Mision cancelada. El orquestador se detendra en el siguiente paso."}
 
 # ============================================================
 # V8-Fase10.7.2: CONVERSACIONES
