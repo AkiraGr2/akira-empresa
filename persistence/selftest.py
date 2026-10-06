@@ -841,6 +841,7 @@ def run_logic_tests(service, fresh_service_factory=None):
             checks["fresh_connection_reproducible"] = (
                 model.get("purpose") == reread.get("purpose")
                 and model.get("current_state") == reread.get("current_state")
+                and model.get("knowledge_state") == reread.get("knowledge_state")
                 and model.get("uncertainties") == reread.get("uncertainties")
             )
             checks["capabilities_projection_present"] = bool(model.get("capabilities"))
@@ -984,10 +985,14 @@ def run_logic_tests(service, fresh_service_factory=None):
 
             required_capabilities = (
                 "session_auth",
+                "self_model_persistent",
                 "persistent_memory",
                 "memory_recall",
                 "learning_persistent",
                 "graph_persistent",
+                "evolution_engine_v1",
+                "repair_engine_v1",
+                "controlled_autonomy_v1",
                 "selftest_capability",
             )
             checks["authoritative_source"] = (
