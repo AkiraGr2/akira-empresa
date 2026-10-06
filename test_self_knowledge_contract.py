@@ -213,10 +213,12 @@ class SelfKnowledgeSnapshotTests(unittest.TestCase):
         model = service.get_self_model()
         self.assertEqual(model["models"], model_registry_snapshot()["routes"])
     def test_self_model_rejects_manual_derived_registry_updates(self):
-        from persistence.core import ValidationError, validate_self_model
+        from persistence.core import ValidationError
+        service = PersistenceService(FakeRepo())
+        current = service.get_self_model()
         for field in ("capabilities", "tools", "models"):
             with self.assertRaises(ValidationError):
-                validate_self_model({field: []}, partial=True)
+                service.update_self_model({field: []}, current["version"], actor="test")
 
     def test_self_model_read_rejects_invalid_persisted_semantics(self):
         from persistence.core import ValidationError
