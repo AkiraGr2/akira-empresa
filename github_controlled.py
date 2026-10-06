@@ -131,7 +131,7 @@ def fetch_text_file(repository: str, path: str, branch: str) -> dict[str, str]:
     if len(raw) > AUTONOMY_MAX_FILE_BYTES:
         raise ControlledGitHubError("file_too_large")
     return {
-        "content": raw.decode("utf-8", errors="replace"),
+        "content": raw.decode("utf-8", errors="strict"),
         "sha": str(data.get("sha") or "").strip(),
         "path": path,
     }
