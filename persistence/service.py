@@ -1844,6 +1844,15 @@ class PersistenceService:
 
     def register_agent(self, data, actor="system", idempotency_key=None):
         fields = validate_agent(data)
+        for tool_name in fields.get("allowed_tools") or []:
+            tool = self.get_tool_by_name(tool_name)
+            if tool is None:
+                raise NotFoundError(f"tool no existe: {tool_name}")
+            if tool.get("status") != "available":
+                raise ValidationError(f"tool no disponible: {tool_name}")
+            permissions = {str(p).strip().lower() for p in (tool.get("permissions") or [])}
+            if not permissions.intersection({"auth", "owner"}):
+                raise ValidationError(f"tool con permisos invalidos: {tool_name}")
         existing = self.repo.search("agents", {"name": fields.get("name")}, limit=1)
         if existing:
             current = existing[0]
@@ -1912,6 +1921,11 @@ class PersistenceService:
         if agent is None: raise NotFoundError(f"agente no existe: {agent_name}")
         tool = self.get_tool_by_name(tool_name)
         if tool is None: raise NotFoundError(f"tool no existe: {tool_name}")
+        if tool.get("status") != "available":
+            raise ValidationError(f"tool no disponible: {tool_name}")
+        tool_permissions = {str(p).strip().lower() for p in (tool.get("permissions") or [])}
+        if not tool_permissions.intersection({"auth", "owner"}):
+            raise ValidationError(f"tool con permisos invalidos: {tool_name}")
         allowed = agent.get("allowed_tools") or []
         if tool_name not in allowed:
             raise ValidationError(f"el agente {agent_name} no tiene permitido usar {tool_name}")
@@ -1957,6 +1971,11 @@ class PersistenceService:
         task = self.get_task(task_id, owner_scope=owner_scope)
         if task is None: raise NotFoundError(task_id)
         if task.get("status") != "pending": raise ValidationError(f"tarea ya esta {task['status']}")
+        agent = self.get_agent_by_name(task["agent_name"])
+        if agent is None:
+            raise NotFoundError(f"agente no existe: {task['agent_name']}")
+        if agent.get("status") not in ("idle", "error"):
+            raise ValidationError(f"agente ya esta {agent['status']}")
         changes = {"status": "running", "started_at": _now_iso()}
         current_action = f"ejecutando {task['tool_name']}"[:200]
         try:
@@ -2029,10 +2048,15 @@ class PersistenceService:
         return updated
 
     def get_task(self, task_id, owner_scope=None):
-        """Obtiene una tarea y aplica el owner_scope en consulta cuando es posible."""
+        """Obtiene una tarea aplicando ownership estricto cuando se solicita."""
         rec = self.repo.get("agent_tasks", task_id)
         if rec is not None:
-            return rec if owner_scope is None or _scope_matches(rec.get("owner_scope"), owner_scope) else None
+            if owner_scope is None:
+                return rec
+            scope = str(owner_scope).strip()
+            if not scope:
+                return None
+            return rec if str(rec.get("owner_scope") or "").strip() == scope else None
         try:
             filters = {"id": task_id}
             filters.update(_task_scope_filters(owner_scope))
