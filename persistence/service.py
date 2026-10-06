@@ -2560,6 +2560,8 @@ class PersistenceService:
             raise ValidationError(f"status invalido: {new_status!r}")
         self._validate_mission_transition(current.get("status"), new_status)
         changes = {"status": new_status}
+        if new_status == "running" and current.get("status") == "waiting_approval":
+            changes["authorized_by"] = owner or actor
         if new_status == "running" and not current.get("started_at"):
             changes["started_at"] = _now_iso()
         if new_status in ("completed", "failed", "cancelled") and not current.get("completed_at"):
