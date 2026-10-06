@@ -104,10 +104,7 @@ _SELF_MODEL_DEFAULTS = {
         {"name": "agents", "role": "agentes", "status": "verified"},
         {"name": "r2", "role": "almacenamiento", "status": "partial"},
     ],
-    "models": [
-        {"provider": "gemini", "model": "gemini-3.8-flash", "role": "primario"},
-        {"provider": "groq", "model": "openai/gpt-oss-120b", "role": "fallback"},
-    ],
+    "models": model_registry_snapshot()["routes"],
     "current_state": {}, "knowledge_state": {},
     "uncertainties": [
         {
