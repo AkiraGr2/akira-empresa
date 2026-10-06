@@ -78,6 +78,18 @@ class SelfKnowledgeSnapshotTests(unittest.TestCase):
         self.assertIn("owner_scope=owner_scope", cycle)
         self.assertNotIn('owner_scope=s["owner_scope"]', cycle)
 
+    def test_self_model_rejects_manual_derived_registry_updates(self):
+        from persistence.core import ValidationError, validate_self_model
+        for field in ("capabilities", "tools"):
+            with self.assertRaises(ValidationError):
+                validate_self_model({field: []}, partial=True)
+
+    def test_self_model_exposes_live_registry_projection(self):
+        service = PersistenceService(FakeRepo())
+        model = service.get_self_model()
+        self.assertEqual(model["capabilities"][0]["name"], "session_auth")
+        self.assertEqual(model["tools"][0]["name"], "github_repo_read")
+
 
 if __name__ == "__main__":
     unittest.main()
