@@ -38,7 +38,7 @@ from specialized_agent_tools import (
 
 from autonomy_engine import (
     ControlledAutonomyError,
-    approve_and_apply_controlled_autonomy,
+    apply_approved_controlled_autonomy,
     start_controlled_autonomy,
 )
 from persistence.autonomy import AutonomyContractError, AutonomyService
@@ -2059,7 +2059,7 @@ def v8_autonomy_act(request: Request, run_id: str):
     if service is None:
         return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     try:
-        run = approve_and_apply_controlled_autonomy(
+        run = apply_approved_controlled_autonomy(
             service,
             run_id=run_id,
             actor=s["email"],
