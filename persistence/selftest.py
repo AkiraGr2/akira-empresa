@@ -847,10 +847,9 @@ def run_logic_tests(service, fresh_service_factory=None):
             checks["capabilities_projection_present"] = bool(model.get("capabilities"))
             checks["tools_projection_present"] = bool(model.get("tools"))
             checks["models_projection_present"] = bool(model.get("models"))
-            checks["derived_registry_not_persisted_authority"] = all(
-                field not in service.repo.get("self_model", "akira_primary")
-                or field not in {"capabilities", "tools", "models"}
-                for field in ("capabilities", "tools", "models")
+            projected = service.capabilities_for_self_model(limit=200)
+            checks["derived_registry_projection_matches_authoritative_registry"] = (
+                model.get("capabilities") == projected
             )
             checks["knowledge_state_structured"] = (
                 isinstance(model.get("knowledge_state"), dict)
