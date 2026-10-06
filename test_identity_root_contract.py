@@ -87,7 +87,7 @@ class IdentityRootContractTests(unittest.TestCase):
         for node in tree.body:
             if isinstance(node, (ast.Assign, ast.FunctionDef)) and (
                 (isinstance(node, ast.Assign) and any(
-                    isinstance(tgt, ast.Name) and tgt.id == "_IDENTITY_LIKE_RE"
+                    isinstance(tgt, ast.Name) and tgt.id in {"_IDENTITY_BANNED_PHRASES", "_IDENTITY_LIKE_RE"}
                     for tgt in node.targets
                 ))
                 or (isinstance(node, ast.FunctionDef) and node.name == "_sanitize_memory_content")
