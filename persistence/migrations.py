@@ -1297,7 +1297,7 @@ MIGRATIONS = [
         ON CONFLICT DO NOTHING
         """
     ),
-,
+
     (
         "043_mission_task_cancellation_state",
         """
