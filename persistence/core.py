@@ -136,7 +136,7 @@ ENTITIES = {
             "repairs", "evolution",
         ),
         "mutable": (
-            "purpose", "capabilities", "tools", "models",
+            "purpose",
             "current_state", "knowledge_state", "uncertainties", "errors",
             "repairs", "evolution",
         ),
