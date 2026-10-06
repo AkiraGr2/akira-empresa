@@ -247,12 +247,13 @@ class ControlledAutonomyContractTests(unittest.TestCase):
                   "pr_draft": True, "merged": False}
         result = _record_controlled_autonomy_verification(service, run, action)
         self.assertEqual(result["effective_state"], "verified")
-        call = service.record_capability_verification.call_args.kwargs
-        self.assertEqual(call["idempotency_key"], "f14:e2e:autonomy_test_123")
-        self.assertEqual(call["data"]["test_key"], "controlled_autonomy_v1_e2e")
-        self.assertEqual(call["data"]["result"], "pass")
-        self.assertEqual(len(call["data"]["evidence"]), 3)
-        self.assertEqual(call["data"]["evidence"][1]["type"], "human_validation")
+        args, kwargs = service.record_capability_verification.call_args
+        self.assertEqual(kwargs["idempotency_key"], "f14:e2e:autonomy_test_123")
+        self.assertEqual(args[0], "cap_f14")
+        self.assertEqual(args[1]["test_key"], "controlled_autonomy_v1_e2e")
+        self.assertEqual(args[1]["result"], "pass")
+        self.assertEqual(len(args[1]["evidence"]), 3)
+        self.assertEqual(args[1]["evidence"][1]["type"], "human_validation")
 
     def test_controlled_gateway_contract_is_branch_only(self):
         source = Path("github_controlled.py").read_text(encoding="utf-8")
