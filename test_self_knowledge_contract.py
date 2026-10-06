@@ -70,6 +70,14 @@ class SelfKnowledgeSnapshotTests(unittest.TestCase):
         self.assertIn("python_test", snapshot["tools"][1]["name"])
         self.assertEqual(snapshot["limitations"][0].startswith("Los estados de capability"), True)
 
+    def test_cognitive_cycle_owner_scope_regression(self):
+        source = open("nexus.py", encoding="utf-8").read()
+        start = source.index("def _execute_cognitive_cycle(")
+        end = source.index('@app.post("/api/v8/cognitive/cycle")', start)
+        cycle = source[start:end]
+        self.assertIn("owner_scope=owner_scope", cycle)
+        self.assertNotIn('owner_scope=s["owner_scope"]', cycle)
+
 
 if __name__ == "__main__":
     unittest.main()
