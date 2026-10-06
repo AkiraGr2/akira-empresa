@@ -1831,35 +1831,13 @@ def run_logic_tests(service, fresh_service_factory=None):
 
     def t_capability_persistence():
         name = "TEST_CAPABILITY_PERSISTENCE"
-        key = "selftest:capability:v1"
-        payload = {
-            "name": "selftest_capability",
-            "description": "Fixture estable del Capability Engine.",
-            "category": "general",
-            "kind": "intrinsic",
-            "implementation_state": "implemented",
-            "verification_state": "unverified",
-            "availability_state": "available",
-            "maturity": "experimental",
-            "cost_compatibility": "unknown",
-            "dependencies": [],
-            "limitations": [],
-            "verification_spec": {
-                "method": "selftest",
-                "test_key": "capability_persistence",
-                "freshness_policy": {
-                    "mode": "on_change",
-                    "max_age_seconds": None,
-                    "invalidate_on": ["build_change", "dependency_change"],
-                },
-            },
-            "provenance": {"source": "selftest", "created_by": "selftest"},
-        }
-        try:
-            r = service.create_capability(payload, actor="selftest", idempotency_key=key)
-        except Exception as e:
-            return _res(name, False, f"create_capability fallo: {type(e).__name__}: {str(e)[:300]}")
-        cap = r["record"]
+
+        # El registry canonico ya contiene esta capability. El selftest debe
+        # comprobar su roundtrip sin intentar redefinir ni duplicar la entrada.
+        rows = service.list_capabilities(filters={"name": "selftest_capability"}, limit=1)
+        if not rows:
+            return _res(name, False, "capability canonica selftest_capability no existe")
+        cap = rows[0]
         evidence = [{
             "type": "selftest",
             "title": "Capability persistence roundtrip",
