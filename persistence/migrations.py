@@ -1043,7 +1043,7 @@ MIGRATIONS = [
         WHERE id = 'akira_primary'
           AND schema_version = 'self_model.v2'
         """
-    )
+    ),
 
 
     (
