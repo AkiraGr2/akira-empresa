@@ -95,6 +95,18 @@ class SensitiveRouteSecurityContract(unittest.TestCase):
                 "Public graph route must not query private graph persistence",
             )
 
+    def test_graph_mutation_routes_propagate_owner_scope(self):
+        reinforce = next(
+            r for r in self.routes
+            if (r["method"], r["path"]) == ("POST", "/api/v8/graph/reinforce")
+        )
+        cleanup = next(
+            r for r in self.routes
+            if (r["method"], r["path"]) == ("POST", "/api/v8/graph/cleanup_tests")
+        )
+        self.assertIn('owner_scope=s["owner_scope"]', reinforce["source"])
+        self.assertIn('{"owner_scope": s["owner_scope"]}', cleanup["source"])
+
     def test_no_sensitive_route_uses_client_identity_as_authority(self):
         forbidden = (
             'payload.get("is_owner"',
