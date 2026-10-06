@@ -369,6 +369,12 @@ class PersistenceService:
     def get_self_model(self):
         current = self.repo.get("self_model", SELF_MODEL_PRIMARY_ID)
         if current is not None:
+            persisted_fields = (
+                "purpose", "models", "current_state", "knowledge_state",
+                "uncertainties", "errors", "repairs", "evolution",
+            )
+            persisted = {field: current.get(field) for field in persisted_fields if field in current}
+            validate_self_model(persisted, partial=True)
             current["identity"] = self.get_identity_root()
             current["capabilities"] = self.capabilities_for_self_model(limit=200)
             current["tools"] = [
