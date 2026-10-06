@@ -2,6 +2,7 @@ import ast
 from pathlib import Path
 import ast
 import unittest
+import re
 
 from persistence.core import ValidationError, validate_self_model
 
