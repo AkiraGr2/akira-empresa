@@ -1450,7 +1450,7 @@ MIGRATIONS = [
             'cap_self_model_persistent',
             'self_model_persistent',
             'Self-Model persistente de Akira con singleton versionado, identidad autoritativa y proyecciones actuales de capabilities, tools y models.',
-            'self',
+            'identity',
             'composite',
             'implemented',
             'unverified',
