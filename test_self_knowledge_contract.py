@@ -82,6 +82,86 @@ class SelfKnowledgeSnapshotTests(unittest.TestCase):
         self.assertIn("owner_scope=owner_scope", cycle)
         self.assertNotIn('owner_scope=s["owner_scope"]', cycle)
 
+    def test_self_model_semantic_contract_rejects_unstructured_state(self):
+        from persistence.core import ValidationError, validate_self_model
+        with self.assertRaises(ValidationError):
+            validate_self_model({"current_state": {"cycles_completed": -1}}, partial=True)
+        with self.assertRaises(ValidationError):
+            validate_self_model({"uncertainties": ["legacy string"]}, partial=True)
+        with self.assertRaises(ValidationError):
+            validate_self_model({
+                "errors": [{
+                    "id": "e1",
+                    "type": "runtime",
+                    "message": "x",
+                    "status": "unknown",
+                    "first_seen_at": "2026-10-06T00:00:00+00:00",
+                    "last_seen_at": "2026-10-06T00:00:00+00:00",
+                }]
+            }, partial=True)
+
+    def test_self_model_semantic_contract_accepts_observed_state_and_records(self):
+        from persistence.core import validate_self_model
+        result = validate_self_model({
+            "current_state": {
+                "cycles_completed": 4,
+                "last_cycle_id": "cycle_1",
+                "last_cycle_at": "2026-10-06T01:00:00+00:00",
+                "last_observed_at": "2026-10-06T01:00:01+00:00",
+                "last_cycle_trigger": "manual",
+                "last_cycle_model": "gemini-3.8-flash",
+            },
+            "knowledge_state": {
+                "last_observed_at": "2026-10-06T01:00:00+00:00",
+                "sources": [{
+                    "id": "CapabilityEngine",
+                    "kind": "registry",
+                    "observed_at": "2026-10-06T01:00:00+00:00",
+                }],
+            },
+            "uncertainties": [{
+                "id": "u1",
+                "statement": "Hay una dependencia externa.",
+                "kind": "capability",
+                "status": "open",
+                "evidence": [],
+                "created_at": "2026-10-06T01:00:00+00:00",
+            }],
+            "errors": [{
+                "id": "e1",
+                "type": "runtime",
+                "message": "Ejemplo",
+                "status": "open",
+                "occurrences": 1,
+                "first_seen_at": "2026-10-06T01:00:00+00:00",
+                "last_seen_at": "2026-10-06T01:00:00+00:00",
+                "evidence": [],
+            }],
+            "repairs": [{
+                "id": "r1",
+                "target": "chat",
+                "reason": "corregir regresion",
+                "status": "completed",
+                "proposed_at": "2026-10-06T01:00:00+00:00",
+                "completed_at": "2026-10-06T01:05:00+00:00",
+                "evidence": [],
+                "result": "corregido y verificado",
+            }],
+            "evolution": [{
+                "id": "ev1",
+                "proposal": "mejorar contrato",
+                "rationale": "evitar ambiguedad",
+                "status": "proposed",
+                "proposed_at": "2026-10-06T01:00:00+00:00",
+                "evidence": [],
+            }],
+        }, partial=True)
+        self.assertEqual(result["current_state"]["cycles_completed"], 4)
+        self.assertEqual(result["uncertainties"][0]["status"], "open")
+        self.assertEqual(result["errors"][0]["occurrences"], 1)
+        self.assertEqual(result["repairs"][0]["status"], "completed")
+        self.assertEqual(result["evolution"][0]["status"], "proposed")
+
     def test_self_model_rejects_manual_derived_registry_updates(self):
         from persistence.core import ValidationError, validate_self_model
         for field in ("capabilities", "tools"):
