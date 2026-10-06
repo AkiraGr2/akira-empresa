@@ -1523,15 +1523,15 @@ MIGRATIONS = [
                             )
                         ) AS item
                     FROM jsonb_array_elements(uncertainties) item
-                    WHERE item->>'statement' = 'Los agentes existen; las misiones estan en construccion (Fase 10).'
+                    WHERE item->>'statement' = 'Los agentes existen' || chr(59) || ' las misiones estan en construccion (Fase 10).'
                     UNION ALL
                     SELECT item
                     FROM jsonb_array_elements(uncertainties) item
-                    WHERE item->>'statement' <> 'Los agentes existen; las misiones estan en construccion (Fase 10).'
+                    WHERE item->>'statement' <> 'Los agentes existen' || chr(59) || ' las misiones estan en construccion (Fase 10).'
                     UNION ALL
                     SELECT jsonb_build_object(
                         'id','uncertainty_missions_current_state',
-                        'statement','Mission Engine esta implementado, pero existen misiones en estados activos, fallidos y completados; la salud operacional del flujo debe seguir verificandose.',
+                        'statement','Mission Engine esta implementado, pero existen misiones en estados activos, fallidos y completados, y la salud operacional del flujo debe seguir verificandose.',
                         'kind','capability',
                         'status','open',
                         'evidence',jsonb_build_array(
