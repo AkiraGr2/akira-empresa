@@ -2180,6 +2180,9 @@ class PersistenceService:
 
     def reinforce_frequent_pairs(self, actor="auto-connect", limit_nodes=200, owner_scope=None):
         """Refuerza pares frecuentes de forma acotada y eficiente."""
+        scope = str(owner_scope).strip() if owner_scope is not None else ""
+        if owner_scope is not None and not scope:
+            raise ValidationError("owner_scope requerido")
         core = self.ensure_core_node(actor=actor)
         core_id = core["id"] if core else None
         reinforced = 0
@@ -2190,9 +2193,6 @@ class PersistenceService:
 
         try:
             memory_filters = {"status": "active"}
-            scope = str(owner_scope).strip() if owner_scope is not None else ""
-            if owner_scope is not None and not scope:
-                return {"reinforced": 0, "frequent_pairs": 0, "candidate_edges": 0, "connected_to_core": 0, "core_id": None}
             if scope:
                 memory_filters["owner_scope"] = scope
             memories = self.repo.search(
