@@ -143,6 +143,7 @@ class SelfKnowledgeSnapshotTests(unittest.TestCase):
                 "reason": "corregir regresion",
                 "status": "completed",
                 "proposed_at": "2026-10-06T01:00:00+00:00",
+                "started_at": "2026-10-06T01:02:00+00:00",
                 "completed_at": "2026-10-06T01:05:00+00:00",
                 "evidence": [],
                 "result": "corregido y verificado",
