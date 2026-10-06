@@ -1276,7 +1276,7 @@ MIGRATIONS = [
         ON CONFLICT DO NOTHING
         """
     ),
-,
+
     (
         "042_evolution_idempotency_index_hardening",
         """
