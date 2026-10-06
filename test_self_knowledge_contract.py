@@ -214,7 +214,7 @@ class SelfKnowledgeSnapshotTests(unittest.TestCase):
         self.assertEqual(model["models"], model_registry_snapshot()["routes"])
     def test_self_model_rejects_manual_derived_registry_updates(self):
         from persistence.core import ValidationError, validate_self_model
-        for field in ("capabilities", "tools"):
+        for field in ("capabilities", "tools", "models"):
             with self.assertRaises(ValidationError):
                 validate_self_model({field: []}, partial=True)
 
