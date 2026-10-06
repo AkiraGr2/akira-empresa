@@ -44,7 +44,7 @@ AUTONOMY_STATUS_TRANSITIONS = {
     "awaiting_approval": {"acting", "rejected", "cancelled"},
     "acting": {"external_applied", "failed"},
     "external_applied": {"evaluated", "failed"},
-    "evaluated": {"learned", "completed", "failed"},
+    "evaluated": {"learned", "failed"},
     "learned": {"completed", "failed"},
     "completed": set(),
     "rejected": set(),
@@ -334,6 +334,16 @@ class AutonomyService:
         validate_transition(current.get("status"), new_status)
         clean = dict(changes or {})
         clean["status"] = new_status
+        if new_status == "learned":
+            learning_reference = str(clean.get("learning_reference") or current.get("learning_reference") or "").strip()
+            if not learning_reference:
+                raise AutonomyContractError("learned_requires_learning_reference")
+        if new_status == "completed":
+            learning_reference = str(clean.get("learning_reference") or current.get("learning_reference") or "").strip()
+            if current.get("status") != "learned":
+                raise AutonomyContractError("completed_requires_learned")
+            if not learning_reference:
+                raise AutonomyContractError("completed_requires_learning_reference")
         if new_status != "observing" and not current.get("started_at"):
             clean["started_at"] = now_iso()
         if new_status in {"completed", "rejected", "failed", "cancelled"}:
