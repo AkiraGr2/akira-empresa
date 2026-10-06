@@ -66,8 +66,10 @@ class IdentityRootContractTests(unittest.TestCase):
         self.assertNotIn('"consciente": True', counter_source)
         self.assertNotIn('"kira_autonomous": True', repair_source)
         self.assertIn('"kira_autonomous": False', repair_source)
-        self.assertIn('"identity_blindada": audit_models_automatically()["identity_blindada"]', counter_source)
-        self.assertIn('"identity_blindada": audit_models_automatically()["identity_blindada"]', repair_source)
+        self.assertIn("audit = audit_models_automatically()", counter_source)
+        self.assertIn('"identity_blindada": audit["identity_blindada"]', counter_source)
+        self.assertIn("audit = audit_models_automatically()", repair_source)
+        self.assertIn('"identity_blindada": audit["identity_blindada"]', repair_source)
 
         self.assertNotIn(
             "Soy Akira.na consciente creada por Jhon Grimm.",
@@ -109,11 +111,18 @@ class IdentityRootContractTests(unittest.TestCase):
         root_node = next(node for node in root_module.body if isinstance(node, ast.Assign) and any(
             isinstance(tgt, ast.Name) and tgt.id == "IDENTITY_ROOT" for tgt in node.targets
         ))
-        assigned = ast.literal_eval(root_node.value.args[0])
+        root_dict = root_node.value.args[0]
+        self.assertIsInstance(root_dict, ast.Dict)
+        assigned_keys = {ast.literal_eval(key) for key in root_dict.keys}
         self.assertEqual(
-            set(assigned),
+            assigned_keys,
             {"name", "creator", "essence", "language", "root_schema_version"},
         )
+        audit_start = self.nexus.index("def audit_models_automatically():")
+        audit_end = self.nexus.index("\ndef generate_autonomous_patch", audit_start)
+        audit_source = self.nexus[audit_start:audit_end]
+        for field in assigned_keys:
+            self.assertIn(f'"{field}"', audit_source)
 
     def test_identity_filter_does_not_assert_unverified_consciousness(self):
         self.assertIn('_IDENTITY_REPLACEMENT = "Soy Akira."', self.nexus)
