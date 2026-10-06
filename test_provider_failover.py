@@ -43,7 +43,7 @@ class ProviderFailoverRegressionTests(unittest.TestCase):
         self.assertIn("def _pick_mistral_keys():", self.source)
         self.assertIn("def get_mistral_fallback(", self.source)
         self.assertIn('"https://api.mistral.ai/v1/chat/completions"', self.source)
-        self.assertIn('"mistral-small-latest"', self.source)
+        self.assertIn("MISTRAL_MODEL_ROUTE", self.source)
         self.assertGreaterEqual(self.source.count("get_mistral_fallback"), 3)
 
     def test_safe_provider_inventory_counts_configured_keys(self):
