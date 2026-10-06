@@ -75,6 +75,18 @@ class _CapabilityRepo:
 
 
 class CapabilityEngineContractTests(unittest.TestCase):
+    def test_runtime_capability_persistence_reuses_canonical_fixture(self):
+        source = Path("persistence/selftest.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        fn = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "t_capability_persistence"
+        )
+        fn_source = ast.get_source_segment(source, fn) or ""
+        self.assertIn('service.list_capabilities(filters={"name": "selftest_capability"}, limit=1)', fn_source)
+        self.assertNotIn('service.create_capability(payload', fn_source)
+
     def test_runtime_selftest_guard_receives_local_context(self):
         source = Path("persistence/selftest.py").read_text(encoding="utf-8")
         self.assertIn("def _guard(name, fn, service, created_ids):", source)
