@@ -5063,9 +5063,13 @@ def _memory_gate_decide(service, content, memory_type, importance, tags, actor, 
                     if str(row.get("owner_scope") or "owner") == str(owner_scope):
                         duplicate = row
                         break
-        except Exception:
-            # Un fallo de lectura no convierte una memoria en "no guardable".
-            pass
+        except Exception as exc:
+            return {
+                "allowed": False,
+                "decision": "reject",
+                "reason": "duplicate_check_unavailable",
+                "error_type": type(exc).__name__,
+            }
     if duplicate:
         return {
             "allowed": False,
