@@ -382,6 +382,38 @@ class AutonomyService:
             raise RuntimeError("autonomy_approval_not_confirmed")
         return verified
 
+    def reject(self, run_id: str, actor: str, owner_scope: str, reason: str = "rejected_by_owner") -> dict:
+        current = self.get_run(run_id, owner_scope=owner_scope)
+        if current is None:
+            raise KeyError(run_id)
+        if current.get("status") != "awaiting_approval":
+            raise AutonomyContractError("rejection_requires_awaiting_approval")
+        decision = {
+            "status": "rejected",
+            "rejected_by": _text("rejected_by", actor, 256),
+            "rejected_at": now_iso(),
+            "mode": "human",
+            "reason": _text("reason", reason, 1000),
+        }
+        with self.repo.transaction() as tx:
+            updated = tx.update(
+                "autonomy_runs", run_id,
+                {"decision": decision, "status": "rejected", "completed_at": now_iso()},
+                current["version"],
+            )
+            tx.append_audit({
+                "actor": actor,
+                "action": "autonomy.rejection",
+                "resource": "autonomy_runs",
+                "resource_id": run_id,
+                "status": "success",
+                "detail": {"rejected_by": actor, "reason": decision["reason"]},
+            })
+        verified = self.get_run(run_id, owner_scope=owner_scope)
+        if verified is None or verified.get("status") != "rejected":
+            raise RuntimeError("autonomy_rejection_not_confirmed")
+        return verified
+
     def record_failure(self, run_id: str, reason: str, actor: str, owner_scope: str) -> dict:
         current = self.get_run(run_id, owner_scope=owner_scope)
         if current is None:
