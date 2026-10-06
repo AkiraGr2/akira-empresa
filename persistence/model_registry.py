@@ -9,6 +9,7 @@ MODEL_ROUTE_SCHEMA_VERSION = "model_route.v1"
 
 MODEL_ROUTES = (
     {"provider": "gemini", "model": "gemini-3.8-flash", "role": "primary_chat"},
+    {"provider": "gemini", "model": "gemini-3.1-pro-preview", "role": "reasoning"},
     {"provider": "gemini", "model": "gemini-flash-latest", "role": "chat_fallback_variant"},
     {"provider": "groq", "model": "openai/gpt-oss-120b", "role": "fallback"},
     {"provider": "groq", "model": "openai/gpt-oss-20b", "role": "fallback"},
@@ -26,6 +27,7 @@ def model_registry_snapshot():
     }
 
 PRIMARY_CHAT_MODEL = "gemini-3.8-flash"
+GEMINI_REASONING_MODEL = "gemini-3.1-pro-preview"
 GEMINI_CHAT_FALLBACK_VARIANT = "gemini-flash-latest"
 GROQ_FALLBACK_MODELS = ("openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b")
 OPENROUTER_MODEL_ROUTE = "openrouter/free"
