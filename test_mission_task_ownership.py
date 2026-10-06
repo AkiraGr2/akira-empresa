@@ -244,6 +244,12 @@ class MissionTaskOwnershipTests(unittest.TestCase):
             )
 
     def test_cancel_mission_cascades_nonterminal_tasks_without_counting_failures(self):
+        agent = self.service.repo.get("agents", "agent_r")
+        agent["status"] = "busy"
+        agent["current_task_id"] = "t_b"
+        agent["current_action"] = "web_search"
+        agent["version"] = 2
+
         result = self.service.cancel_mission(
             "m_b",
             reason="cancelacion solicitada por propietario",
@@ -261,6 +267,8 @@ class MissionTaskOwnershipTests(unittest.TestCase):
         )
 
         agent = self.service.repo.get("agents", "agent_r")
+        self.assertEqual(agent["status"], "idle")
+        self.assertIsNone(agent["current_task_id"])
         self.assertEqual(agent["tasks_failed"], 0)
 
     def test_cancel_mission_leaves_completed_tasks_untouched(self):
