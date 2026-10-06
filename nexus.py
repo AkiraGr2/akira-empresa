@@ -531,32 +531,65 @@ app=FastAPI(title=PUBLIC_IDENTITY, lifespan=_akira_lifespan)
 class CORSFixMiddleware:
     def __init__(self, app):
         self.app = app
+
+    @staticmethod
+    def _request_headers(scope):
+        raw = scope.get("headers") or []
+        return {
+            (k.decode("latin-1") if isinstance(k, (bytes, bytearray)) else str(k)).lower():
+            (v.decode("latin-1") if isinstance(v, (bytes, bytearray)) else str(v))
+            for k, v in raw
+        }
+
+    def _cors_headers(self, scope):
+        request_headers = self._request_headers(scope)
+        origin = request_headers.get("origin")
+        requested_headers = request_headers.get(
+            "access-control-request-headers",
+            "content-type, authorization",
+        ).strip() or "content-type, authorization"
+
+        headers = [
+            (b"access-control-allow-methods", b"GET, POST, PUT, PATCH, DELETE, OPTIONS"),
+            (b"access-control-allow-headers", requested_headers.encode("latin-1")),
+            (b"access-control-max-age", b"3600"),
+            (b"vary", b"Origin"),
+        ]
+        if origin:
+            headers.append((b"access-control-allow-origin", origin.encode("latin-1")))
+            headers.append((b"access-control-allow-credentials", b"true"))
+        else:
+            headers.append((b"access-control-allow-origin", b"*"))
+        return headers
+
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+
+        cors_headers = self._cors_headers(scope)
+
         if scope["method"] == "OPTIONS":
             await send({
                 "type": "http.response.start",
                 "status": 204,
-                "headers": [
-                    (b"access-control-allow-origin", b"*"),
-                    (b"access-control-allow-methods", b"GET, POST, PUT, PATCH, DELETE, OPTIONS"),
-                    (b"access-control-allow-headers", b"content-type, authorization"),
-                    (b"access-control-max-age", b"3600"),
-                ],
+                "headers": cors_headers,
             })
             await send({"type": "http.response.body", "body": b""})
             return
+
         async def wrapped_send(message):
             if message["type"] == "http.response.start":
                 headers = list(message.get("headers", []))
-                headers = [(k, v) for k, v in headers if not k.lower().startswith(b"access-control-")]
-                headers.append((b"access-control-allow-origin", b"*"))
-                headers.append((b"access-control-allow-headers", b"content-type, authorization"))
-                headers.append((b"access-control-allow-methods", b"GET, POST, PUT, PATCH, DELETE, OPTIONS"))
+                headers = [
+                    (k, v) for k, v in headers
+                    if not k.lower().startswith(b"access-control-")
+                    and k.lower() != b"vary"
+                ]
+                headers.extend(cors_headers)
                 message["headers"] = headers
             await send(message)
+
         await self.app(scope, receive, wrapped_send)
 
 app.add_middleware(CORSFixMiddleware)
@@ -1922,7 +1955,7 @@ async def auth_google(request: Request):
             verified = True
             email = info["email"]
             is_owner = email.lower() in akira_auth.owner_emails(OWNER_EMAILS)
-            scope = akira_auth.owner_scope(info["sub"])
+            scope = "owner" if is_owner else akira_auth.owner_scope(info["sub"])
             session_token, expires_at, reason = akira_auth.issue_session(info["sub"], email)
     return {"user_id": hashlib.md5(email.encode()).hexdigest()[:12], "email": email,
             "is_owner": is_owner, "identity": "Akira", "verified": verified,

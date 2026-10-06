@@ -125,11 +125,15 @@ def verify_session(token, default_owner_emails=(), now=None):
     current = now if now is not None else time.time()
     if not isinstance(exp, int) or exp <= current or not sub or not email:
         return None
+    is_owner = str(email).lower() in owner_emails(default_owner_emails)
+    # The single-owner Akira persistent dataset is stored under the canonical
+    # owner scope. Verified non-owners keep per-sub isolation.
+    effective_scope = "owner" if is_owner else owner_scope(sub)
     return {
         "sub": str(sub),
         "email": str(email),
-        "is_owner": str(email).lower() in owner_emails(default_owner_emails),
-        "owner_scope": owner_scope(sub),
+        "is_owner": is_owner,
+        "owner_scope": effective_scope,
         "exp": exp,
     }
 

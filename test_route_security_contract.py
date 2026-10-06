@@ -168,6 +168,12 @@ class SensitiveRouteSecurityContract(unittest.TestCase):
                 "Public graph route must not query private graph persistence",
             )
 
+    def test_cors_preflight_reflects_request_origin_and_headers(self):
+        self.assertIn('request_headers.get("origin")', self.text)
+        self.assertIn('access-control-request-headers', self.text)
+        self.assertIn('access-control-allow-credentials', self.text)
+        self.assertIn('(b"vary", b"Origin")', self.text)
+
     def test_graph_mutation_routes_propagate_owner_scope(self):
         reinforce = next(
             r for r in self.routes
