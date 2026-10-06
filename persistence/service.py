@@ -66,7 +66,7 @@ MISSION_STATUS_TRANSITIONS = {
     "created":          ("planning", "cancelled"),
     "planning":         ("waiting_approval", "failed", "cancelled"),
     "waiting_approval": ("running", "cancelled"),
-    "running":          ("completed", "failed", "paused"),
+    "running":          ("completed", "failed", "paused", "cancelled"),
     "paused":           ("running", "cancelled", "failed"),
     "completed":        (),
     "failed":           (),
@@ -3320,25 +3320,114 @@ class PersistenceService:
 
     def cancel_mission(self, mission_id, reason=None, actor="system", owner=None):
         current = self.get_mission(mission_id, owner=owner)
-        if current is None: raise NotFoundError(mission_id)
+        if current is None:
+            raise NotFoundError(mission_id)
         changes = {"status": "cancelled"}
         if reason:
             changes["result"] = {"cancel_reason": str(reason)[:500]}
         if not current.get("completed_at"):
             changes["completed_at"] = _now_iso()
         self._validate_mission_transition(current.get("status"), "cancelled")
+
+        cancellation_reason = str(reason or "mission_cancelled")[:500]
         try:
             with self.repo.transaction() as tx:
                 updated = tx.update("missions", mission_id, changes, current["version"])
-                tx.append_audit({"actor": actor, "action": "mission.cancel",
-                    "resource": "missions", "resource_id": mission_id, "status": "success",
-                    "detail": {"from": current.get("status"), "reason": (str(reason)[:200] if reason else None)}})
+
+                mission_tasks = self.repo.search(
+                    "agent_tasks",
+                    {"mission_id": mission_id},
+                    limit=5000,
+                    offset=0,
+                    order_by="created_at",
+                    descending=False,
+                )
+                cancelled_tasks = []
+                for task in mission_tasks:
+                    if task.get("status") not in ("pending", "running"):
+                        continue
+                    task_changes = {
+                        "status": "cancelled",
+                        "outputs": {"cancel_reason": cancellation_reason},
+                        "completed_at": _now_iso(),
+                    }
+                    task_updated = tx.update(
+                        "agent_tasks",
+                        task["id"],
+                        task_changes,
+                        task["version"],
+                    )
+                    cancelled_tasks.append(task_updated["id"])
+
+                    agent = self.get_agent_by_name(task["agent_name"])
+                    if agent and agent.get("current_task_id") == task["id"]:
+                        tx.update(
+                            "agents",
+                            agent["id"],
+                            {
+                                "status": "idle",
+                                "current_task_id": None,
+                                "current_action": None,
+                                "last_active_at": _now_iso(),
+                            },
+                            agent["version"],
+                        )
+
+                    tx.append_audit({
+                        "actor": actor,
+                        "action": "agent.task.cancel",
+                        "resource": "agent_tasks",
+                        "resource_id": task["id"],
+                        "status": "success",
+                        "detail": {
+                            "mission_id": mission_id,
+                            "reason": cancellation_reason,
+                            "from": task.get("status"),
+                            "to": "cancelled",
+                        },
+                    })
+
+                tx.append_audit({
+                    "actor": actor,
+                    "action": "mission.cancel",
+                    "resource": "missions",
+                    "resource_id": mission_id,
+                    "status": "success",
+                    "detail": {
+                        "from": current.get("status"),
+                        "reason": cancellation_reason,
+                        "cancelled_task_count": len(cancelled_tasks),
+                    },
+                })
         except PersistenceError as e:
-            self._audit_failure_generic(actor, "mission.cancel", "missions", mission_id, e); raise
+            self._audit_failure_generic(actor, "mission.cancel", "missions", mission_id, e)
+            raise
         except Exception as e:
             self._audit_failure_generic(actor, "mission.cancel", "missions", mission_id, e)
             raise StorageError(type(e).__name__) from e
-        return self.get_mission(mission_id, owner=owner)
+
+        verified = self.get_mission(mission_id, owner=owner)
+        if verified is None or verified.get("status") != "cancelled":
+            raise VerificationError("cancelacion de mision no confirmada")
+
+        remaining = self.repo.search(
+            "agent_tasks",
+            {"mission_id": mission_id},
+            limit=5000,
+            offset=0,
+            order_by="created_at",
+            descending=False,
+        )
+        nonterminal = [
+            row["id"] for row in remaining
+            if row.get("status") in ("pending", "running")
+        ]
+        if nonterminal:
+            raise VerificationError(
+                f"mision cancelada con tareas no terminales: {nonterminal[:20]}"
+            )
+        return verified
+
 
     # ============================================================
     # V8-Fase10.7.2: CONVERSACIONES

@@ -78,7 +78,7 @@ AGENT_SCHEMA_VERSION = "agent.v1"
 AGENT_TASK_SCHEMA_VERSION = "agent_task.v1"
 
 AGENT_STATUSES = ("idle", "busy", "disabled", "error")
-AGENT_TASK_STATUSES = ("pending", "running", "completed", "failed")
+AGENT_TASK_STATUSES = ("pending", "running", "completed", "failed", "cancelled")
 
 AGENT_ROLES = (
     "researcher", "memorizer", "graph_builder", "learner",

@@ -102,6 +102,15 @@ class MissionTaskOwnershipTests(unittest.TestCase):
         source = Path("persistence/service.py").read_text(encoding="utf-8")
         self.assertIn('changes["authorized_by"] = owner or actor', source)
 
+    def test_mission_cancel_route_uses_cascade_service(self):
+        source = Path("nexus.py").read_text(encoding="utf-8")
+        start = source.index('@app.post("/api/v8/missions/{mission_id}/cancel")')
+        end = source.index("\n# ============================================================", start)
+        block = source[start:end]
+        self.assertIn("service.cancel_mission(", block)
+        self.assertNotIn('service.update_mission_status(mission_id, "paused"', block)
+        self.assertNotIn('service.update_mission_status(mission_id, "cancelled"', block)
+
     def test_orphan_mission_cleanup_is_boot_only(self):
         source = Path("nexus.py").read_text(encoding="utf-8")
         boot_call = "_cleanup_orphan_missions(_persistence_service())"
@@ -242,6 +251,50 @@ class MissionTaskOwnershipTests(unittest.TestCase):
                  "allowed_tools": ["bad_tool"]},
                 actor="selftest",
             )
+
+    def test_cancel_mission_cascades_nonterminal_tasks_without_counting_failures(self):
+        for agent in self.service.repo.rows["agents"]:
+            if agent["id"] == "agent_r":
+                agent["status"] = "busy"
+                agent["current_task_id"] = "t_b"
+                agent["current_action"] = "web_search"
+                agent["version"] = 2
+
+        result = self.service.cancel_mission(
+            "m_b",
+            reason="cancelacion solicitada por propietario",
+            actor="b@example.test",
+            owner="b@example.test",
+        )
+        self.assertEqual(result["status"], "cancelled")
+
+        task = self.service.get_task("t_b", owner_scope="scope:B")
+        self.assertIsNotNone(task)
+        self.assertEqual(task["status"], "cancelled")
+        self.assertEqual(
+            task["outputs"]["cancel_reason"],
+            "cancelacion solicitada por propietario",
+        )
+
+        agent = self.service.repo.get("agents", "agent_r")
+        self.assertEqual(agent["status"], "idle")
+        self.assertIsNone(agent["current_task_id"])
+        self.assertEqual(agent["tasks_failed"], 0)
+
+    def test_cancel_mission_leaves_completed_tasks_untouched(self):
+        self.service.repo.rows["agent_tasks"].append(
+            {"id": "t_completed", "owner_scope": "scope:B", "agent_name": "researcher",
+             "tool_name": "web_search", "status": "completed", "version": 1,
+             "mission_id": "m_b", "outputs": {}, "completed_at": "2026-10-06T00:00:00Z"}
+        )
+        self.service.cancel_mission(
+            "m_b",
+            reason="ya no se necesita",
+            actor="b@example.test",
+            owner="b@example.test",
+        )
+        task = self.service.get_task("t_completed", owner_scope="scope:B")
+        self.assertEqual(task["status"], "completed")
 
     def test_task_listing_is_owner_scoped(self):
         rows = self.service.list_tasks(owner_scope="scope:A", limit=50)
