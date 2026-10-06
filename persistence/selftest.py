@@ -22,6 +22,7 @@ from .core import (ConflictError, GRAPH_EDGE_SCHEMA_VERSION, GRAPH_NODE_SCHEMA_V
                    _SELF_MODEL_DERIVED_FIELDS,
                    validate_graph_edge, validate_graph_node, validate_memory, validate_learning_event)
 from .memory_recall import recall_memories
+from .model_registry import model_registry_snapshot, PRIMARY_CHAT_MODEL, GEMINI_REASONING_MODEL, GEMINI_CHAT_FALLBACK_VARIANT, GROQ_FALLBACK_MODELS, OPENROUTER_MODEL_ROUTE, MISTRAL_MODEL_ROUTE, MEMORY_EMBEDDING_MODEL
 from .capability import (
     CapabilityContractError,
     derive_effective_state,
@@ -308,6 +309,37 @@ def run_logic_tests(service, fresh_service_factory=None):
         except Exception as e:
             return _res(name, False, f"error inesperado: {type(e).__name__}")
         return _res(name, False, "identity fue aceptada por update_self_model")
+
+    def t_model_route_registry_contract():
+        name = "TEST_MODEL_ROUTE_REGISTRY_CONTRACT"
+        snapshot = model_registry_snapshot()
+        routes = {(row.get("provider"), row.get("model"), row.get("role")) for row in snapshot.get("routes") or []}
+        expected = {
+            ("gemini", PRIMARY_CHAT_MODEL, "primary_chat"),
+            ("gemini", GEMINI_REASONING_MODEL, "reasoning"),
+            ("gemini", GEMINI_CHAT_FALLBACK_VARIANT, "chat_fallback_variant"),
+            ("groq", GROQ_FALLBACK_MODELS[0], "fallback"),
+            ("groq", GROQ_FALLBACK_MODELS[1], "fallback"),
+            ("groq", GROQ_FALLBACK_MODELS[2], "fallback"),
+            ("openrouter", OPENROUTER_MODEL_ROUTE, "fallback_dynamic"),
+            ("mistral", MISTRAL_MODEL_ROUTE, "fallback"),
+            ("gemini", MEMORY_EMBEDDING_MODEL, "memory_embedding"),
+        }
+        missing = sorted(expected - routes)
+        duplicate_keys = []
+        seen = set()
+        for row in snapshot.get("routes") or []:
+            key = (row.get("provider"), row.get("model"), row.get("role"))
+            if key in seen:
+                duplicate_keys.append(key)
+            seen.add(key)
+        ok = snapshot.get("schema_version") == "model_route.v1" and not missing and not duplicate_keys
+        return _res(
+            name,
+            ok,
+            "registro de rutas activo, completo y sin duplicados"
+            if ok else f"faltantes={missing}; duplicados={duplicate_keys}; schema={snapshot.get('schema_version')}",
+        )
 
     def t_self_model_derived_fields_protected():
         name = "TEST_SELF_MODEL_DERIVED_FIELDS_PROTECTED"
@@ -1912,6 +1944,7 @@ def run_logic_tests(service, fresh_service_factory=None):
         ("TEST_IDENTITY_ROOT_CONTRACT", t_identity_root_contract),
         ("TEST_SELF_MODEL_IDENTITY_PROTECTED", t_self_model_identity_protected),
         ("TEST_SELF_MODEL_DERIVED_FIELDS_PROTECTED", t_self_model_derived_fields_protected),
+        ("TEST_MODEL_ROUTE_REGISTRY_CONTRACT", t_model_route_registry_contract),
         ("TEST_TRANSACTION_ROLLBACK", t_rollback),
         ("TEST_AGENT_TASK_PERSISTENCE", t_agent_task_persistence),
         ("TEST_AGENT_TASK_VALIDATION", t_agent_task_validation),
