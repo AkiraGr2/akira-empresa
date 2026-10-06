@@ -24,3 +24,10 @@ def model_registry_snapshot():
         "schema_version": MODEL_ROUTE_SCHEMA_VERSION,
         "routes": [dict(route) for route in MODEL_ROUTES],
     }
+
+PRIMARY_CHAT_MODEL = "gemini-3.8-flash"
+GEMINI_CHAT_FALLBACK_VARIANT = "gemini-flash-latest"
+GROQ_FALLBACK_MODELS = ("openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b")
+OPENROUTER_MODEL_ROUTE = "openrouter/free"
+MISTRAL_MODEL_ROUTE = "mistral-small-latest"
+MEMORY_EMBEDDING_MODEL = "gemini-embedding-2"
