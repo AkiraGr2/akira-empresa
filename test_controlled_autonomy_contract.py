@@ -189,11 +189,6 @@ class ControlledAutonomyContractTests(unittest.TestCase):
         current = service.get_run(run_id, owner_scope="scope:A")
         for status in ("delegating", "proposed", "sandboxed", "tested", "evaluating", "awaiting_approval"):
             service.advance(run_id, status, "owner@example.com", "scope:A")
-        with self.assertRaises(AutonomyContractError):
-            # approval is only legal in awaiting_approval, and transition itself
-            # advances to acting so it cannot be repeated.
-            service.approve(run_id, "owner@example.com", "scope:A")
-        # The loop reaches awaiting_approval; approval must be possible exactly once.
         approved = service.approve(run_id, "owner@example.com", "scope:A")
         self.assertEqual(approved["status"], "acting")
         self.assertEqual(approved["decision"]["approved_by"], "owner@example.com")
