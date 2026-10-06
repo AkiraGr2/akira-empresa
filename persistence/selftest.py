@@ -821,6 +821,92 @@ def run_logic_tests(service, fresh_service_factory=None):
                 except Exception:
                     pass
 
+    def t_self_model_persistent_capability():
+        name = "TEST_SELF_MODEL_PERSISTENT_CAPABILITY"
+        rows = service.list_capabilities(filters={"name": "self_model_persistent"}, limit=1)
+        if not rows:
+            return _res(name, False, "capacidad self_model_persistent no registrada por la migracion")
+        capability = rows[0]
+        checks = {}
+        try:
+            model = service.get_self_model()
+            fresh = fresh_service_factory() if fresh_service_factory else service
+            reread = fresh.get_self_model()
+            checks["singleton_present"] = model.get("id") == "akira_primary"
+            checks["schema_valid"] = model.get("schema_version") == "self_model.v2"
+            checks["identity_authority"] = (
+                model.get("identity", {}).get("name") == "Akira"
+                and reread.get("identity", {}).get("name") == "Akira"
+            )
+            checks["fresh_connection_reproducible"] = (
+                model.get("purpose") == reread.get("purpose")
+                and model.get("current_state") == reread.get("current_state")
+                and model.get("uncertainties") == reread.get("uncertainties")
+            )
+            checks["capabilities_projection_present"] = bool(model.get("capabilities"))
+            checks["tools_projection_present"] = bool(model.get("tools"))
+            checks["models_projection_present"] = bool(model.get("models"))
+            checks["derived_registry_not_persisted_authority"] = all(
+                field not in service.repo.get("self_model", "akira_primary")
+                or field not in {"capabilities", "tools", "models"}
+                for field in ("capabilities", "tools", "models")
+            )
+            checks["knowledge_state_structured"] = (
+                isinstance(model.get("knowledge_state"), dict)
+                and isinstance(model["knowledge_state"].get("sources"), list)
+                and len(model["knowledge_state"]["sources"]) >= 3
+            )
+            ok = all(checks.values())
+            source_digest = hashlib.sha256(
+                inspect.getsource(service.get_self_model).encode("utf-8")
+                + inspect.getsource(service.update_self_model).encode("utf-8")
+            ).hexdigest()[:16]
+            evidence = [{
+                "type": "selftest",
+                "title": "Persistent Self-Model contract",
+                "reference": "selftest:self-model-persistent/v1",
+                "summary": (
+                    "Singleton persistente, identidad autoritativa, relectura reproducible "
+                    "y proyecciones derivadas presentes."
+                    if ok else "El contrato del Self-Model persistente no supero todos los controles."
+                ),
+                "hash": source_digest,
+            }]
+            event = {
+                "event_type": "verification",
+                "test_key": "self_model_persistent_contract",
+                "test_version": "v1",
+                "result": "pass" if ok else "fail",
+                "evidence": evidence,
+                "environment": {"runtime": "selftest"},
+                "dependency_snapshot": [
+                    {"kind": "storage", "id": "PostgreSQL.self_model", "version": "self_model.v2"},
+                    {"kind": "authority", "id": "IdentityRoot", "version": "runtime"},
+                    {"kind": "registry", "id": "CapabilityEngine", "version": source_digest},
+                ],
+                "runtime_version": "selftest",
+                "build_ref": source_digest,
+                "actor": "selftest",
+                "executor": "selftest",
+                "evaluator": "system",
+                "error": None if ok else {"checks": checks},
+            }
+            verification = service.record_capability_verification(
+                capability["id"],
+                event,
+                actor="selftest",
+                idempotency_key="selftest:self_model_persistent:v1:" + source_digest,
+            )
+            effective = verification.get("effective_state")
+            verified = effective == "verified" if ok else effective in ("failed", "stale")
+            return _res(
+                name,
+                bool(ok and verified),
+                f"resultado={verification.get('outcome')}; effective_state={effective}; checks={checks}",
+            )
+        except Exception as exc:
+            return _res(name, False, f"excepcion {type(exc).__name__}: {str(exc)[:300]}")
+
     def t_self_knowledge_snapshot():
         name = "TEST_SELF_KNOWLEDGE_SNAPSHOT"
         snapshot = service.self_knowledge_snapshot(owner_scope="selftest")
@@ -2295,6 +2381,7 @@ def run_logic_tests(service, fresh_service_factory=None):
         ("TEST_SPECIALIZED_AGENTS_PERSISTENCE", t_specialized_agents_persistence),
         ("TEST_REPAIR_ENGINE_V1_CAPABILITY", t_repair_engine_v1_capability),
         ("TEST_EVOLUTION_ENGINE_V1_CAPABILITY", t_evolution_engine_v1_capability),
+        ("TEST_SELF_MODEL_PERSISTENT_CAPABILITY", t_self_model_persistent_capability),
         ("TEST_SELF_KNOWLEDGE_SNAPSHOT", t_self_knowledge_snapshot),
         ("TEST_SELF_KNOWLEDGE_RUNTIME_CAPABILITY", t_self_knowledge_runtime_capability),
         ("TEST_AGENT_TOOL_REFERENCE_INTEGRITY", t_agent_tool_reference_integrity),
