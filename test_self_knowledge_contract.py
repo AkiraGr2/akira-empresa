@@ -207,6 +207,35 @@ class SelfKnowledgeSnapshotTests(unittest.TestCase):
             }, partial=True)
 
 
+    def test_owner_observation_matches_admin_panel_contract(self):
+        from persistence.core import ValidationError, validate_self_model
+
+        result = validate_self_model({
+            "current_state": {
+                "owner_observation": "Auditoría F2 iniciada desde Control de Akira.",
+                "owner_observation_at": "2026-10-06T19:00:00+00:00",
+            }
+        }, partial=True)
+
+        self.assertEqual(
+            result["current_state"]["owner_observation"],
+            "Auditoría F2 iniciada desde Control de Akira.",
+        )
+        self.assertEqual(
+            result["current_state"]["owner_observation_at"],
+            "2026-10-06T19:00:00+00:00",
+        )
+
+        with self.assertRaises(ValidationError):
+            validate_self_model({
+                "current_state": {"owner_observation": ""},
+            }, partial=True)
+
+        with self.assertRaises(ValidationError):
+            validate_self_model({
+                "current_state": {"owner_observation_at": "no-es-fecha"},
+            }, partial=True)
+
     def test_self_model_models_follow_authoritative_registry(self):
         from persistence.model_registry import model_registry_snapshot
         service = PersistenceService(FakeRepo())
