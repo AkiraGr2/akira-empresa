@@ -48,7 +48,10 @@ class FakeRepo:
         }
 
     def get(self, entity, key):
-        return self.data.get(entity, {}).get(key) if isinstance(self.data.get(entity), dict) else None
+        rows = self.data.get(entity, {})
+        if entity == "self_model" and isinstance(rows, dict) and rows.get("id") == key:
+            return rows
+        return rows.get(key) if isinstance(rows, dict) else None
 
     def search(self, entity, filters=None, limit=100, offset=0, order_by="created_at", descending=True):
         rows = self.data.get(entity, [])
@@ -71,7 +74,8 @@ class SelfKnowledgeSnapshotTests(unittest.TestCase):
         self.assertEqual(snapshot["limitations"][0].startswith("Los estados de capability"), True)
 
     def test_cognitive_cycle_owner_scope_regression(self):
-        source = open("nexus.py", encoding="utf-8").read()
+        with open("nexus.py", encoding="utf-8") as handle:
+            source = handle.read()
         start = source.index("def _execute_cognitive_cycle(")
         end = source.index('@app.post("/api/v8/cognitive/cycle")', start)
         cycle = source[start:end]
