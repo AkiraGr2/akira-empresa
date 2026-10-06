@@ -3393,6 +3393,16 @@ def v8_tools_get(request: Request, name: str):
     return {"ok": True, "tool": tool}
 
 def _invoke_tool(service, tool_name, inputs, actor, owner_scope=None):
+    tool = service.get_tool_by_name(tool_name)
+    if tool is None:
+        return None, {"type": "ToolNotFoundError", "message": f"tool no registrada: {tool_name}"}
+    if tool.get("status") != "available":
+        return None, {"type": "ToolUnavailableError", "message": f"tool no disponible: {tool_name}"}
+    permissions = {str(p).strip().lower() for p in (tool.get("permissions") or [])}
+    if "owner" in permissions and owner_scope is None:
+        return None, {"type": "OwnerRequiredError", "message": f"la tool requiere owner_scope: {tool_name}"}
+    if not permissions or not permissions.intersection({"auth", "owner"}):
+        return None, {"type": "PermissionContractError", "message": f"permisos invalidos: {tool_name}"}
     if tool_name in {"developer_propose", "python_test", "code_review"} and owner_scope is None:
         return None, {"type": "OwnerRequiredError", "message": "las tools de agentes especializados requieren owner_scope"}
     if tool_name in {"memory_save", "memory_search"} and owner_scope is None:

@@ -1747,6 +1747,18 @@ class PersistenceService:
         existing = self.repo.search("tools", {"name": fields.get("name")}, limit=1)
         if existing:
             current = existing[0]
+            current_permissions = {
+                str(p).strip().lower()
+                for p in (current.get("permissions") or [])
+            }
+            incoming_permissions = {
+                str(p).strip().lower()
+                for p in (fields.get("permissions") or [])
+            }
+            if "owner" in current_permissions and "owner" not in incoming_permissions:
+                raise ConflictError(
+                    f"no se puede degradar permiso owner de la tool: {fields.get('name')}"
+                )
             mutable = set(entity_spec("tools")["mutable"])
             changes = {k: v for k, v in fields.items() if k in mutable}
             if not changes: return {"outcome": "already_synced", "record": current}

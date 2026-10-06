@@ -76,6 +76,27 @@ class _CapabilityRepo:
 
 
 class CapabilityEngineContractTests(unittest.TestCase):
+    def test_tool_registry_permission_downgrade_is_blocked(self):
+        source = Path("persistence/service.py").read_text(encoding="utf-8")
+        self.assertIn('if "owner" in current_permissions and "owner" not in incoming_permissions:', source)
+        self.assertIn('raise ConflictError(', source)
+
+    def test_tool_invocation_gateway_enforces_registry_contract(self):
+        source = Path("nexus.py").read_text(encoding="utf-8")
+        self.assertIn('tool = service.get_tool_by_name(tool_name)', source)
+        self.assertIn('if tool.get("status") != "available":', source)
+        self.assertIn('if "owner" in permissions and owner_scope is None:', source)
+        self.assertIn('if not permissions or not permissions.intersection({"auth", "owner"}):', source)
+
+    def test_selftest_only_verifies_sensitive_tool_permissions(self):
+        source = Path("persistence/selftest.py").read_text(encoding="utf-8")
+        start = source.index("def _ensure_tools(service):")
+        end = source.index("def _ensure_test_agent(service):")
+        block = source[start:end]
+        self.assertIn('permissions != {"owner"}', block)
+        self.assertNotIn("register_tool(", block)
+
+
     def test_runtime_capability_persistence_reuses_canonical_fixture(self):
         source = Path("persistence/selftest.py").read_text(encoding="utf-8")
         tree = ast.parse(source)
