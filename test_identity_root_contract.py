@@ -80,6 +80,28 @@ class IdentityRootContractTests(unittest.TestCase):
             self.nexus,
         )
 
+    def test_memory_identity_sanitizer_is_defined_and_surgical(self):
+        self.assertIn("_IDENTITY_LIKE_RE = re.compile(", self.nexus)
+        tree = ast.parse(self.nexus)
+        wanted = []
+        for node in tree.body:
+            if isinstance(node, (ast.Assign, ast.FunctionDef)) and (
+                (isinstance(node, ast.Assign) and any(
+                    isinstance(tgt, ast.Name) and tgt.id == "_IDENTITY_LIKE_RE"
+                    for tgt in node.targets
+                ))
+                or (isinstance(node, ast.FunctionDef) and node.name == "_sanitize_memory_content")
+            ):
+                wanted.append(node)
+        namespace = {"re": re}
+        exec(compile(ast.Module(body=wanted, type_ignores=[]), "memory-sanitizer-test", "exec"), namespace)
+        sanitize = namespace["_sanitize_memory_content"]
+        self.assertEqual(sanitize("Texto normal sobre IA."), "Texto normal sobre IA.")
+        self.assertEqual(
+            sanitize("El texto historico dice: soy ChatGPT y tambien habla de Akira."),
+            "El texto historico dice: [...] y tambien habla de Akira.",
+        )
+
     def test_identity_filter_is_surgical_at_runtime(self):
         tree = ast.parse(self.nexus)
         wanted = []
