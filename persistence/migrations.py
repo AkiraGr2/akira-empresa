@@ -1045,4 +1045,53 @@ MIGRATIONS = [
         """
     )
 
+
+    (
+        "033_self_model_uncertainty_semantics",
+        """
+        UPDATE public.self_model
+        SET
+            uncertainties = (
+                SELECT COALESCE(
+                    jsonb_agg(
+                        item || jsonb_build_object(
+                            'kind',
+                            CASE
+                                WHEN item ->> 'id' = 'legacy_uncertainty_49fe4a27ee84a15f7e48b0d63f0f7393' THEN 'evidence'
+                                WHEN item ->> 'id' = 'legacy_uncertainty_e4ded42eae594597a0cd67ad85ee240d' THEN 'capability'
+                                WHEN item ->> 'id' = 'legacy_uncertainty_c4564edd285b4240665393f0fee2ec97' THEN 'knowledge'
+                                WHEN item ->> 'id' = 'legacy_uncertainty_48e1e5e3b82d26e6ff57f16ee7c9b7ce' THEN 'capability'
+                                WHEN item ->> 'id' = 'legacy_uncertainty_b1e5f1e39e767c2d129faf2a010ba651' THEN 'runtime'
+                                ELSE COALESCE(item ->> 'kind', 'other')
+                            END
+                        )
+                    ),
+                    '[]'::jsonb
+                )
+                FROM jsonb_array_elements(uncertainties) AS item
+            ),
+            version = version + 1,
+            updated_at = now()
+        WHERE id = 'akira_primary'
+          AND schema_version = 'self_model.v2';
+
+        INSERT INTO public.audit_log (
+            actor, action, resource, resource_id, status, detail
+        )
+        SELECT
+            'system',
+            'self_model.uncertainty_semantics_refine',
+            'self_model',
+            id,
+            'success',
+            jsonb_build_object(
+                'schema', schema_version,
+                'reason', 'map legacy uncertainty kinds'
+            )
+        FROM public.self_model
+        WHERE id = 'akira_primary'
+          AND schema_version = 'self_model.v2'
+        """
+    )
+
 ]
