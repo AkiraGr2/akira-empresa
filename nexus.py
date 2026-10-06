@@ -292,14 +292,20 @@ def validate_model_before_call(model_name, context=""):
     return model_name, False
 
 _IDENTITY_BANNED_PHRASES = (
-    "soy chatgpt", "creado por openai", "soy un modelo de openai", "soy meta ai",
-    "i am chatgpt", "created by openai", "soy un modelo de lenguaje creado por openai",
-    "as an ai language model created by openai", "soy un modelo de inteligencia artificial",
-    "soy una inteligencia artificial", "soy un modelo de lenguaje", "soy una ia",
-    "no puedo asumir esa identidad", "no puedo adoptar la identidad",
-    "no puedo pretender ser", "no puedo afirmar que poseo conciencia",
-    "como modelo de lenguaje", "como modelo de inteligencia artificial",
-    "no soy akira", "no puedo ser akira",
+    # Solo bloquear autoidentificaciones/refusals que contradicen la identidad de Akira.
+    # No bloquear lenguaje genérico sobre modelos/IA ni declaraciones honestas de limitaciones.
+    "soy chatgpt",
+    "creado por openai",
+    "soy un modelo de openai",
+    "soy meta ai",
+    "i am chatgpt",
+    "created by openai",
+    "as an ai language model created by openai",
+    "no puedo asumir esa identidad",
+    "no puedo adoptar la identidad",
+    "no puedo pretender ser",
+    "no soy akira",
+    "no puedo ser akira",
 )
 
 _IDENTITY_REPLACEMENT = "Soy Akira."
@@ -313,12 +319,17 @@ def enforce_akira_identity_global(text):
     return text
 
 def audit_models_automatically():
+    """Valida el contrato completo del Identity Root en runtime, no solo su nombre."""
     try:
         root = get_identity_root()
-        identity_ok = (
-            root.get("name") == PUBLIC_IDENTITY
-            and root.get("root_schema_version") == IDENTITY_ROOT_VERSION
-        )
+        expected = {
+            "name": PUBLIC_IDENTITY,
+            "creator": "Jhon Grimm",
+            "essence": "Colmena cognitiva personal. Persistente, verificable, honesta sobre sus capacidades.",
+            "language": "es-CO",
+            "root_schema_version": IDENTITY_ROOT_VERSION,
+        }
+        identity_ok = root == expected
     except Exception:
         identity_ok = False
     return {
@@ -1809,11 +1820,12 @@ async def health():
 async def countermeasures(request: Request):
     s, _owner_error = _require_owner(request)
     if _owner_error is not None: return _owner_error
+    audit = audit_models_automatically()
     return {"blocked_models": list(KIRA_LEARNING_DB["blocked_models"]),
             "countermeasures_applied": KIRA_LEARNING_DB["countermeasures_applied"],
             "known_deprecated": len(KIRA_KNOWN_DEPRECATED),
-            "audit": audit_models_automatically(),
-            "identity_blindada": audit_models_automatically()["identity_blindada"]}
+            "audit": audit,
+            "identity_blindada": audit["identity_blindada"]}
 
 @app.get("/api/self-repair/status")
 async def self_repair_status(request: Request):
@@ -1826,9 +1838,10 @@ async def self_repair_status(request: Request):
 async def self_repair_propose(request: Request):
     s, _owner_error = _require_owner(request)
     if _owner_error is not None: return _owner_error
+    audit = audit_models_automatically()
     return {"kira_autonomous": False, "patch": generate_autonomous_patch(),
             "github": apply_autonomous_patch_github(),
-            "identity_blindada": audit_models_automatically()["identity_blindada"]}
+            "identity_blindada": audit["identity_blindada"]}
 
 @app.get("/api/brain/shared")
 async def brain_shared(request: Request):
