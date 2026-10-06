@@ -111,7 +111,7 @@ class MissionTaskOwnershipTests(unittest.TestCase):
         selftest_start = source.index("def v8_missions_selftest")
         selftest_end = source.index('@app.get("/api/v8/missions/{mission_id}/diagnose")')
         selftest_block = source[selftest_start:selftest_end]
-        self.assertIn("_selftest_missions_run()", selftest_block)
+        self.assertIn('_selftest_missions_run(owner=s["email"], owner_scope=s["owner_scope"])', selftest_block)
         self.assertNotIn("_cleanup_orphan_missions(", selftest_block)
 
     def test_mission_read_is_owner_scoped(self):
