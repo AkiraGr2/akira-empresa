@@ -158,6 +158,20 @@ def _now_iso():
 
 LEGACY_OWNER_SCOPE = "owner"
 
+def _is_canonical_core_node(node):
+    """True solo para el nodo núcleo canónico, activo y del scope legacy owner."""
+    if not isinstance(node, dict) or node.get("status") != "active":
+        return False
+    metadata = node.get("node_metadata") if isinstance(node.get("node_metadata"), dict) else {}
+    tags = {str(t).strip().lower() for t in (node.get("tags") or [])}
+    return (
+        str(node.get("node_type") or "").strip().lower() == "project"
+        and str(node.get("label") or "").strip() == _CORE_NODE_LABEL
+        and str(node.get("owner_scope") or "").strip() == LEGACY_OWNER_SCOPE
+        and not metadata.get("learning_id")
+        and {"core", "akira", "nucleo"}.issubset(tags)
+    )
+
 def _scope_matches(record_scope, owner_scope):
     if owner_scope is None:
         return True
@@ -1379,7 +1393,7 @@ class PersistenceService:
                 candidate
                 and candidate.get("status") == "active"
                 and str(metadata.get("learning_id") or "") == str(learning_id)
-                and str(candidate.get("label") or "").strip() != _CORE_NODE_LABEL
+                and not _is_canonical_core_node(candidate)
             ):
                 node = candidate
                 break
@@ -1615,7 +1629,7 @@ class PersistenceService:
             if (
                 node
                 and str(metadata.get("learning_id") or "") == str(learning_id)
-                and str(node.get("label") or "").strip() != _CORE_NODE_LABEL
+                and not _is_canonical_core_node(node)
             ):
                 learning_node_ids.add(node_id)
         context = learning.get("learning_context") if isinstance(learning.get("learning_context"), dict) else {}
@@ -1630,7 +1644,7 @@ class PersistenceService:
             if (
                 promoted_node
                 and str(promoted_metadata.get("learning_id") or "") == str(learning_id)
-                and str(promoted_node.get("label") or "").strip() != _CORE_NODE_LABEL
+                and not _is_canonical_core_node(promoted_node)
             ):
                 learning_node_ids.add(promoted_node_id)
         archived_nodes = 0
@@ -1986,7 +2000,7 @@ class PersistenceService:
             if not metadata.get("suppress_tag_auto_connect"):
                 try: self.auto_connect_node_tags(verified["id"], actor=actor, owner_scope=verified.get("owner_scope"))
                 except Exception as e: print(f"[auto-connect] node_tags fallo: {type(e).__name__}: {str(e)[:200]}")
-            if str(verified.get("label", "")).strip() != _CORE_NODE_LABEL:
+            if not _is_canonical_core_node(verified):
                 try: self.connect_to_core(verified["id"], actor=actor, weight=0.25)
                 except Exception as e: print(f"[core] connect fallo: {type(e).__name__}: {str(e)[:200]}")
         return {"outcome": "created" if created else "already_synced", "record": verified}
@@ -2000,7 +2014,8 @@ class PersistenceService:
             if not scope:
                 return None
             node_scope = str(node.get("owner_scope") or "").strip()
-            is_core = str(node.get("label") or "").strip().lower() == _CORE_NODE_LABEL.lower()
+            is_core = _is_canonical_core_node(node)
+
             if node_scope != scope and not is_core:
                 return None
         return node
@@ -2077,12 +2092,14 @@ class PersistenceService:
                 raise ValidationError("owner_scope requerido")
             def _accessible(node):
                 node_scope = str(node.get("owner_scope") or "").strip()
-                is_core = str(node.get("label") or "").strip().lower() == _CORE_NODE_LABEL.lower()
+                is_core = _is_canonical_core_node(node)
                 return node_scope == scope or is_core
+
             if not _accessible(from_record) or not _accessible(to_record):
                 raise NotFoundError("grafo fuera del owner_scope")
-            from_core = str(from_record.get("label") or "").strip().lower() == _CORE_NODE_LABEL.lower()
-            to_core = str(to_record.get("label") or "").strip().lower() == _CORE_NODE_LABEL.lower()
+            from_core = _is_canonical_core_node(from_record)
+            to_core = _is_canonical_core_node(to_record)
+
             from_scope = str(from_record.get("owner_scope") or "").strip()
             to_scope = str(to_record.get("owner_scope") or "").strip()
             if not (from_core or to_core) and from_scope != to_scope:
@@ -2166,7 +2183,7 @@ class PersistenceService:
             core = self.repo.search(
                 "graph_nodes", {"status": "active", "label": _CORE_NODE_LABEL}, limit=1
             )
-            if core and all(str(r.get("id")) != str(core[0].get("id")) for r in rows):
+            if core and _is_canonical_core_node(core[0]) and all(str(r.get("id")) != str(core[0].get("id")) for r in rows):
                 rows = [core[0]] + rows
         return rows[:limit]
 
@@ -2708,8 +2725,9 @@ class PersistenceService:
             return None
         from_scope = str(from_record.get("owner_scope") or "").strip()
         to_scope = str(to_record.get("owner_scope") or "").strip()
-        from_core = str(from_record.get("label") or "").strip().lower() == _CORE_NODE_LABEL.lower()
-        to_core = str(to_record.get("label") or "").strip().lower() == _CORE_NODE_LABEL.lower()
+        from_core = _is_canonical_core_node(from_record)
+        to_core = _is_canonical_core_node(to_record)
+
         if owner_scope is not None:
             scope = str(owner_scope).strip()
             if not scope:
@@ -3005,11 +3023,7 @@ class PersistenceService:
         for n in rows:
             metadata = n.get("node_metadata") if isinstance(n.get("node_metadata"), dict) else {}
             tags = set(str(t).strip().lower() for t in (n.get("tags") or []))
-            if (
-                str(n.get("label", "")).strip() == _CORE_NODE_LABEL
-                and not metadata.get("learning_id")
-                and {"core", "akira", "nucleo"}.issubset(tags)
-            ):
+            if _is_canonical_core_node(n):
                 return n
         try:
             r = self.create_node({
@@ -3032,11 +3046,7 @@ class PersistenceService:
                 for existing in rows:
                     metadata = existing.get("node_metadata") if isinstance(existing.get("node_metadata"), dict) else {}
                     tags = set(str(t).strip().lower() for t in (existing.get("tags") or []))
-                    if (
-                        str(existing.get("label", "")).strip() == _CORE_NODE_LABEL
-                        and not metadata.get("learning_id")
-                        and {"core", "akira", "nucleo"}.issubset(tags)
-                    ):
+                    if _is_canonical_core_node(existing):
                         return existing
             except Exception:
                 pass

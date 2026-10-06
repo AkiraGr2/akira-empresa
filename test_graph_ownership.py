@@ -34,10 +34,11 @@ class FakeRepo:
     def __init__(self):
         self.rows = {
             "graph_nodes": [
-                {"id": "core", "label": "Akira", "owner_scope": "system", "status": "active", "version": 1},
+                {"id": "core", "label": "Akira", "owner_scope": "owner", "status": "active", "version": 1, "node_type": "project", "tags": ["core", "akira", "nucleo"]},
                 {"id": "a1", "label": "A", "owner_scope": "scope:A", "status": "active", "version": 1},
                 {"id": "b1", "label": "B", "owner_scope": "scope:B", "status": "active", "version": 1},
-                {"id": "legacy", "label": "Legacy", "owner_scope": "owner", "status": "active", "version": 1},
+                {"id": "legacy", "label": "Legacy", "owner_scope": "owner", "status": "active", "version": 1, "node_type": "concept", "tags": []},
+                {"id": "impostor", "label": "Akira", "owner_scope": "scope:B", "status": "active", "version": 1, "node_type": "project", "tags": ["core", "akira", "nucleo"]},
                 {"id": "archived", "label": "Archived", "owner_scope": "scope:A", "status": "archived", "version": 1},
             ],
             "graph_edges": [
@@ -76,6 +77,21 @@ class GraphOwnershipTests(unittest.TestCase):
 
     def test_legacy_owner_node_is_not_visible_to_scoped_owner(self):
         self.assertIsNone(self.service.get_node("legacy", owner_scope="scope:A"))
+
+    def test_fake_akira_label_is_not_a_core_exception(self):
+        self.assertIsNone(self.service.get_node("impostor", owner_scope="scope:A"))
+        with self.assertRaises(NotFoundError):
+            self.service.create_edge(
+                {"from_node": "a1", "to_node": "impostor", "relation_type": "related_to"},
+                owner_scope="scope:A",
+            )
+
+    def test_internal_upsert_rejects_fake_akira_core(self):
+        self.assertIsNone(
+            self.service._upsert_edge(
+                "a1", "impostor", "related_to", owner_scope="scope:A"
+            )
+        )
 
     def test_list_graph_nodes_does_not_leak_legacy_owner_nodes(self):
         ids = {n["id"] for n in self.service.list_graph_nodes(owner_scope="scope:A")}
