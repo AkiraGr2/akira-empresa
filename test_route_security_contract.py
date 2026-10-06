@@ -63,6 +63,14 @@ class SensitiveRouteSecurityContract(unittest.TestCase):
             "Sensitive route(s) without centralized owner guard: " + ", ".join(missing),
         )
 
+    def test_tool_invocation_history_is_owner_protected(self):
+        route = next(
+            r for r in self.routes
+            if (r["method"], r["path"]) == ("GET", "/api/v8/tools/invocations")
+        )
+        self.assertIn("_require_owner(request)", route["source"])
+        self.assertIn('actor=s["email"]', route["source"])
+
     def test_conversation_routes_preserve_row_ownership_boundary(self):
         expected = {
             ("POST", "/api/v8/conversations"),
