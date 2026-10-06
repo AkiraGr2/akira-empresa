@@ -37,6 +37,7 @@ class FakeRepo:
                 {"id": "core", "label": "Akira", "owner_scope": "system", "status": "active", "version": 1},
                 {"id": "a1", "label": "A", "owner_scope": "scope:A", "status": "active", "version": 1},
                 {"id": "b1", "label": "B", "owner_scope": "scope:B", "status": "active", "version": 1},
+                {"id": "legacy", "label": "Legacy", "owner_scope": "owner", "status": "active", "version": 1},
             ],
             "graph_edges": [
                 {"id": "e1", "from_node": "a1", "to_node": "core", "status": "active", "version": 1},
@@ -71,6 +72,13 @@ class GraphOwnershipTests(unittest.TestCase):
         self.assertIsNotNone(self.service.get_node("a1", owner_scope="scope:A"))
         self.assertIsNone(self.service.get_node("b1", owner_scope="scope:A"))
         self.assertIsNotNone(self.service.get_node("core", owner_scope="scope:A"))
+
+    def test_legacy_owner_node_is_not_visible_to_scoped_owner(self):
+        self.assertIsNone(self.service.get_node("legacy", owner_scope="scope:A"))
+
+    def test_list_graph_nodes_does_not_leak_legacy_owner_nodes(self):
+        ids = {n["id"] for n in self.service.list_graph_nodes(owner_scope="scope:A")}
+        self.assertNotIn("legacy", ids)
 
     def test_edge_visibility_requires_both_endpoints_to_be_accessible(self):
         self.assertIsNotNone(self.service.get_edge("e1", owner_scope="scope:A"))
