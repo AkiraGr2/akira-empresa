@@ -1448,7 +1448,7 @@ MIGRATIONS = [
         VALUES (
             'tool_controlled_autonomy_start',
             'controlled_autonomy_start',
-            'Inicia la autonomia controlada F14 hasta una compuerta de aprobacion humana, sin aprobar ni aplicar cambios.',
+            'Inicia la autonomia controlada F14 hasta una compuerta de aprobacion humana; no aprueba ni aplica cambios.',
             'code',
             '["owner"]'::jsonb,
             '{"goal":"str","repository":"str","base_branch":"str","paths":"list","instruction":"str","queries":"list","tests":"list","idempotency_key":"str"}'::jsonb,
@@ -1461,10 +1461,12 @@ MIGRATIONS = [
         )
         ON CONFLICT (name) DO NOTHING;
 
-        SELECT 1 / CASE
+        SELECT CASE
             WHEN status = 'available'
              AND permissions = '["owner"]'::jsonb
-            THEN 1 ELSE 0 END
+            THEN 1
+            ELSE 1 / 0
+        END
         FROM public.tools
         WHERE name = 'controlled_autonomy_start';
 
@@ -1476,7 +1478,7 @@ MIGRATIONS = [
             'agent_autonomy_orchestrator',
             'autonomy_orchestrator',
             'autonomy_orchestrator',
-            'Orquesta autonomia controlada hasta aprobacion humana, sin aprobar ni aplicar el cambio.',
+            'Orquesta autonomia controlada hasta aprobacion humana; nunca puede aprobar ni aplicar el cambio.',
             '["controlled_autonomy_start"]'::jsonb,
             'idle',
             'agent.v1',
@@ -1484,11 +1486,13 @@ MIGRATIONS = [
         )
         ON CONFLICT (name) DO NOTHING;
 
-        SELECT 1 / CASE
+        SELECT CASE
             WHEN 'controlled_autonomy_start' = ANY (
                 SELECT jsonb_array_elements_text(allowed_tools)
             )
-            THEN 1 ELSE 0 END
+            THEN 1
+            ELSE 1 / 0
+        END
         FROM public.agents
         WHERE name = 'autonomy_orchestrator';
 
@@ -1512,6 +1516,4 @@ MIGRATIONS = [
         )
         """
     ),
-
-
 ]
