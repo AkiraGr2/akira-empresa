@@ -372,7 +372,7 @@ class PersistenceService:
         current = self.repo.get("self_model", SELF_MODEL_PRIMARY_ID)
         if current is not None:
             persisted_fields = (
-                "purpose", "models", "current_state", "knowledge_state",
+                "purpose", "current_state", "knowledge_state",
                 "uncertainties", "errors", "repairs", "evolution",
             )
             persisted = {field: current.get(field) for field in persisted_fields if field in current}
