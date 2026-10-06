@@ -1103,5 +1103,22 @@ MIGRATIONS = [
         """
     ),
 
+    (
+        "035_graph_owner_scoped_uniqueness",
+        """
+        DROP INDEX IF EXISTS graph_nodes_idempotency_key_uq;
+        CREATE UNIQUE INDEX graph_nodes_owner_idempotency_key_uq
+            ON public.graph_nodes (owner_scope, idempotency_key);
+
+        DROP INDEX IF EXISTS graph_nodes_active_type_label_uq;
+        CREATE UNIQUE INDEX graph_nodes_owner_active_type_label_uq
+            ON public.graph_nodes (owner_scope, node_type, lower(label))
+            WHERE status = 'active';
+
+        DROP INDEX IF EXISTS graph_edges_idempotency_key_uq;
+        CREATE UNIQUE INDEX graph_edges_endpoint_idempotency_key_uq
+            ON public.graph_edges (from_node, to_node, relation_type, idempotency_key);
+        """
+    ),
 
 ]

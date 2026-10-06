@@ -1,7 +1,7 @@
 import unittest
 
 from persistence.capability import derive_effective_state
-from persistence.core import GRAPH_EDGE_SCHEMA_VERSION, GRAPH_NODE_SCHEMA_VERSION
+from persistence.core import GRAPH_EDGE_SCHEMA_VERSION, GRAPH_NODE_SCHEMA_VERSION, entity_spec
 from persistence.service import LEGACY_OWNER_SCOPE, _scope_matches
 
 
@@ -12,6 +12,16 @@ class GraphPersistentContractTests(unittest.TestCase):
         self.assertTrue(_scope_matches("g:user-A", "g:user-A"))
         self.assertFalse(_scope_matches("g:user-B", "g:user-A"))
         self.assertTrue(_scope_matches(LEGACY_OWNER_SCOPE, "g:user-A"))
+
+    def test_graph_idempotency_is_scope_aware(self):
+        self.assertEqual(
+            entity_spec("graph_nodes")["idempotency_scope"],
+            ("owner_scope",),
+        )
+        self.assertEqual(
+            entity_spec("graph_edges")["idempotency_scope"],
+            ("from_node", "to_node", "relation_type"),
+        )
 
     def test_verified_effective_state(self):
         record = {
