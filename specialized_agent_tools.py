@@ -235,7 +235,7 @@ def _canonicalize_generated_patch(change: dict[str, Any]) -> dict[str, Any]:
         raise SpecializedAgentError(f"proposal_patch_path_mismatch:{path}")
 
     hunk_indexes = [i for i, line in enumerate(lines) if line.startswith("@@")]
-    hunk_pattern = re.compile(r"^@@ -(\\d+)(?:,(\\d+))? \\+(\\d+)(?:,(\\d+))? @@")
+    hunk_pattern = re.compile(r"^@@ -(\d+)(?:,(\d+))? \\+(\d+)(?:,(\d+))? @@")
     if operation != "create":
         if not hunk_indexes or any(
             not hunk_pattern.fullmatch(lines[i].rstrip("\n")) for i in hunk_indexes
