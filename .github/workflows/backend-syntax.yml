@@ -20,7 +20,7 @@ jobs:
 
       - name: Compile backend Python
         run: |
-          python -m py_compile nexus.py persistence/core.py persistence/service.py persistence/migrations.py
+          python -m py_compile nexus.py persistence/core.py persistence/service.py persistence/migrations.py persistence/repair.py
 
       - name: Compile all Python modules
         run: |
@@ -107,6 +107,10 @@ jobs:
       - name: Test mission and task ownership contract
         run: |
           python -m unittest test_mission_task_ownership -v
+
+      - name: Test repair engine contract
+        run: |
+          python -m unittest test_repair_engine_contract -v
 
       - name: Test self-knowledge contract
         run: |
