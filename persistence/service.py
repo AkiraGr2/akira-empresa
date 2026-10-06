@@ -1361,9 +1361,11 @@ class PersistenceService:
             return None
         if owner_scope is not None:
             scope = str(owner_scope).strip()
+            if not scope:
+                return None
             node_scope = str(node.get("owner_scope") or "").strip()
             is_core = str(node.get("label") or "").strip().lower() == _CORE_NODE_LABEL.lower()
-            if not _scope_matches(node_scope, scope) and not is_core:
+            if node_scope != scope and not is_core:
                 return None
         return node
 
@@ -2176,7 +2178,7 @@ class PersistenceService:
                 break
         return {"memory_node": memory_node["id"], "connected": connected}
 
-    def reinforce_frequent_pairs(self, actor="auto-connect", limit_nodes=200):
+    def reinforce_frequent_pairs(self, actor="auto-connect", limit_nodes=200, owner_scope=None):
         """Refuerza pares frecuentes de forma acotada y eficiente."""
         core = self.ensure_core_node(actor=actor)
         core_id = core["id"] if core else None
@@ -2187,9 +2189,15 @@ class PersistenceService:
         max_edge_updates = 80
 
         try:
+            memory_filters = {"status": "active"}
+            scope = str(owner_scope).strip() if owner_scope is not None else ""
+            if owner_scope is not None and not scope:
+                return {"reinforced": 0, "frequent_pairs": 0, "candidate_edges": 0, "connected_to_core": 0, "core_id": None}
+            if scope:
+                memory_filters["owner_scope"] = scope
             memories = self.repo.search(
                 "memories",
-                {"status": "active"},
+                memory_filters,
                 limit=500,
                 order_by="created_at",
                 descending=True,
@@ -2209,9 +2217,12 @@ class PersistenceService:
             )[:max_pairs]
             frequent_pairs = len(frecuentes)
 
+            node_filters = {"status": "active"}
+            if scope:
+                node_filters["owner_scope"] = scope
             nodes = self.repo.search(
                 "graph_nodes",
-                {"status": "active"},
+                node_filters,
                 limit=max(1, min(int(limit_nodes), 200)),
             )
             tags_index = {}
@@ -2278,6 +2289,7 @@ class PersistenceService:
                     "candidate_edges": candidate_edges,
                     "connected_to_core": connected_to_core,
                     "core_id": core_id,
+                    "owner_scope": scope or None,
                     "bounded": True,
                     "max_pairs": max_pairs,
                     "max_edge_updates": max_edge_updates,
