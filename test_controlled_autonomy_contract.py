@@ -13,9 +13,10 @@ from persistence.autonomy import (
     validate_transition,
 )
 from github_controlled import ControlledGitHubError, apply_unified_patch
-from specialized_agent_tools import run_python_tests_in_workspace
+from specialized_agent_tools import run_python_tests_in_workspace, propose_code_change
 from autonomy_engine import _record_controlled_autonomy_verification
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
+from github_readonly import GitHubReadUpstreamError
 
 
 class FakeTx:
@@ -197,6 +198,48 @@ class ControlledAutonomyContractTests(unittest.TestCase):
         with self.assertRaises(AutonomyContractError):
             service.approve(run_id, "owner@example.com", "scope:A")
 
+    def test_developer_proposal_accepts_absent_create_target(self):
+        calls = []
+
+        def inspector(repo, paths=None, max_files=8, queries=None):
+            calls.append(list(paths or []))
+            if paths:
+                raise GitHubReadUpstreamError("not_found")
+            return {
+                "ok": True,
+                "operation": "inspect_repository",
+                "repository": repo,
+                "branch": "main",
+                "head_commit_sha": "a" * 40,
+                "root": [{"name": "docs", "path": "docs", "type": "dir", "size_bytes": 0}],
+                "files": [],
+                "total_bytes": 0,
+            }
+
+        with patch("specialized_agent_tools._specialist_json_call", return_value={
+            "status": "proposal",
+            "summary": "create target",
+            "changes": [{
+                "path": "docs/new.txt",
+                "operation": "create",
+                "reason": "test",
+                "patch": "--- /dev/null\n+++ b/docs/new.txt\n@@ -0,0 +1 @@\n+hola\n",
+            }],
+            "tests": [],
+            "risks": [],
+        }):
+            result = propose_code_change(
+                inspector,
+                "AkiraGr2/akira-empresa",
+                ["docs/new.txt"],
+                "Crea el archivo solicitado.",
+                ["docs/new.txt"],
+            )
+
+        self.assertEqual(result["status"], "proposal")
+        self.assertEqual(len(calls), 2)
+        self.assertIn("docs/new.txt", calls[0])
+        self.assertEqual(calls[1], [])
     def test_workspace_testing_uses_non_shell_commands(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
