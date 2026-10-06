@@ -409,4 +409,57 @@ CONTROLLED_AUTONOMY_CAPABILITY = {
     },
 }
 
-BASE_CAPABILITIES = (SESSION_AUTH_CAPABILITY, SELF_MODEL_PERSISTENT_CAPABILITY, PERSISTENT_MEMORY_CAPABILITY, MEMORY_RECALL_CAPABILITY, LEARNING_PERSISTENT_CAPABILITY, GRAPH_PERSISTENT_CAPABILITY, EVOLUTION_ENGINE_CAPABILITY, CONTROLLED_AUTONOMY_CAPABILITY)
+
+KNOWLEDGE_PERSISTENT_CAPABILITY = {
+    "name": "knowledge_persistent",
+    "description": "Knowledge de primera clase persistido y verificable, separado de Memory y Learning, con provenance, estado de verificacion, versionado, ownership, privacidad y referencias controladas al Graph.",
+    "category": "knowledge",
+    "kind": "composite",
+    "implementation_state": "implemented",
+    "verification_state": "unverified",
+    "availability_state": "available",
+    "maturity": "experimental",
+    "cost_compatibility": "free",
+    "dependencies": [
+        {"kind": "service", "id": "PersistenceService.save_knowledge", "required": True},
+        {"kind": "service", "id": "PersistenceService.update_knowledge", "required": True},
+        {"kind": "service", "id": "PersistenceService.verify_knowledge", "required": True},
+        {"kind": "storage", "id": "PostgreSQL.knowledge_records", "required": True},
+        {"kind": "security", "id": "owner_scope", "required": True},
+        {"kind": "graph", "id": "GraphNode references", "required": True},
+    ],
+    "limitations": [
+        "Knowledge no se materializa automaticamente desde cualquier memoria: requiere una operacion explicita y provenance.",
+        "knowledge_records.related_nodes se valida contra nodos activos accesibles por owner_scope.",
+        "Un knowledge verificado pierde esa verificacion cuando cambia su contenido factual y requiere nueva evidencia.",
+        "La migracion 049 refuerza tambien las aristas del grafo con FKs RESTRICT; los datos historicos legacy se conservan.",
+    ],
+    "verification_spec": {
+        "method": "selftest",
+        "test_key": "knowledge_persistent_contract",
+        "freshness_policy": {
+            "mode": "on_change",
+            "max_age_seconds": None,
+            "invalidate_on": [
+                "build_change",
+                "dependency_change",
+                "knowledge_schema_change",
+                "graph_schema_change",
+                "ownership_change",
+            ],
+        },
+    },
+    "provenance": {
+        "source": "architecture_rebaseline_f4",
+        "created_by": "system",
+        "basis": [
+            "persistence/core.py",
+            "persistence/service.py",
+            "persistence/postgres.py",
+            "persistence/migrations.py",
+            "test_knowledge_persistent_contract.py",
+        ],
+    },
+}
+
+BASE_CAPABILITIES = (SESSION_AUTH_CAPABILITY, SELF_MODEL_PERSISTENT_CAPABILITY, PERSISTENT_MEMORY_CAPABILITY, MEMORY_RECALL_CAPABILITY, LEARNING_PERSISTENT_CAPABILITY, GRAPH_PERSISTENT_CAPABILITY, KNOWLEDGE_PERSISTENT_CAPABILITY, EVOLUTION_ENGINE_CAPABILITY, CONTROLLED_AUTONOMY_CAPABILITY)
