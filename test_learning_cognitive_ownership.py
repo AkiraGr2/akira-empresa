@@ -40,9 +40,11 @@ class FakeRepo:
             "cognitive_cycles": [
                 {"id": "cycle_a", "owner_scope": "scope:A", "status": "in_progress", "version": 1},
                 {"id": "cycle_b", "owner_scope": "scope:B", "status": "in_progress", "version": 1},
+                {"id": "cycle_legacy", "owner_scope": "owner", "status": "completed", "version": 1},
             ],
-            "cognitive_events": [],
-        }
+            "cognitive_events": [
+                {"id": "event_a", "cycle_id": "cycle_a", "stage": "observe", "status": "success", "version": 1},
+            ]
 
     def get(self, entity, record_id):
         for row in self.rows.get(entity, []):
@@ -75,6 +77,23 @@ class OwnershipServiceTests(unittest.TestCase):
     def test_learning_list_is_scoped(self):
         rows = self.service.search_learning(owner_scope="scope:A", limit=50)
         self.assertEqual({r["id"] for r in rows}, {"learn_a"})
+
+    def test_legacy_cognitive_cycle_is_not_visible_to_scoped_owner(self):
+        self.assertIsNone(self.service.get_cycle("cycle_legacy", owner_scope="scope:A"))
+
+    def test_cognitive_cycle_listing_is_strictly_scoped(self):
+        rows = self.service.list_cycles(owner_scope="scope:A", limit=50)
+        self.assertEqual({r["id"] for r in rows}, {"cycle_a"})
+
+    def test_cognitive_cycle_event_lookup_follows_parent_scope(self):
+        self.assertEqual(
+            self.service.list_cycle_events("cycle_a", owner_scope="scope:A")[0]["id"],
+            "event_a",
+        )
+        self.assertEqual(
+            self.service.list_cycle_events("cycle_a", owner_scope="scope:B"),
+            [],
+        )
 
     def test_cognitive_cycle_is_scoped_and_events_follow_parent(self):
         self.assertIsNotNone(self.service.get_cycle("cycle_a", owner_scope="scope:A"))
