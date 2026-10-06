@@ -117,7 +117,7 @@ SELF_MODEL_PERSISTENT_CAPABILITY = {
     ],
     "limitations": [
         "Capabilities, tools y models son proyecciones derivadas y no son editables manualmente dentro del self-model.",
-        "El self-model persistente conserva incertidumbres históricas; el runtime self-knowledge prioriza fuentes autoritativas actuales.",
+        "El self-model persistente conserva incertidumbres históricas, y el runtime self-knowledge prioriza fuentes autoritativas actuales.",
         "La verificación de escritura se cubre por el contrato de persistencia y el runtime no altera la identidad raíz.",
     ],
     "verification_spec": {
