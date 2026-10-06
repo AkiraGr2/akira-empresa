@@ -34,6 +34,37 @@ class LearningPersistentContractTests(unittest.TestCase):
             fn_source,
         )
 
+    def test_graph_and_learning_idempotency_are_owner_scoped(self):
+        source = Path("persistence/core.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        fn = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "entity_spec"
+        )
+        self.assertIn('"idempotency_scope": ("owner_scope",)', source)
+
+    def test_learning_selftest_propagates_owner_scope(self):
+        source = Path("nexus.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        fn = next(
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "v8_learning_selftest"
+        )
+        fn_source = ast.get_source_segment(source, fn) or ""
+        self.assertIn(
+            'owner_scope=s["owner_scope"]',
+            fn_source,
+        )
+        self.assertIn(
+            'current_teach = service.get_learning(teach_id, owner_scope=s["owner_scope"])',
+            fn_source,
+        )
+        self.assertIn(
+            'actor=s["email"],\n                owner_scope=s["owner_scope"],',
+            fn_source,
+        )
+
     def test_runtime_selftest_persists_capability_verification(self):
         source = Path("persistence/selftest.py").read_text(encoding="utf-8")
         tree = ast.parse(source)
