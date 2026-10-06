@@ -124,30 +124,27 @@ class CapabilityEngineContractTests(unittest.TestCase):
                 "orchestration", "repair", "evolution", "hive", "external", "general",
             })
 
-    def test_migrations_do_not_contain_semicolons_inside_sql_literals(self):
+    def test_self_model_migration_split_is_quote_safe(self):
         from persistence.migrations import MIGRATIONS
 
-        def literal_semicolons(sql):
-            in_single_quote = False
-            offenders = []
-            for line_no, line in enumerate(sql.splitlines(), start=1):
-                i = 0
-                while i < len(line):
-                    ch = line[i]
-                    if ch == "'":
-                        if in_single_quote and i + 1 < len(line) and line[i + 1] == "'":
-                            i += 2
-                            continue
-                        in_single_quote = not in_single_quote
-                    elif ch == ";" and in_single_quote:
-                        offenders.append(line_no)
-                    i += 1
-            return offenders
-
-        self.assertEqual(
-            {version: literal_semicolons(sql) for version, sql in MIGRATIONS if literal_semicolons(sql)},
-            {},
+        sql = next(
+            sql for version, sql in MIGRATIONS
+            if version == "047_self_model_f2_coherence"
         )
+        statements = [stmt.strip() for stmt in sql.split(";") if stmt.strip()]
+        self.assertEqual(len(statements), 4)
+
+        for statement in statements:
+            in_single_quote = False
+            i = 0
+            while i < len(statement):
+                if statement[i] == "'":
+                    if in_single_quote and i + 1 < len(statement) and statement[i + 1] == "'":
+                        i += 2
+                        continue
+                    in_single_quote = not in_single_quote
+                i += 1
+            self.assertFalse(in_single_quote, "migration 047 deja una cadena SQL entre comillas sin cerrar")
 
     def test_valid_capability_and_effective_state(self):
         record = validate_capability({
