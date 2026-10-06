@@ -1130,4 +1130,17 @@ MIGRATIONS = [
         """
     ),
 
+    (
+        "037_cognitive_owner_scoped_idempotency",
+        """
+        DROP INDEX IF EXISTS cognitive_cycles_idempotency_key_uq;
+        CREATE UNIQUE INDEX cognitive_cycles_owner_idempotency_key_uq
+            ON public.cognitive_cycles (owner_scope, idempotency_key);
+
+        DROP INDEX IF EXISTS cognitive_events_idempotency_key_uq;
+        CREATE UNIQUE INDEX cognitive_events_cycle_idempotency_key_uq
+            ON public.cognitive_events (cycle_id, idempotency_key);
+        """
+    ),
+
 ]
