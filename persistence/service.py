@@ -574,6 +574,8 @@ class PersistenceService:
             changes["status"] = "cancelled"
             changes["completed_at"] = _now_iso()
         elif new_stage == "failed":
+            if not current.get("started_at"):
+                changes["started_at"] = _now_iso()
             changes["status"] = "failed"
             changes["completed_at"] = _now_iso()
         elif new_stage != "detected":
