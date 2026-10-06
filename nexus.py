@@ -3068,7 +3068,10 @@ def v8_graph_reinforce(request: Request):
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     try:
-        result = service.reinforce_frequent_pairs(actor=s["email"])
+        result = service.reinforce_frequent_pairs(
+            actor=s["email"],
+            owner_scope=s["owner_scope"],
+        )
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "reinforce_failed",
                              "error_type": type(e).__name__, "detail": str(e)[:200]}, status_code=500)
@@ -3085,7 +3088,11 @@ def v8_graph_cleanup_tests(request: Request):
     try:
         # Incluye test_* ya archivados para que la limpieza sea idempotente y
         # pueda retirar cualquier arista activa que haya quedado colgando.
-        nodes = service.repo.search("graph_nodes", {}, limit=2000)
+        nodes = service.repo.search(
+            "graph_nodes",
+            {"owner_scope": s["owner_scope"]},
+            limit=2000,
+        )
     except Exception as e:
         return JSONResponse(
             {"ok": False, "reason": "search_failed", "error_type": type(e).__name__},
