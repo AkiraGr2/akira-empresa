@@ -466,6 +466,353 @@ class PersistenceService:
         current = self.repo.get("self_model", SELF_MODEL_PRIMARY_ID)
         return None if current is None else current.get("version")
 
+    # ---------- REPAIR ENGINE v1 ----------
+    def create_repair(self, target, reason, action_type, actor="system", owner_scope=None):
+        from .repair import repair_action_allowed
+        target = str(target).strip()
+        reason = str(reason).strip()
+        scope = str(owner_scope or "").strip()
+        action_type = str(action_type).strip()
+        if not target or not reason or not scope:
+            raise ValidationError("target, reason y owner_scope son obligatorios")
+        if not repair_action_allowed(action_type):
+            raise ValidationError(f"action_type de repair no permitido: {action_type}")
+
+        current = self.get_self_model()
+        repairs = list(current.get("repairs") or [])
+        record = {
+            "id": new_id("repair"),
+            "target": target,
+            "reason": reason,
+            "status": "proposed",
+            "stage": "detected",
+            "action_type": action_type,
+            "owner_scope": scope,
+            "proposed_at": _now_iso(),
+            "evidence": [],
+            "result": "",
+        }
+        repairs.append(record)
+        updated = self.update_self_model(
+            {"repairs": repairs},
+            current["version"],
+            actor=actor,
+        )
+        verified = next((r for r in updated.get("repairs", []) if r.get("id") == record["id"]), None)
+        if verified is None:
+            raise VerificationError("repair no confirmada al releer")
+        return verified
+
+    def get_repair(self, repair_id, owner_scope=None):
+        current = self.get_self_model()
+        for repair in current.get("repairs") or []:
+            if repair.get("id") != repair_id:
+                continue
+            if owner_scope is None:
+                return repair
+            scope = str(owner_scope).strip()
+            if scope and repair.get("owner_scope") == scope:
+                return repair
+            return None
+        return None
+
+    def list_repairs(self, owner_scope=None, status=None, limit=100):
+        current = self.get_self_model()
+        rows = list(current.get("repairs") or [])
+        if owner_scope is not None:
+            scope = str(owner_scope).strip()
+            rows = [r for r in rows if r.get("owner_scope") == scope]
+        if status:
+            rows = [r for r in rows if r.get("status") == status]
+        return rows[:max(1, min(int(limit), 200))]
+
+    def _replace_repair(self, repair_id, changes, actor="system", owner_scope=None):
+        current = self.get_self_model()
+        repairs = list(current.get("repairs") or [])
+        target = None
+        for repair in repairs:
+            if repair.get("id") == repair_id:
+                if owner_scope is not None and repair.get("owner_scope") != str(owner_scope).strip():
+                    raise NotFoundError(repair_id)
+                target = repair
+                break
+        if target is None:
+            raise NotFoundError(repair_id)
+
+        target = dict(target)
+        target.update(changes)
+        replaced = [target if r.get("id") == repair_id else r for r in repairs]
+        updated = self.update_self_model(
+            {"repairs": replaced},
+            current["version"],
+            actor=actor,
+        )
+        verified = next((r for r in updated.get("repairs", []) if r.get("id") == repair_id), None)
+        if verified is None:
+            raise VerificationError("repair update no confirmado")
+        return verified
+
+    def advance_repair(self, repair_id, new_stage, actor="system", owner_scope=None, **fields):
+        from .repair import REPAIR_STAGE_TRANSITIONS
+        current = self.get_repair(repair_id, owner_scope=owner_scope)
+        if current is None:
+            raise NotFoundError(repair_id)
+        old_stage = current.get("stage")
+        allowed = REPAIR_STAGE_TRANSITIONS.get(old_stage, set())
+        if new_stage not in allowed:
+            raise ValidationError(f"transicion de repair invalida: {old_stage} -> {new_stage}")
+
+        changes = {"stage": new_stage}
+        if new_stage in ("sandboxed", "tested", "evaluated", "approved", "applied") and not current.get("started_at"):
+            changes["started_at"] = _now_iso()
+        if new_stage == "approved":
+            changes["status"] = "approved"
+        elif new_stage == "applied":
+            changes["status"] = "completed"
+            changes["completed_at"] = _now_iso()
+        elif new_stage == "discarded":
+            changes["status"] = "cancelled"
+            changes["completed_at"] = _now_iso()
+        elif new_stage == "failed":
+            if not current.get("started_at"):
+                changes["started_at"] = _now_iso()
+            changes["status"] = "failed"
+            changes["completed_at"] = _now_iso()
+        elif new_stage != "detected":
+            changes["status"] = "proposed"
+
+        for key in ("diagnosis", "proposal", "sandbox", "tests", "evaluation", "result"):
+            if key in fields:
+                changes[key] = fields[key]
+        if "evidence" in fields:
+            evidence = list(current.get("evidence") or [])
+            incoming = fields["evidence"]
+            incoming = incoming if isinstance(incoming, list) else [str(incoming)]
+            evidence.extend(str(x)[:500] for x in incoming)
+            changes["evidence"] = evidence[-10:]
+        return self._replace_repair(
+            repair_id,
+            changes,
+            actor=actor,
+            owner_scope=owner_scope,
+        )
+
+    def sandbox_repair(self, repair_id, actor="system", owner_scope=None):
+        from .repair import REPAIR_ACTIONS
+        repair = self.get_repair(repair_id, owner_scope=owner_scope)
+        if repair is None:
+            raise NotFoundError(repair_id)
+        if repair.get("stage") != "proposed":
+            raise ValidationError("sandbox requiere stage=proposed")
+        action = repair.get("action_type")
+        proposal = repair.get("proposal") if isinstance(repair.get("proposal"), dict) else {}
+        sandbox = {"action_type": action, "mutating": REPAIR_ACTIONS[action]["mutating"], "ready": False}
+
+        if action == "disable_selftest_agent":
+            agent = self.get_agent_by_name("selftest_agent")
+            sandbox.update({"target_exists": agent is not None, "current_status": agent.get("status") if agent else None})
+            sandbox["ready"] = agent is not None
+        else:
+            task_id = str(proposal.get("task_id") or "").strip()
+            task = self.get_task(task_id, owner_scope=owner_scope) if task_id else None
+            if action == "detach_orphan_selftest_task":
+                mission_exists = False
+                if task and task.get("mission_id"):
+                    mission_exists = self.get_mission(task["mission_id"]) is not None
+                sandbox.update({
+                    "task_exists": task is not None,
+                    "mission_exists": mission_exists,
+                    "ready": task is not None and task.get("agent_name") == "selftest_agent" and not mission_exists,
+                })
+            elif action == "recover_stale_selftest_task":
+                sandbox.update({
+                    "task_exists": task is not None,
+                    "ready": task is not None and task.get("agent_name") == "selftest_agent" and task.get("status") == "running",
+                })
+        if not sandbox["ready"]:
+            return self.advance_repair(
+                repair_id, "failed",
+                actor=actor, owner_scope=owner_scope,
+                evidence=["sandbox_precondition_failed"],
+                result="precondiciones de sandbox no satisfechas",
+            )
+        return self.advance_repair(
+            repair_id, "sandboxed",
+            actor=actor, owner_scope=owner_scope,
+            sandbox=sandbox,
+            evidence=["sandbox_read_only_pass"],
+        )
+
+    def test_repair(self, repair_id, actor="system", owner_scope=None):
+        repair = self.get_repair(repair_id, owner_scope=owner_scope)
+        if repair is None:
+            raise NotFoundError(repair_id)
+        if repair.get("stage") != "sandboxed":
+            raise ValidationError("test requiere stage=sandboxed")
+        try:
+            from specialized_agent_tools import run_python_tests
+            result = run_python_tests(
+                tests=["test_mission_task_ownership", "test_self_knowledge_contract"],
+            )
+        except Exception as exc:
+            return self.advance_repair(
+                repair_id, "failed",
+                actor=actor, owner_scope=owner_scope,
+                evidence=[f"repair_tests_exception:{type(exc).__name__}"],
+                result="excepcion ejecutando pruebas",
+            )
+        passed = result.get("status") == "passed" if isinstance(result, dict) else False
+        if not passed:
+            return self.advance_repair(
+                repair_id, "failed",
+                actor=actor, owner_scope=owner_scope,
+                tests=result if isinstance(result, dict) else {"status": "failed"},
+                evidence=["repair_tests_failed"],
+                result="las pruebas de reparación no pasaron",
+            )
+        return self.advance_repair(
+            repair_id, "tested",
+            actor=actor, owner_scope=owner_scope,
+            tests=result,
+            evidence=["repair_tests_passed"],
+        )
+
+    def evaluate_repair(self, repair_id, actor="system", owner_scope=None):
+        repair = self.get_repair(repair_id, owner_scope=owner_scope)
+        if repair is None:
+            raise NotFoundError(repair_id)
+        if repair.get("stage") != "tested":
+            raise ValidationError("evaluate requiere stage=tested")
+        tests = repair.get("tests") if isinstance(repair.get("tests"), dict) else {}
+        evaluation = {"tests_passed": tests.get("status") == "passed", "code_mutation_allowed": False}
+        if not evaluation["tests_passed"]:
+            return self.advance_repair(
+                repair_id, "failed",
+                actor=actor, owner_scope=owner_scope,
+                evaluation=evaluation, evidence=["evaluation_failed"],
+                result="evaluación negativa",
+            )
+        return self.advance_repair(
+            repair_id, "evaluated",
+            actor=actor, owner_scope=owner_scope,
+            evaluation=evaluation, evidence=["evaluation_passed"],
+            result="reparación evaluada y apta para aprobación explícita",
+        )
+
+    def approve_repair(self, repair_id, actor="system", owner_scope=None):
+        repair = self.get_repair(repair_id, owner_scope=owner_scope)
+        if repair is None:
+            raise NotFoundError(repair_id)
+        if repair.get("stage") != "evaluated":
+            raise ValidationError("approve requiere stage=evaluated")
+        return self.advance_repair(
+            repair_id, "approved",
+            actor=actor, owner_scope=owner_scope,
+            evidence=[f"approved_by:{actor}"],
+        )
+
+    def discard_repair(self, repair_id, actor="system", owner_scope=None, reason=None):
+        repair = self.get_repair(repair_id, owner_scope=owner_scope)
+        if repair is None:
+            raise NotFoundError(repair_id)
+        if repair.get("stage") not in ("detected", "diagnosed", "isolated", "proposed", "sandboxed", "tested", "evaluated", "approved"):
+            raise ValidationError("repair no descartable en su estado actual")
+        return self.advance_repair(
+            repair_id, "discarded",
+            actor=actor, owner_scope=owner_scope,
+            evidence=[f"discarded_by:{actor}"],
+            result=str(reason or "descartada explícitamente")[:2000],
+        )
+
+    def apply_repair(self, repair_id, actor="system", owner_scope=None):
+        repair = self.get_repair(repair_id, owner_scope=owner_scope)
+        if repair is None:
+            raise NotFoundError(repair_id)
+        if repair.get("stage") != "approved" or repair.get("status") != "approved":
+            raise ValidationError("apply requiere repair aprobada")
+        action = repair.get("action_type")
+        proposal = repair.get("proposal") if isinstance(repair.get("proposal"), dict) else {}
+        changed = False
+        result = {}
+
+        try:
+            with self.repo.transaction() as tx:
+                if action == "disable_selftest_agent":
+                    agent = self.get_agent_by_name("selftest_agent")
+                    if agent is None:
+                        raise NotFoundError("selftest_agent")
+                    changes = {"status": "disabled", "current_task_id": None, "current_action": None}
+                    if agent.get("status") != "disabled" or agent.get("current_task_id") is not None or agent.get("current_action") is not None:
+                        tx.update("agents", agent["id"], changes, agent["version"])
+                        changed = True
+                    result = {"action": action, "changed": changed, "status": "disabled"}
+                elif action in ("detach_orphan_selftest_task", "recover_stale_selftest_task"):
+                    task_id = str(proposal.get("task_id") or "").strip()
+                    task = self.get_task(task_id, owner_scope=owner_scope)
+                    if task is None:
+                        raise NotFoundError(task_id)
+                    if task.get("agent_name") != "selftest_agent":
+                        raise ValidationError("repair task target no pertenece a selftest_agent")
+                    if action == "detach_orphan_selftest_task":
+                        if task.get("mission_id") is None or self.get_mission(task["mission_id"]) is not None:
+                            raise ValidationError("task no tiene referencia de misión huérfana")
+                        tx.update("agent_tasks", task_id, {"mission_id": None}, task["version"])
+                        changed = True
+                        result = {"action": action, "task_id": task_id, "changed": True, "mission_id": None}
+                    else:
+                        if task.get("status") != "running":
+                            raise ValidationError("task no está running")
+                        tx.update(
+                            "agent_tasks", task_id,
+                            {
+                                "status": "failed",
+                                "error": {"type": "RepairEngineRecovery", "message": "task selftest stale recuperada"},
+                                "completed_at": _now_iso(),
+                            },
+                            task["version"],
+                        )
+                        changed = True
+                        result = {"action": action, "task_id": task_id, "changed": True, "status": "failed"}
+                else:
+                    raise ValidationError(f"acción no soportada: {action}")
+                tx.append_audit({
+                    "actor": actor,
+                    "action": "repair.apply",
+                    "resource": "self_model",
+                    "resource_id": SELF_MODEL_PRIMARY_ID,
+                    "status": "success",
+                    "detail": {"repair_id": repair_id, "action_type": action, "changed": changed},
+                })
+        except PersistenceError:
+            raise
+        except Exception as exc:
+            raise StorageError(type(exc).__name__) from exc
+
+        saved = self.advance_repair(
+            repair_id, "applied",
+            actor=actor, owner_scope=owner_scope,
+            evidence=[f"apply_changed:{changed}"],
+            result=str(result)[:2000],
+        )
+        try:
+            self.save_learning(
+                {
+                    "source": "repair_engine",
+                    "event": f"repair_applied:{repair_id}",
+                    "lesson": f"Acción de reparación aplicada sobre {repair.get('target')}",
+                    "confidence": 1.0 if changed else 0.8,
+                    "outcome": "success",
+                    "status": "candidate",
+                    "evidence": [{"type": "repair", "title": "Repair Engine", "reference": repair_id, "note": "repair apply"}],
+                },
+                actor=actor,
+                owner_scope=owner_scope,
+                idempotency_key=f"repair:{repair_id}:learning",
+            )
+        except Exception:
+            pass
+        return saved
+
 
     # ---------- CAPABILITY ENGINE ----------
     def create_capability(self, data, actor="system", idempotency_key=None):

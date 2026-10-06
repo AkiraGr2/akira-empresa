@@ -16,6 +16,7 @@ SENSITIVE_PREFIXES = (
     "/api/v8/missions",
     "/api/v8/agents",
     "/api/v8/tasks",
+    "/api/v8/repair",
     "/api/v8/memory",
     "/api/memory",
     "/api/brain",
@@ -62,6 +63,29 @@ class SensitiveRouteSecurityContract(unittest.TestCase):
             missing,
             "Sensitive route(s) without centralized owner guard: " + ", ".join(missing),
         )
+
+    def test_repair_routes_are_owner_protected_and_explicit(self):
+        expected = {
+            ("POST", "/api/v8/repair"),
+            ("GET", "/api/v8/repair"),
+            ("GET", "/api/v8/repair/{repair_id}"),
+            ("POST", "/api/v8/repair/{repair_id}/advance"),
+            ("POST", "/api/v8/repair/{repair_id}/sandbox"),
+            ("POST", "/api/v8/repair/{repair_id}/test"),
+            ("POST", "/api/v8/repair/{repair_id}/evaluate"),
+            ("POST", "/api/v8/repair/{repair_id}/approve"),
+            ("POST", "/api/v8/repair/{repair_id}/apply"),
+            ("POST", "/api/v8/repair/{repair_id}/discard"),
+        }
+        found = {
+            (r["method"], r["path"])
+            for r in self.routes
+            if r["path"].startswith("/api/v8/repair")
+        }
+        self.assertEqual(found, expected)
+        for route in self.routes:
+            if route["path"].startswith("/api/v8/repair"):
+                self.assertIn("_require_owner(request)", route["source"])
 
     def test_tool_invocation_history_is_owner_protected(self):
         route = next(

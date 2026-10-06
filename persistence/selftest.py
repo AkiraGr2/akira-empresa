@@ -472,6 +472,89 @@ def run_logic_tests(service, fresh_service_factory=None):
                 problems.append(f"agent_tools:{agent_name}:{agent.get('allowed_tools')}")
         return _res(name, not problems, "specialized tools/agents persisted" if not problems else "; ".join(problems))
 
+    def t_repair_engine_v1_capability():
+        name = "TEST_REPAIR_ENGINE_V1_CAPABILITY"
+        rows = service.list_capabilities(filters={"name": "repair_engine_v1"}, limit=1)
+        if not rows:
+            return _res(name, False, "capacidad repair_engine_v1 no registrada por la migracion")
+        capability = rows[0]
+        try:
+            from .repair import REPAIR_ACTIONS, REPAIR_STAGES, REPAIR_STAGE_TRANSITIONS
+            required_methods = (
+                "create_repair", "get_repair", "list_repairs", "advance_repair",
+                "sandbox_repair", "test_repair", "evaluate_repair",
+                "approve_repair", "discard_repair", "apply_repair",
+            )
+            checks = {
+                "capability_declared": capability.get("implementation_state") == "implemented",
+                "action_catalog_allowlisted": (
+                    set(REPAIR_ACTIONS)
+                    == {
+                        "disable_selftest_agent",
+                        "detach_orphan_selftest_task",
+                        "recover_stale_selftest_task",
+                    }
+                    and all(v.get("safe_scope") == "system" for v in REPAIR_ACTIONS.values())
+                ),
+                "full_stage_contract": (
+                    tuple(REPAIR_STAGES)
+                    == (
+                        "detected", "diagnosed", "isolated", "proposed", "sandboxed",
+                        "tested", "evaluated", "approved", "applied", "discarded", "failed",
+                    )
+                    and REPAIR_STAGE_TRANSITIONS["approved"] == {"applied", "discarded", "failed"}
+                ),
+                "service_contract": all(hasattr(service, method) for method in required_methods),
+            }
+            ok = all(checks.values())
+            source_digest = hashlib.sha256(
+                inspect.getsource(service.create_repair).encode("utf-8")
+                + inspect.getsource(service.apply_repair).encode("utf-8")
+            ).hexdigest()[:16]
+            event = {
+                "event_type": "verification",
+                "test_key": "repair_engine_v1_contract",
+                "test_version": "v1",
+                "result": "pass" if ok else "fail",
+                "evidence": [{
+                    "type": "selftest",
+                    "title": "Repair Engine v1 controlled lifecycle",
+                    "reference": "selftest:repair-engine-v1",
+                    "note": (
+                        "Lifecycle persistente con acciones allowlisted, sandbox, tests, "
+                        "evaluacion, aprobacion explicita, apply controlado y learn."
+                    ),
+                    "hash": source_digest,
+                }],
+                "environment": {"runtime": "selftest"},
+                "dependency_snapshot": [
+                    {"kind": "state", "id": "SelfModel.repairs", "version": "runtime"},
+                    {"kind": "service", "id": "PersistenceService.repair", "version": source_digest},
+                    {"kind": "security", "id": "owner_scope", "version": "runtime"},
+                ],
+                "runtime_version": "selftest",
+                "build_ref": source_digest,
+                "actor": "selftest",
+                "executor": "selftest",
+                "evaluator": "system",
+                "error": None if ok else {"checks": checks},
+            }
+            verification = service.record_capability_verification(
+                capability["id"],
+                event,
+                actor="selftest",
+                idempotency_key="selftest:repair_engine_v1:v1:" + source_digest,
+            )
+            effective = verification.get("effective_state")
+            verified = effective == "verified" if ok else effective in ("failed", "stale")
+            return _res(
+                name,
+                bool(ok and verified),
+                f"resultado={verification.get('outcome')}; effective_state={effective}; checks={checks}",
+            )
+        except Exception as exc:
+            return _res(name, False, f"excepcion {type(exc).__name__}: {str(exc)[:300]}")
+
     def t_self_knowledge_snapshot():
         name = "TEST_SELF_KNOWLEDGE_SNAPSHOT"
         snapshot = service.self_knowledge_snapshot(owner_scope="selftest")
@@ -1943,6 +2026,7 @@ def run_logic_tests(service, fresh_service_factory=None):
         ("TEST_AGENT_TASK_MISSION_FILTER", t_agent_task_mission_filter),
         ("TEST_AGENT_TASK_OWNER_SCOPE_FILTER", t_agent_task_owner_scope_filter),
         ("TEST_SPECIALIZED_AGENTS_PERSISTENCE", t_specialized_agents_persistence),
+        ("TEST_REPAIR_ENGINE_V1_CAPABILITY", t_repair_engine_v1_capability),
         ("TEST_SELF_KNOWLEDGE_SNAPSHOT", t_self_knowledge_snapshot),
         ("TEST_SELF_KNOWLEDGE_RUNTIME_CAPABILITY", t_self_knowledge_runtime_capability),
         ("TEST_AGENT_TOOL_REFERENCE_INTEGRITY", t_agent_tool_reference_integrity),
