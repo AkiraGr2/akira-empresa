@@ -1,6 +1,7 @@
 import unittest
 
-from persistence.service import NotFoundError, PersistenceService
+from persistence.core import entity_spec
+from persistence.service import NotFoundError, PersistenceService, ValidationError
 
 
 class FakeTx:
@@ -50,9 +51,14 @@ class FakeRepo:
                 {"id": "agent_r", "name": "researcher", "status": "idle",
                  "allowed_tools": ["web_search"], "version": 1, "tasks_completed": 0,
                  "tasks_failed": 0},
+                {"id": "agent_b", "name": "busy_agent", "status": "busy",
+                 "allowed_tools": ["web_search"], "version": 1, "tasks_completed": 0,
+                 "tasks_failed": 0},
             ],
             "tools": [
-                {"id": "tool_w", "name": "web_search", "status": "available"},
+                {"id": "tool_w", "name": "web_search", "status": "available", "permissions": ["auth"]},
+                {"id": "tool_disabled", "name": "disabled_tool", "status": "disabled", "permissions": ["auth"]},
+                {"id": "tool_bad", "name": "bad_tool", "status": "available", "permissions": []},
             ],
         }
 
@@ -125,11 +131,11 @@ class MissionTaskOwnershipTests(unittest.TestCase):
 
         task_queries = [filters for entity, filters in repo.search_calls if entity == "agent_tasks"]
         self.assertIn(
-            {"id": "t_a", "owner_scope__in": ["scope:A", "owner"]},
+            {"id": "t_a", "owner_scope": "scope:A"},
             task_queries,
         )
         self.assertIn(
-            {"id": "t_a", "owner_scope__in": ["scope:B", "owner"]},
+            {"id": "t_a", "owner_scope": "scope:B"},
             task_queries,
         )
 
@@ -150,7 +156,7 @@ class MissionTaskOwnershipTests(unittest.TestCase):
         self.assertIn(
             {
                 "id": result["record"]["id"],
-                "owner_scope__in": ["scope:A", "owner"],
+                "owner_scope": "scope:A",
             },
             task_queries,
         )
@@ -161,6 +167,57 @@ class MissionTaskOwnershipTests(unittest.TestCase):
                 "researcher", "web_search", mission_id="m_a",
                 actor="b@example.test", owner="b@example.test",
                 owner_scope="scope:B",
+            )
+
+    def test_legacy_task_is_not_visible_to_scoped_owner(self):
+        self.service.repo.rows["agent_tasks"].append(
+            {"id": "t_legacy", "owner_scope": "owner", "agent_name": "researcher",
+             "tool_name": "web_search", "status": "completed", "version": 1, "mission_id": None}
+        )
+        self.assertIsNone(self.service.get_task("t_legacy", owner_scope="scope:A"))
+
+    def test_task_idempotency_scope_is_owner(self):
+        self.assertEqual(
+            entity_spec("agent_tasks")["idempotency_scope"],
+            ("owner_scope",),
+        )
+
+    def test_task_creation_rejects_unavailable_tool(self):
+        self.service.repo.rows["agents"][0]["allowed_tools"] = ["disabled_tool"]
+        with self.assertRaises(ValidationError):
+            self.service.create_task(
+                "researcher", "disabled_tool",
+                actor="scope:A", owner_scope="scope:A",
+            )
+
+    def test_task_creation_rejects_invalid_tool_permissions(self):
+        self.service.repo.rows["agents"][0]["allowed_tools"] = ["bad_tool"]
+        with self.assertRaises(ValidationError):
+            self.service.create_task(
+                "researcher", "bad_tool",
+                actor="scope:A", owner_scope="scope:A",
+            )
+
+    def test_start_task_rejects_busy_agent(self):
+        self.service.repo.rows["agent_tasks"].append(
+            {"id": "t_busy", "owner_scope": "scope:A", "agent_name": "busy_agent",
+             "tool_name": "web_search", "status": "pending", "version": 1, "mission_id": None}
+        )
+        with self.assertRaises(ValidationError):
+            self.service.start_task("t_busy", actor="scope:A", owner_scope="scope:A")
+
+    def test_registered_agent_allowed_tools_must_be_available_and_valid(self):
+        with self.assertRaises(ValidationError):
+            self.service.register_agent(
+                {"name": "invalid_agent", "role": "generic", "description": "test",
+                 "allowed_tools": ["disabled_tool"]},
+                actor="selftest",
+            )
+        with self.assertRaises(ValidationError):
+            self.service.register_agent(
+                {"name": "bad_perm_agent", "role": "generic", "description": "test",
+                 "allowed_tools": ["bad_tool"]},
+                actor="selftest",
             )
 
     def test_task_listing_is_owner_scoped(self):
