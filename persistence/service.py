@@ -2066,6 +2066,10 @@ class PersistenceService:
             raise NotFoundError(f"from_node no existe: {from_node}")
         if to_record is None:
             raise NotFoundError(f"to_node no existe: {to_node}")
+        if from_record.get("status") != "active":
+            raise ValidationError(f"from_node no esta activa: {from_node}")
+        if to_record.get("status") != "active":
+            raise ValidationError(f"to_node no esta activa: {to_node}")
 
         if owner_scope is not None:
             scope = str(owner_scope).strip()
