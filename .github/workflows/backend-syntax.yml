@@ -20,7 +20,7 @@ jobs:
 
       - name: Compile backend Python
         run: |
-          python -m py_compile nexus.py persistence/core.py persistence/service.py persistence/migrations.py persistence/repair.py
+          python -m py_compile nexus.py autonomy_engine.py github_controlled.py persistence/autonomy.py persistence/core.py persistence/service.py persistence/migrations.py persistence/repair.py
 
       - name: Compile all Python modules
         run: |
@@ -114,6 +114,10 @@ jobs:
       - name: Test evolution engine contract
         run: |
           python -m unittest test_evolution_engine_contract -v
+      - name: Test controlled autonomy contract
+        run: |
+          python -m unittest test_controlled_autonomy_contract -v
+
 
       - name: Test self-knowledge contract
         run: |
