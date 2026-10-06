@@ -1308,8 +1308,7 @@ def _build_tool_inputs(tool_name, step, outputs_by_order, mission_id):
         queries = step.get("queries")
         instruction = with_dependency(3500, task)
         if expected:
-            instruction = with_dependency(3500, f"{instruction}
-Expected output: {expected}")
+            instruction = with_dependency(3500, f"{instruction}\nExpected output: {expected}")
         return {
             "goal": task[:4000],
             "repository": repo,
