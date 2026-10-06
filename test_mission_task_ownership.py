@@ -305,6 +305,15 @@ class MissionTaskOwnershipTests(unittest.TestCase):
         self.assertIn("'mission.task.legacy_reconcile'", block)
         self.assertIn("status = 'cancelled'", block)
 
+
+    def test_legacy_cancelled_mission_reconciliation_preserves_outputs(self):
+        source = Path("persistence/migrations.py").read_text(encoding="utf-8")
+        start = source.index('"044_reconcile_legacy_cancelled_mission_tasks"')
+        block = source[start:]
+        self.assertIn("outputs = COALESCE(t.outputs, '{}'::jsonb) || jsonb_build_object", block)
+        self.assertIn("'legacy_cancelled_mission_reconciliation'", block)
+        self.assertIn("completed_at = COALESCE(t.completed_at, now())", block)
+
     def test_task_listing_is_owner_scoped(self):
         rows = self.service.list_tasks(owner_scope="scope:A", limit=50)
         self.assertEqual({r["id"] for r in rows}, {"t_a"})
