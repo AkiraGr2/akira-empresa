@@ -23,6 +23,8 @@ from persistence.capability import (
     validate_capability_verification,
 )
 
+from .model_registry import model_registry_snapshot
+
 from .core import (AGENT_SCHEMA_VERSION, AGENT_TASK_SCHEMA_VERSION,
                    COGNITIVE_CYCLE_SCHEMA_VERSION, COGNITIVE_EVENT_SCHEMA_VERSION,
                    COGNITIVE_STAGES, CONVERSATION_MESSAGE_SCHEMA_VERSION,
@@ -388,6 +390,7 @@ class PersistenceService:
                     "tools", {}, limit=200, order_by="name", descending=False,
                 )
             ]
+            current["models"] = model_registry_snapshot()["routes"]
             return current
         identity = self.get_identity_root()
         record = {"id": SELF_MODEL_PRIMARY_ID, "schema_version": SELF_MODEL_SCHEMA_VERSION,
@@ -421,6 +424,7 @@ class PersistenceService:
             }
             for t in self.repo.search("tools", {}, limit=200, order_by="name", descending=False)
         ]
+        verified["models"] = model_registry_snapshot()["routes"]
         return verified
     def update_self_model(self, changes, expected_version, actor="system"):
         clean = validate_self_model(changes, partial=True)
