@@ -1517,7 +1517,6 @@ MIGRATIONS = [
                             '"superseded"'::jsonb
                         )
                         || jsonb_build_object(
-                            'resolved_at', now(),
                             'evidence', jsonb_build_array(
                                 'La implementación actual de Mission Engine existe y mantiene registros persistentes en PostgreSQL.',
                                 'La arquitectura vigente ya no usa Fase 10 como descripción canónica.'
