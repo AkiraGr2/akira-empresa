@@ -105,9 +105,11 @@ def start_controlled_autonomy(service, request: dict[str, Any], actor: str, owne
         compile_paths = [item["path"] for item in proposal["changes"] if item["path"].endswith(".py")]
         proposal_tests = [str(x).strip() for x in (proposal.get("tests") or []) if str(x).strip()]
         requested_tests = [str(x).strip() for x in (run.get("requested_tests") or []) if str(x).strip()]
-        tests_to_run = requested_tests or proposal_tests
-        if not tests_to_run and compile_paths:
-            tests_to_run = []
+        tests_to_run = requested_tests or proposal_tests or [
+            "test_controlled_autonomy_contract",
+            "test_route_security_contract",
+            "test_authorization_contract",
+        ]
         test_result = _run_sandbox_tests_from_existing_archive(
             run["repository"],
             base_sha,
@@ -158,7 +160,9 @@ def start_controlled_autonomy(service, request: dict[str, Any], actor: str, owne
         except Exception:
             pass
         failed = a.get_run(run_id, owner_scope=owner_scope)
-        raise ControlledAutonomyError(reason) from exc
+        if failed is None:
+            raise ControlledAutonomyError(reason) from exc
+        return failed
 
     return a.get_run(run_id, owner_scope=owner_scope) or {}
 
