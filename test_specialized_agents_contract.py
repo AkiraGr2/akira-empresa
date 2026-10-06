@@ -124,6 +124,42 @@ class SpecializedAgentsContractTests(unittest.TestCase):
         self.assertFalse(result["write_performed"])
         self.assertTrue(result["requires_human_approval"])
 
+    def test_reviewer_accepts_absent_create_target_evidence(self):
+        calls = []
+
+        def inspector(repo, paths=None, max_files=8, queries=None):
+            calls.append(list(paths or []))
+            if paths:
+                raise specialized_agent_tools.GitHubReadUpstreamError("not_found")
+            return {
+                "ok": True, "branch": "main", "head_commit_sha": "a" * 40,
+                "root": [], "files": [], "total_bytes": 0,
+            }
+
+        with patch.object(specialized_agent_tools, "_specialist_json_call", return_value={
+            "verdict": "approve",
+            "summary": "safe",
+            "findings": [],
+            "required_tests": [],
+        }):
+            result = specialized_agent_tools.review_code_change(
+                inspector,
+                "AkiraGr2/akira-empresa",
+                ["docs/new.txt"],
+                {
+                    "status": "proposal",
+                    "changes": [{
+                        "path": "docs/new.txt",
+                        "operation": "create",
+                        "reason": "test",
+                        "patch": "--- /dev/null\\n+++ b/docs/new.txt\\n@@ -0,0 +1 @@\\n+hola\\n",
+                    }],
+                },
+                {"status": "passed"},
+            )
+        self.assertEqual(result["verdict"], "approve")
+        self.assertEqual(calls, [["docs/new.txt"], [], ["docs/new.txt"]])
+
     def test_reviewer_produces_non_mutating_review(self):
         fake_inspection = {"files": [{"path": "README.md", "status": "ok", "content": "hello"}]}
         fake_result = {
