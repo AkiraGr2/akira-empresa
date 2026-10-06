@@ -643,8 +643,12 @@ def _validate_self_model_uncertainties(value):
         if not isinstance(normalized["evidence"], list) or len(normalized["evidence"]) > 10:
             raise ValidationError("uncertainties.evidence debe ser lista de maximo 10 elementos")
         normalized["evidence"] = [_self_model_text("uncertainties.evidence", e, 500) for e in normalized["evidence"]]
-        if "resolved_at" in item and item.get("resolved_at") is not None:
+        if status == "resolved":
+            if item.get("resolved_at") is None:
+                raise ValidationError("uncertainties.resolved_at requerido cuando status=resolved")
             normalized["resolved_at"] = _self_model_iso("uncertainties.resolved_at", item["resolved_at"])
+        elif item.get("resolved_at") is not None:
+            raise ValidationError("uncertainties.resolved_at solo aplica cuando status=resolved")
         out.append(normalized)
     return out
 
@@ -691,6 +695,12 @@ def _validate_self_model_repairs(value):
             "evidence": item.get("evidence", []),
             "result": _self_model_text("repairs.result", item.get("result", ""), 2000, allow_empty=True),
         }
+        if status in ("running", "completed", "failed") and item.get("started_at") is None:
+            raise ValidationError("repairs.started_at requerido para status activo/final")
+        if status == "completed" and item.get("completed_at") is None:
+            raise ValidationError("repairs.completed_at requerido cuando status=completed")
+        if status not in ("completed", "failed", "cancelled") and item.get("completed_at") is not None:
+            raise ValidationError("repairs.completed_at solo aplica a estados finalizados")
         for key in ("started_at", "completed_at"):
             if key in item and item.get(key) is not None:
                 normalized[key] = _self_model_iso(f"repairs.{key}", item[key])
@@ -716,8 +726,12 @@ def _validate_self_model_evolution(value):
             "proposed_at": _self_model_iso("evolution.proposed_at", item.get("proposed_at")),
             "evidence": item.get("evidence", []),
         }
-        if "implemented_at" in item and item.get("implemented_at") is not None:
+        if status == "implemented":
+            if item.get("implemented_at") is None:
+                raise ValidationError("evolution.implemented_at requerido cuando status=implemented")
             normalized["implemented_at"] = _self_model_iso("evolution.implemented_at", item["implemented_at"])
+        elif item.get("implemented_at") is not None:
+            raise ValidationError("evolution.implemented_at solo aplica cuando status=implemented")
         if not isinstance(normalized["evidence"], list) or len(normalized["evidence"]) > 10:
             raise ValidationError("evolution.evidence debe ser lista de maximo 10 elementos")
         normalized["evidence"] = [_self_model_text("evolution.evidence", e, 500) for e in normalized["evidence"]]
