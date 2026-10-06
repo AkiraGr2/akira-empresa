@@ -253,11 +253,12 @@ class MissionTaskOwnershipTests(unittest.TestCase):
             )
 
     def test_cancel_mission_cascades_nonterminal_tasks_without_counting_failures(self):
-        agent = self.service.repo.get("agents", "agent_r")
-        agent["status"] = "busy"
-        agent["current_task_id"] = "t_b"
-        agent["current_action"] = "web_search"
-        agent["version"] = 2
+        for agent in self.service.repo.rows["agents"]:
+            if agent["id"] == "agent_r":
+                agent["status"] = "busy"
+                agent["current_task_id"] = "t_b"
+                agent["current_action"] = "web_search"
+                agent["version"] = 2
 
         result = self.service.cancel_mission(
             "m_b",
