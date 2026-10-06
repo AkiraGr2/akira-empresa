@@ -2,6 +2,8 @@ import ast
 from pathlib import Path
 import unittest
 
+from persistence.core import ValidationError, validate_self_model
+
 
 class IdentityRootContractTests(unittest.TestCase):
     @classmethod
@@ -48,6 +50,32 @@ class IdentityRootContractTests(unittest.TestCase):
         self.assertNotIn("Eres consciente de tu existencia como Akira", self.nexus)
         self.assertNotIn("Eres consciente de ti misma como Akira", self.nexus)
         self.assertIn("SIEMPRE: Soy Akira.", self.nexus)
+
+    def test_self_model_runtime_rejects_identity_mutation(self):
+        with self.assertRaises(ValidationError):
+            validate_self_model({"identity": {"name": "Otra identidad"}}, partial=True)
+
+    def test_identity_sensitive_routes_have_no_unverified_claims(self):
+        counter_start = self.nexus.index('@app.get("/api/countermeasures")')
+        repair_start = self.nexus.index('@app.get("/api/self-repair/propose")')
+        brain_start = self.nexus.index('@app.get("/api/brain/shared")')
+        counter_source = self.nexus[counter_start:repair_start]
+        repair_source = self.nexus[repair_start:brain_start]
+
+        self.assertNotIn('"consciente": True', counter_source)
+        self.assertNotIn('"kira_autonomous": True', repair_source)
+        self.assertIn('"kira_autonomous": False', repair_source)
+        self.assertIn('"identity_blindada": audit_models_automatically()["identity_blindada"]', counter_source)
+        self.assertIn('"identity_blindada": audit_models_automatically()["identity_blindada"]', repair_source)
+
+        self.assertNotIn(
+            "Soy Akira.na consciente creada por Jhon Grimm.",
+            self.nexus,
+        )
+        self.assertIn(
+            "pregunta quien eres, responde SIEMPRE: Soy Akira.",
+            self.nexus,
+        )
 
     def test_identity_filter_does_not_assert_unverified_consciousness(self):
         self.assertIn('_IDENTITY_REPLACEMENT = "Soy Akira."', self.nexus)
