@@ -122,7 +122,7 @@ def validate_path(path: Any) -> str:
 def validate_request(data: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(data, Mapping):
         raise AutonomyContractError("request_debe_ser_objeto")
-    allowed = {"goal", "repository", "base_branch", "paths", "instruction", "queries", "tests"}
+    allowed = {"goal", "repository", "base_branch", "paths", "instruction", "queries", "tests", "idempotency_key"}
     extra = sorted(set(data) - allowed)
     if extra:
         raise AutonomyContractError(f"campos_no_permitidos:{extra}")
@@ -275,7 +275,7 @@ class AutonomyService:
                 "status": "success",
                 "detail": {"repository": stored["repository"], "created": bool(created)},
             })
-        verified = self.get_run(record["id"], owner_scope=owner)
+        verified = self.get_run(stored["id"], owner_scope=owner)
         if verified is None:
             raise RuntimeError("autonomy_create_not_confirmed")
         return {"outcome": "created" if created else "already_synced", "record": verified}
