@@ -1357,6 +1357,89 @@ MIGRATIONS = [
           AND t.status IN ('pending','running')
         """
     ),    (
+        "046_controlled_autonomy_runtime_registry",
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM public.tools WHERE name = 'controlled_autonomy_start'
+            ) THEN
+                INSERT INTO public.tools (
+                    id, name, description, category, permissions,
+                    inputs_schema, outputs_schema, limits_json, risks,
+                    status, schema_version, version
+                ) VALUES (
+                    'tool_controlled_autonomy_start',
+                    'controlled_autonomy_start',
+                    'Inicia la autonomia controlada F14 hasta una compuerta de aprobacion humana; no aprueba ni aplica cambios.',
+                    'code',
+                    '["owner"]'::jsonb,
+                    '{"goal":"str","repository":"str","base_branch":"str","paths":"list","instruction":"str","queries":"list","tests":"list","idempotency_key":"str"}'::jsonb,
+                    '{"autonomy":"dict"}'::jsonb,
+                    '{"max_paths":4,"max_instruction":4000,"max_files":4}'::jsonb,
+                    '["propone y prueba cambios de codigo","requiere aprobacion humana antes de escribir GitHub"]'::jsonb,
+                    'available',
+                    'tool.v1',
+                    1
+                );
+            ELSE
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM public.tools
+                    WHERE name = 'controlled_autonomy_start'
+                      AND status = 'available'
+                      AND permissions = '["owner"]'::jsonb
+                ) THEN
+                    RAISE EXCEPTION 'controlled_autonomy_start exists with an incompatible runtime contract';
+                END IF;
+            END IF;
+
+            IF NOT EXISTS (
+                SELECT 1 FROM public.agents WHERE name = 'autonomy_orchestrator'
+            ) THEN
+                INSERT INTO public.agents (
+                    id, name, role, description, allowed_tools,
+                    status, schema_version, version
+                ) VALUES (
+                    'agent_autonomy_orchestrator',
+                    'autonomy_orchestrator',
+                    'autonomy_orchestrator',
+                    'Orquesta autonomia controlada hasta aprobacion humana; nunca puede aprobar ni aplicar el cambio.',
+                    '["controlled_autonomy_start"]'::jsonb,
+                    'idle',
+                    'agent.v1',
+                    1
+                );
+            ELSE
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM public.agents
+                    WHERE name = 'autonomy_orchestrator'
+                      AND 'controlled_autonomy_start' = ANY (
+                          SELECT jsonb_array_elements_text(allowed_tools)
+                      )
+                ) THEN
+                    RAISE EXCEPTION 'autonomy_orchestrator exists without its controlled autonomy tool';
+                END IF;
+            END IF;
+
+            INSERT INTO public.audit_log (
+                actor, action, resource, resource_id, status, detail
+            )
+            VALUES (
+                'system',
+                'autonomy.runtime_registry.v1',
+                'tools',
+                'tool_controlled_autonomy_start',
+                'success',
+                '{"tool":"controlled_autonomy_start","agent":"autonomy_orchestrator","owner_only":true,"human_approval_before_external_write":true}'::jsonb
+            )
+            ON CONFLICT DO NOTHING;
+        END
+        $$;
+        """
+    ),
+    (
         "045_controlled_autonomy_v1",
         """
         CREATE TABLE IF NOT EXISTS public.autonomy_runs (
