@@ -71,6 +71,20 @@ class SensitiveRouteSecurityContract(unittest.TestCase):
         self.assertIn("_require_owner(request)", route["source"])
         self.assertIn('actor=s["email"]', route["source"])
 
+    def test_mission_selftest_is_owner_aware(self):
+        source = self.text
+        start = source.index("def _selftest_missions_run(")
+        end = source.index('@app.get("/api/v8/memory/semantic-selftest")', start)
+        block = source[start:end]
+        self.assertIn("def _selftest_missions_run(owner=None, owner_scope=None):", block)
+        self.assertIn('list_tasks(mission_id=m["id"], limit=100, owner_scope=owner_scope)', block)
+        self.assertNotIn('owner_scope=s["owner_scope"]', block)
+        route = next(
+            r for r in self.routes
+            if (r["method"], r["path"]) == ("GET", "/api/v8/missions/selftest")
+        )
+        self.assertIn('_selftest_missions_run(owner=s["email"], owner_scope=s["owner_scope"])', route["source"])
+
     def test_conversation_routes_preserve_row_ownership_boundary(self):
         expected = {
             ("POST", "/api/v8/conversations"),
