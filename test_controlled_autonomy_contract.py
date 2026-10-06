@@ -225,13 +225,14 @@ class ControlledAutonomyContractTests(unittest.TestCase):
     def test_runtime_registry_migration_is_deterministic_and_owner_only(self):
         source = Path("persistence/migrations.py").read_text(encoding="utf-8")
         start = source.index('"046_controlled_autonomy_runtime_registry"')
-        end = source.index('"045_controlled_autonomy_v1"', start)
-        block = source[start:end]
+        block = source[start:source.index("\n    (", start)]
         self.assertIn("controlled_autonomy_start", block)
         self.assertIn("autonomy_orchestrator", block)
         self.assertIn('["owner"]', block)
-        self.assertIn("RAISE EXCEPTION 'controlled_autonomy_start exists with an incompatible runtime contract'", block)
-        self.assertIn("RAISE EXCEPTION 'autonomy_orchestrator exists without its controlled autonomy tool'", block)
+        self.assertIn("ON CONFLICT (name) DO NOTHING", block)
+        self.assertIn("SELECT 1 / CASE", block)
+        self.assertIn("status = 'available'", block)
+        self.assertNotIn("DO $", block)
 
     def test_controlled_gateway_contract_is_branch_only(self):
         source = Path("github_controlled.py").read_text(encoding="utf-8")
