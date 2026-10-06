@@ -1700,7 +1700,10 @@ class PersistenceService:
         cycle = self.repo.get("cognitive_cycles", cycle_id)
         if cycle is None or owner_scope is None:
             return cycle
-        return cycle if _scope_matches(cycle.get("owner_scope"), owner_scope) else None
+        scope = str(owner_scope).strip()
+        if not scope:
+            return None
+        return cycle if str(cycle.get("owner_scope") or "").strip() == scope else None
     def list_cycle_events(self, cycle_id, limit=100, owner_scope=None):
         if self.get_cycle(cycle_id, owner_scope=owner_scope) is None:
             return []
@@ -1713,18 +1716,30 @@ class PersistenceService:
         events = self.list_cycle_events(cycle_id, owner_scope=owner_scope)
         return {"cycle": cycle, "events": events}
     def count_cycles(self, filters=None, owner_scope=None):
-        if owner_scope is None:
-            return self.repo.count("cognitive_cycles", filters or {})
-        rows = self.repo.search("cognitive_cycles", filters or {}, limit=5000)
-        return sum(1 for r in rows if _scope_matches(r.get("owner_scope"), owner_scope))
+        base = dict(filters or {})
+        if owner_scope is not None:
+            scope = str(owner_scope).strip()
+            if not scope:
+                raise ValidationError("owner_scope requerido")
+            base["owner_scope"] = scope
+        return self.repo.count("cognitive_cycles", base)
 
     def list_cycles(self, limit=50, owner_scope=None):
         limit = max(1, min(int(limit), 200))
-        rows = self.repo.search("cognitive_cycles", {}, limit=5000, offset=0,
-                                order_by="created_at", descending=True)
+        filters = {}
         if owner_scope is not None:
-            rows = [r for r in rows if _scope_matches(r.get("owner_scope"), owner_scope)]
-        return rows[:limit]
+            scope = str(owner_scope).strip()
+            if not scope:
+                raise ValidationError("owner_scope requerido")
+            filters["owner_scope"] = scope
+        return self.repo.search(
+            "cognitive_cycles",
+            filters,
+            limit=limit,
+            offset=0,
+            order_by="created_at",
+            descending=True,
+        )
     def count_cycle_events(self, filters=None): return self.repo.count("cognitive_events", filters or {})
 
     def register_tool(self, data, actor="system", idempotency_key=None):
