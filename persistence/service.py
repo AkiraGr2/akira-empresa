@@ -513,7 +513,15 @@ class PersistenceService:
         )
         existing = existing_by_key[0] if existing_by_key else (existing_by_name[0] if existing_by_name else None)
         if existing is not None:
-            same_definition = all(existing.get(field) == clean.get(field) for field in clean)
+            # Verification/availability are runtime states and legitimately
+            # evolve after bootstrap. The stable contract is what must match;
+            # a structural definition mismatch remains a conflict.
+            dynamic_state_fields = {"verification_state", "availability_state"}
+            stable_fields = [field for field in clean if field not in dynamic_state_fields]
+            same_definition = all(
+                existing.get(field) == clean.get(field)
+                for field in stable_fields
+            )
             same_idempotency = (
                 record.get("idempotency_key") is None
                 or existing.get("idempotency_key") == record.get("idempotency_key")
