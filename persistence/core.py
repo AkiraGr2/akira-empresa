@@ -7,6 +7,7 @@ Fase 10.7.2: entidades conversations y conversation_messages para persistencia d
 from __future__ import annotations
 
 import uuid
+import datetime as _dt
 from abc import ABC, abstractmethod
 
 class PersistenceError(Exception):
@@ -34,7 +35,7 @@ STATUSES = ("active", "archived", "deleted")
 MEMORY_SCHEMA_VERSION = "memory.v1"
 
 SELF_MODEL_PRIMARY_ID = "akira_primary"
-SELF_MODEL_SCHEMA_VERSION = "self_model.v1"
+SELF_MODEL_SCHEMA_VERSION = "self_model.v2"
 
 LEARNING_SCHEMA_VERSION = "learning.v3"
 LEARNING_STATUSES = ("candidate", "verified", "consolidated", "conflicted", "obsolete", "discarded")
@@ -533,6 +534,196 @@ _SELF_MODEL_UPDATABLE = frozenset(
     - set(_SELF_MODEL_DERIVED_FIELDS)
 )
 
+_SELF_MODEL_UNCERTAINTY_STATUSES = ("open", "resolved", "superseded")
+_SELF_MODEL_UNCERTAINTY_KINDS = ("capability", "knowledge", "runtime", "evidence", "other")
+_SELF_MODEL_ERROR_STATUSES = ("open", "resolved", "ignored")
+_SELF_MODEL_REPAIR_STATUSES = ("proposed", "approved", "running", "completed", "failed", "cancelled")
+_SELF_MODEL_EVOLUTION_STATUSES = ("proposed", "approved", "implemented", "rejected", "deferred")
+
+def _self_model_text(name, value, maximum=500, allow_empty=False):
+    if not isinstance(value, str):
+        raise ValidationError(f"{name} debe ser texto")
+    value = value.strip()
+    if not allow_empty and not value:
+        raise ValidationError(f"{name} no puede estar vacio")
+    if len(value) > maximum:
+        raise ValidationError(f"{name} supera el maximo de {maximum} caracteres")
+    return value
+
+def _self_model_iso(name, value):
+    value = _self_model_text(name, value, 64)
+    try:
+        _dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValidationError(f"{name} debe ser fecha ISO-8601") from exc
+    return value
+
+def _self_model_record_list(field, value, allowed, *, max_items=50):
+    if not isinstance(value, list):
+        raise ValidationError(f"{field} debe ser una lista")
+    if len(value) > max_items:
+        raise ValidationError(f"{field} admite maximo {max_items} elementos")
+    out = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ValidationError(f"{field}[{index}] debe ser un objeto")
+        extra = sorted(set(item) - set(allowed))
+        if extra:
+            raise ValidationError(f"{field}[{index}] contiene campos no permitidos: {extra}")
+        out.append(item)
+    return out
+
+def _validate_self_model_current_state(value):
+    if not isinstance(value, dict):
+        raise ValidationError("current_state debe ser un objeto (dict)")
+    allowed = {"last_cycle_id", "last_cycle_at", "last_cycle_trigger", "last_cycle_model", "cycles_completed", "last_observed_at"}
+    extra = sorted(set(value) - allowed)
+    if extra:
+        raise ValidationError(f"current_state contiene campos no permitidos: {extra}")
+    out = dict(value)
+    if "last_cycle_id" in out:
+        out["last_cycle_id"] = _self_model_text("current_state.last_cycle_id", out["last_cycle_id"], 128)
+    for key in ("last_cycle_at", "last_observed_at"):
+        if key in out:
+            out[key] = _self_model_iso(f"current_state.{key}", out[key])
+    if "last_cycle_trigger" in out:
+        out["last_cycle_trigger"] = _self_model_text("current_state.last_cycle_trigger", out["last_cycle_trigger"], 64)
+    if "last_cycle_model" in out:
+        out["last_cycle_model"] = _self_model_text("current_state.last_cycle_model", out["last_cycle_model"], 128)
+    if "cycles_completed" in out:
+        value = out["cycles_completed"]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValidationError("current_state.cycles_completed debe ser entero >= 0")
+        out["cycles_completed"] = value
+    return out
+
+def _validate_self_model_knowledge_state(value):
+    if not isinstance(value, dict):
+        raise ValidationError("knowledge_state debe ser un objeto (dict)")
+    allowed = {"last_observed_at", "sources", "notes"}
+    extra = sorted(set(value) - allowed)
+    if extra:
+        raise ValidationError(f"knowledge_state contiene campos no permitidos: {extra}")
+    out = dict(value)
+    if "last_observed_at" in out:
+        out["last_observed_at"] = _self_model_iso("knowledge_state.last_observed_at", out["last_observed_at"])
+    if "sources" in out:
+        sources = _self_model_record_list("knowledge_state.sources", out["sources"], {"id", "kind", "observed_at"}, max_items=20)
+        normalized = []
+        for item in sources:
+            normalized.append({
+                "id": _self_model_text("knowledge_state.sources.id", item.get("id"), 128),
+                "kind": _self_model_text("knowledge_state.sources.kind", item.get("kind"), 64),
+                "observed_at": _self_model_iso("knowledge_state.sources.observed_at", item.get("observed_at")),
+            })
+        out["sources"] = normalized
+    if "notes" in out:
+        out["notes"] = _self_model_text("knowledge_state.notes", out["notes"], 2000, allow_empty=True)
+    return out
+
+def _validate_self_model_uncertainties(value):
+    allowed = {"id", "statement", "kind", "status", "evidence", "created_at", "resolved_at"}
+    items = _self_model_record_list("uncertainties", value, allowed)
+    out = []
+    for item in items:
+        status = _self_model_text("uncertainties.status", item.get("status"), 32)
+        if status not in _SELF_MODEL_UNCERTAINTY_STATUSES:
+            raise ValidationError(f"uncertainties.status invalido: {status!r}")
+        kind = _self_model_text("uncertainties.kind", item.get("kind"), 32)
+        if kind not in _SELF_MODEL_UNCERTAINTY_KINDS:
+            raise ValidationError(f"uncertainties.kind invalido: {kind!r}")
+        normalized = {
+            "id": _self_model_text("uncertainties.id", item.get("id"), 128),
+            "statement": _self_model_text("uncertainties.statement", item.get("statement"), 2000),
+            "kind": kind,
+            "status": status,
+            "evidence": item.get("evidence", []),
+            "created_at": _self_model_iso("uncertainties.created_at", item.get("created_at")),
+        }
+        if not isinstance(normalized["evidence"], list) or len(normalized["evidence"]) > 10:
+            raise ValidationError("uncertainties.evidence debe ser lista de maximo 10 elementos")
+        normalized["evidence"] = [_self_model_text("uncertainties.evidence", e, 500) for e in normalized["evidence"]]
+        if "resolved_at" in item and item.get("resolved_at") is not None:
+            normalized["resolved_at"] = _self_model_iso("uncertainties.resolved_at", item["resolved_at"])
+        out.append(normalized)
+    return out
+
+def _validate_self_model_errors(value):
+    allowed = {"id", "type", "message", "status", "occurrences", "first_seen_at", "last_seen_at", "evidence"}
+    items = _self_model_record_list("errors", value, allowed)
+    out = []
+    for item in items:
+        status = _self_model_text("errors.status", item.get("status"), 32)
+        if status not in _SELF_MODEL_ERROR_STATUSES:
+            raise ValidationError(f"errors.status invalido: {status!r}")
+        occurrences = item.get("occurrences", 1)
+        if isinstance(occurrences, bool) or not isinstance(occurrences, int) or occurrences < 1:
+            raise ValidationError("errors.occurrences debe ser entero >= 1")
+        evidence = item.get("evidence", [])
+        if not isinstance(evidence, list) or len(evidence) > 10:
+            raise ValidationError("errors.evidence debe ser lista de maximo 10 elementos")
+        out.append({
+            "id": _self_model_text("errors.id", item.get("id"), 128),
+            "type": _self_model_text("errors.type", item.get("type"), 128),
+            "message": _self_model_text("errors.message", item.get("message"), 2000),
+            "status": status,
+            "occurrences": occurrences,
+            "first_seen_at": _self_model_iso("errors.first_seen_at", item.get("first_seen_at")),
+            "last_seen_at": _self_model_iso("errors.last_seen_at", item.get("last_seen_at")),
+            "evidence": [_self_model_text("errors.evidence", e, 500) for e in evidence],
+        })
+    return out
+
+def _validate_self_model_repairs(value):
+    allowed = {"id", "target", "reason", "status", "proposed_at", "started_at", "completed_at", "evidence", "result"}
+    items = _self_model_record_list("repairs", value, allowed)
+    out = []
+    for item in items:
+        status = _self_model_text("repairs.status", item.get("status"), 32)
+        if status not in _SELF_MODEL_REPAIR_STATUSES:
+            raise ValidationError(f"repairs.status invalido: {status!r}")
+        normalized = {
+            "id": _self_model_text("repairs.id", item.get("id"), 128),
+            "target": _self_model_text("repairs.target", item.get("target"), 256),
+            "reason": _self_model_text("repairs.reason", item.get("reason"), 2000),
+            "status": status,
+            "proposed_at": _self_model_iso("repairs.proposed_at", item.get("proposed_at")),
+            "evidence": item.get("evidence", []),
+            "result": _self_model_text("repairs.result", item.get("result", ""), 2000, allow_empty=True),
+        }
+        for key in ("started_at", "completed_at"):
+            if key in item and item.get(key) is not None:
+                normalized[key] = _self_model_iso(f"repairs.{key}", item[key])
+        if not isinstance(normalized["evidence"], list) or len(normalized["evidence"]) > 10:
+            raise ValidationError("repairs.evidence debe ser lista de maximo 10 elementos")
+        normalized["evidence"] = [_self_model_text("repairs.evidence", e, 500) for e in normalized["evidence"]]
+        out.append(normalized)
+    return out
+
+def _validate_self_model_evolution(value):
+    allowed = {"id", "proposal", "rationale", "status", "proposed_at", "implemented_at", "evidence"}
+    items = _self_model_record_list("evolution", value, allowed)
+    out = []
+    for item in items:
+        status = _self_model_text("evolution.status", item.get("status"), 32)
+        if status not in _SELF_MODEL_EVOLUTION_STATUSES:
+            raise ValidationError(f"evolution.status invalido: {status!r}")
+        normalized = {
+            "id": _self_model_text("evolution.id", item.get("id"), 128),
+            "proposal": _self_model_text("evolution.proposal", item.get("proposal"), 2000),
+            "rationale": _self_model_text("evolution.rationale", item.get("rationale"), 2000),
+            "status": status,
+            "proposed_at": _self_model_iso("evolution.proposed_at", item.get("proposed_at")),
+            "evidence": item.get("evidence", []),
+        }
+        if "implemented_at" in item and item.get("implemented_at") is not None:
+            normalized["implemented_at"] = _self_model_iso("evolution.implemented_at", item["implemented_at"])
+        if not isinstance(normalized["evidence"], list) or len(normalized["evidence"]) > 10:
+            raise ValidationError("evolution.evidence debe ser lista de maximo 10 elementos")
+        normalized["evidence"] = [_self_model_text("evolution.evidence", e, 500) for e in normalized["evidence"]]
+        out.append(normalized)
+    return out
+
 def validate_self_model(data, partial: bool = False) -> dict:
     if not isinstance(data, dict):
         raise ValidationError("el registro debe ser un objeto")
@@ -546,17 +737,32 @@ def validate_self_model(data, partial: bool = False) -> dict:
         raise ValidationError(f"campos no permitidos: {extra}")
     out = {}
     for field in _SELF_MODEL_OBJECT_FIELDS:
-        if field in data:
-            v = data[field]
-            if not isinstance(v, dict):
+        if field not in data:
+            continue
+        value = data[field]
+        if field == "current_state":
+            out[field] = _validate_self_model_current_state(value)
+        elif field == "knowledge_state":
+            out[field] = _validate_self_model_knowledge_state(value)
+        else:
+            if not isinstance(value, dict):
                 raise ValidationError(f"{field} debe ser un objeto (dict)")
-            out[field] = v
-    for field in _SELF_MODEL_LIST_FIELDS:
+            out[field] = value
+    if "models" in data:
+        models = _self_model_record_list("models", data["models"], {"provider", "model", "role"})
+        out["models"] = [{
+            "provider": _self_model_text("models.provider", item.get("provider"), 64),
+            "model": _self_model_text("models.model", item.get("model"), 128),
+            "role": _self_model_text("models.role", item.get("role"), 64),
+        } for item in models]
+    for field, fn in (
+        ("uncertainties", _validate_self_model_uncertainties),
+        ("errors", _validate_self_model_errors),
+        ("repairs", _validate_self_model_repairs),
+        ("evolution", _validate_self_model_evolution),
+    ):
         if field in data:
-            v = data[field]
-            if not isinstance(v, list):
-                raise ValidationError(f"{field} debe ser una lista")
-            out[field] = v
+            out[field] = fn(data[field])
     return out
 
 _LEARNING_INPUT = {
