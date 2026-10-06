@@ -832,7 +832,7 @@ MIGRATIONS = [
         VALUES (
             'tool_code_review',
             'code_review',
-            'Revisa una propuesta de codigo contra el repositorio y evidencia de pruebas; no escribe.',
+            'Revisa una propuesta de codigo contra el repositorio y evidencia de pruebas, sin escribir.',
             'code',
             '["owner"]'::jsonb,
             '{"repo":"str","paths":"list","proposal":"dict","test_results":"dict"}'::jsonb,
@@ -1450,7 +1450,7 @@ MIGRATIONS = [
             'cap_self_model_persistent',
             'self_model_persistent',
             'Self-Model persistente de Akira con singleton versionado, identidad autoritativa y proyecciones actuales de capabilities, tools y models.',
-            'self',
+            'identity',
             'composite',
             'implemented',
             'unverified',
@@ -1523,15 +1523,15 @@ MIGRATIONS = [
                             )
                         ) AS item
                     FROM jsonb_array_elements(uncertainties) item
-                    WHERE item->>'statement' = 'Los agentes existen; las misiones estan en construccion (Fase 10).'
+                    WHERE item->>'statement' = 'Los agentes existen' || chr(59) || ' las misiones estan en construccion (Fase 10).'
                     UNION ALL
                     SELECT item
                     FROM jsonb_array_elements(uncertainties) item
-                    WHERE item->>'statement' <> 'Los agentes existen; las misiones estan en construccion (Fase 10).'
+                    WHERE item->>'statement' <> 'Los agentes existen' || chr(59) || ' las misiones estan en construccion (Fase 10).'
                     UNION ALL
                     SELECT jsonb_build_object(
                         'id','uncertainty_missions_current_state',
-                        'statement','Mission Engine esta implementado, pero existen misiones en estados activos, fallidos y completados; la salud operacional del flujo debe seguir verificandose.',
+                        'statement','Mission Engine esta implementado, pero existen misiones en estados activos, fallidos y completados, y la salud operacional del flujo debe seguir verificandose.',
                         'kind','capability',
                         'status','open',
                         'evidence',jsonb_build_array(
@@ -1572,7 +1572,7 @@ MIGRATIONS = [
         VALUES (
             'tool_controlled_autonomy_start',
             'controlled_autonomy_start',
-            'Inicia la autonomia controlada F14 hasta una compuerta de aprobacion humana; no aprueba ni aplica cambios.',
+            'Inicia la autonomia controlada F14 hasta una compuerta de aprobacion humana, sin aprobar ni aplicar cambios.',
             'code',
             '["owner"]'::jsonb,
             '{"goal":"str","repository":"str","base_branch":"str","paths":"list","instruction":"str","queries":"list","tests":"list","idempotency_key":"str"}'::jsonb,
@@ -1602,7 +1602,7 @@ MIGRATIONS = [
             'agent_autonomy_orchestrator',
             'autonomy_orchestrator',
             'autonomy_orchestrator',
-            'Orquesta autonomia controlada hasta aprobacion humana; nunca puede aprobar ni aplicar el cambio.',
+            'Orquesta autonomia controlada hasta aprobacion humana, sin poder aprobar ni aplicar el cambio.',
             '["controlled_autonomy_start"]'::jsonb,
             'idle',
             'agent.v1',

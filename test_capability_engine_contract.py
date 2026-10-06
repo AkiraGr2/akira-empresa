@@ -114,6 +114,38 @@ class CapabilityEngineContractTests(unittest.TestCase):
         self.assertIn("def _guard(name, fn, service, created_ids):", source)
         self.assertIn("results.append(_guard(name, fn, service, created_ids))", source)
 
+    def test_canonical_capability_catalog_uses_valid_categories(self):
+        from persistence.capability_catalog import BASE_CAPABILITIES
+        for capability in BASE_CAPABILITIES:
+            record = validate_capability(capability)
+            self.assertIn(record["category"], {
+                "identity", "memory", "knowledge", "learning", "graph", "cognitive",
+                "tooling", "agents", "missions", "security", "storage", "multimedia",
+                "orchestration", "repair", "evolution", "hive", "external", "general",
+            })
+
+    def test_self_model_migration_split_is_quote_safe(self):
+        from persistence.migrations import MIGRATIONS
+
+        sql = next(
+            sql for version, sql in MIGRATIONS
+            if version == "047_self_model_f2_coherence"
+        )
+        statements = [stmt.strip() for stmt in sql.split(";") if stmt.strip()]
+        self.assertEqual(len(statements), 4)
+
+        for statement in statements:
+            in_single_quote = False
+            i = 0
+            while i < len(statement):
+                if statement[i] == "'":
+                    if in_single_quote and i + 1 < len(statement) and statement[i + 1] == "'":
+                        i += 2
+                        continue
+                    in_single_quote = not in_single_quote
+                i += 1
+            self.assertFalse(in_single_quote, "migration 047 deja una cadena SQL entre comillas sin cerrar")
+
     def test_valid_capability_and_effective_state(self):
         record = validate_capability({
             "name": "ci_capability_contract",
