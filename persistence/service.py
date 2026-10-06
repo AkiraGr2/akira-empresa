@@ -66,7 +66,7 @@ MISSION_STATUS_TRANSITIONS = {
     "created":          ("planning", "cancelled"),
     "planning":         ("waiting_approval", "failed", "cancelled"),
     "waiting_approval": ("running", "cancelled"),
-    "running":          ("completed", "failed", "paused"),
+    "running":          ("completed", "failed", "paused", "cancelled"),
     "paused":           ("running", "cancelled", "failed"),
     "completed":        (),
     "failed":           (),
