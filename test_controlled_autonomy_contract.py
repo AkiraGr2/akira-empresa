@@ -128,6 +128,19 @@ class ControlledAutonomyContractTests(unittest.TestCase):
                 }]
             })
 
+    def test_proposal_rejects_malformed_hunk_header(self):
+        with self.assertRaises(AutonomyContractError):
+            validate_proposal({
+                "status": "proposal",
+                "summary": "bad hunk",
+                "changes": [{
+                    "path": "README.md",
+                    "operation": "modify",
+                    "reason": "x",
+                    "patch": "--- a/README.md\\n+++ b/README.md\\n@@\\n-old\\n+new\\n",
+                }],
+            })
+
     def test_patch_engine_applies_modify_and_create(self):
         source = "uno\ndos\ntres\n"
         patch = (
