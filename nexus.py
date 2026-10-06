@@ -5530,7 +5530,6 @@ async def _run_absorption_candidate(
         )
         return None
 
-MEMORY_EMBEDDING_MODEL = MEMORY_EMBEDDING_MODEL
 MEMORY_EMBEDDING_DIMENSIONS = 768
 
 def _generate_memory_embedding(text):
