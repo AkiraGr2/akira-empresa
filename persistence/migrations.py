@@ -1152,4 +1152,13 @@ MIGRATIONS = [
         """
     ),
 
+    (
+        "039_mission_owner_scoped_idempotency",
+        """
+        DROP INDEX IF EXISTS missions_idempotency_key_uq;
+        CREATE UNIQUE INDEX missions_created_by_idempotency_key_uq
+            ON public.missions (created_by, idempotency_key);
+        """
+    ),
+
 ]
