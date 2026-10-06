@@ -2949,16 +2949,15 @@ class PersistenceService:
         if current.get("status") in ("applied", "rejected", "failed"):
             raise ValidationError("una evolucion terminal no es mutable")
         current_decision = current.get("decision")
-        if (
-            isinstance(current_decision, dict)
-            and current_decision.get("status") == "approved"
-            and any(key in clean for key in (
+        if isinstance(current_decision, dict) and current_decision.get("status") == "approved":
+            approved_evidence_fields = {
                 "target_component", "detected_need", "research_reference",
                 "design", "prototype_reference", "tests", "evaluation",
-                "change_reference",
-            ))
-        ):
-            raise ValidationError("una evolucion aprobada no puede alterar su evidencia")
+            }
+            if approved_evidence_fields.intersection(clean):
+                raise ValidationError("una evolucion aprobada no puede alterar su evidencia")
+            if "change_reference" in clean and not _allow_control_fields:
+                raise ValidationError("change_reference solo puede fijarse durante apply")
         if expected_version is None:
             expected_version = current["version"]
         try:
@@ -3137,6 +3136,7 @@ class PersistenceService:
             expected_version=current["version"],
             actor=actor,
             owner_scope=owner_scope,
+            _allow_control_fields=True,
         )
         return self.advance_evolution(
             evolution_id,
