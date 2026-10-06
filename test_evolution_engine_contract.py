@@ -102,6 +102,40 @@ class EvolutionEngineContractTests(unittest.TestCase):
         })
         self.assertEqual(record["status"], "detected")
 
+    def test_creation_cannot_skip_detected_state(self):
+        with self.assertRaises(ValidationError):
+            self.service.create_evolution(
+                {
+                    "target_component": "component.test",
+                    "detected_need": "No debe nacer en applied.",
+                    "owner_scope": "scope:A",
+                    "status": "applied",
+                },
+                actor="owner@example.test",
+                owner_scope="scope:A",
+            )
+
+    def test_public_update_cannot_bypass_lifecycle_or_approval(self):
+        rec = self.create()
+        evolution_id = rec["record"]["id"]
+
+        with self.assertRaises(ValidationError):
+            self.service.update_evolution(
+                evolution_id,
+                {"status": "researching"},
+                expected_version=1,
+                actor="owner@example.test",
+                owner_scope="scope:A",
+            )
+        with self.assertRaises(ValidationError):
+            self.service.update_evolution(
+                evolution_id,
+                {"decision": {"status": "approved"}},
+                expected_version=1,
+                actor="owner@example.test",
+                owner_scope="scope:A",
+            )
+
     def test_idempotency_is_owner_scoped(self):
         first = self.create(scope="scope:A", key="evolution:idem:v1")
         second = self.create(scope="scope:A", key="evolution:idem:v1")
