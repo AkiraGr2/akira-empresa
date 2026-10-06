@@ -546,6 +546,15 @@ _SELF_MODEL_UNCERTAINTY_STATUSES = ("open", "resolved", "superseded")
 _SELF_MODEL_UNCERTAINTY_KINDS = ("capability", "knowledge", "runtime", "evidence", "other")
 _SELF_MODEL_ERROR_STATUSES = ("open", "resolved", "ignored")
 _SELF_MODEL_REPAIR_STATUSES = ("proposed", "approved", "running", "completed", "failed", "cancelled")
+_SELF_MODEL_REPAIR_STAGES = (
+    "detected", "diagnosed", "isolated", "proposed", "sandboxed",
+    "tested", "evaluated", "approved", "applied", "discarded", "failed",
+)
+_SELF_MODEL_REPAIR_ACTIONS = (
+    "disable_selftest_agent",
+    "detach_orphan_selftest_task",
+    "recover_stale_selftest_task",
+)
 _SELF_MODEL_EVOLUTION_STATUSES = ("proposed", "approved", "implemented", "rejected", "deferred")
 
 def _self_model_text(name, value, maximum=500, allow_empty=False):
@@ -687,22 +696,43 @@ def _validate_self_model_errors(value):
     return out
 
 def _validate_self_model_repairs(value):
-    allowed = {"id", "target", "reason", "status", "proposed_at", "started_at", "completed_at", "evidence", "result"}
+    allowed = {
+        "id", "target", "reason", "status", "stage", "action_type",
+        "owner_scope", "proposed_at", "started_at", "completed_at",
+        "evidence", "result", "diagnosis", "proposal", "sandbox",
+        "tests", "evaluation",
+    }
     items = _self_model_record_list("repairs", value, allowed)
     out = []
     for item in items:
         status = _self_model_text("repairs.status", item.get("status"), 32)
         if status not in _SELF_MODEL_REPAIR_STATUSES:
             raise ValidationError(f"repairs.status invalido: {status!r}")
+        stage = _self_model_text("repairs.stage", item.get("stage", "detected"), 32)
+        if stage not in _SELF_MODEL_REPAIR_STAGES:
+            raise ValidationError(f"repairs.stage invalido: {stage!r}")
+        action_type = _self_model_text("repairs.action_type", item.get("action_type", ""), 64)
+        if action_type not in _SELF_MODEL_REPAIR_ACTIONS:
+            raise ValidationError(f"repairs.action_type invalido: {action_type!r}")
+        owner_scope = _self_model_text("repairs.owner_scope", item.get("owner_scope", "system"), 128)
         normalized = {
             "id": _self_model_text("repairs.id", item.get("id"), 128),
             "target": _self_model_text("repairs.target", item.get("target"), 256),
             "reason": _self_model_text("repairs.reason", item.get("reason"), 2000),
             "status": status,
+            "stage": stage,
+            "action_type": action_type,
+            "owner_scope": owner_scope,
             "proposed_at": _self_model_iso("repairs.proposed_at", item.get("proposed_at")),
             "evidence": item.get("evidence", []),
             "result": _self_model_text("repairs.result", item.get("result", ""), 2000, allow_empty=True),
         }
+        for field in ("diagnosis", "proposal", "sandbox", "tests", "evaluation"):
+            if field in item:
+                value_obj = item[field]
+                if not isinstance(value_obj, (dict, list, str)):
+                    raise ValidationError(f"repairs.{field} debe ser objeto, lista o texto")
+                normalized[field] = value_obj
         if status in ("running", "completed", "failed") and item.get("started_at") is None:
             raise ValidationError("repairs.started_at requerido para status activo/final")
         if status == "completed" and item.get("completed_at") is None:
