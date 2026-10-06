@@ -1236,8 +1236,7 @@ MIGRATIONS = [
         );
 
         CREATE UNIQUE INDEX IF NOT EXISTS evolution_owner_idempotency_key_uq
-            ON public.evolution_records (owner_scope, idempotency_key)
-            WHERE idempotency_key IS NOT NULL;
+            ON public.evolution_records (owner_scope, idempotency_key);
 
         CREATE INDEX IF NOT EXISTS evolution_owner_status_idx
             ON public.evolution_records (owner_scope, status, created_at DESC);
@@ -1273,6 +1272,27 @@ MIGRATIONS = [
             NULL,
             'success',
             '{"schema":"evolution.v1","scope":"controlled_lifecycle","github_write":false}'::jsonb
+        )
+        ON CONFLICT DO NOTHING
+        """
+    ),
+
+    (
+        "042_evolution_idempotency_index_hardening",
+        """
+        DROP INDEX IF EXISTS public.evolution_owner_idempotency_key_uq;
+        CREATE UNIQUE INDEX evolution_owner_idempotency_key_uq
+            ON public.evolution_records (owner_scope, idempotency_key);
+
+        INSERT INTO public.audit_log (
+            actor, action, resource, resource_id, status, detail
+        ) VALUES (
+            'system',
+            'evolution.idempotency_index_harden',
+            'evolution_records',
+            NULL,
+            'success',
+            '{"unique_scope":["owner_scope","idempotency_key"],"partial":false}'::jsonb
         )
         ON CONFLICT DO NOTHING
         """
