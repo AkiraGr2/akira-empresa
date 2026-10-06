@@ -245,6 +245,7 @@ ENTITIES = {
         "in_filterable": ("node_type", "owner_scope", "privacy_level", "status"),
         "orderable": ("created_at", "updated_at", "weight", "reuse_count", "last_used_at"),
         "idempotent": True,
+        "idempotency_scope": ("owner_scope",),
     },
     "graph_edges": {
         "table": "graph_edges",
@@ -264,6 +265,7 @@ ENTITIES = {
         "in_filterable": ("relation_type", "origin", "status"),
         "orderable": ("created_at", "updated_at", "weight", "frequency", "last_used_at"),
         "idempotent": True,
+        "idempotency_scope": ("from_node", "to_node", "relation_type"),
     },
     "cognitive_cycles": {
         "table": "cognitive_cycles",
