@@ -3263,6 +3263,7 @@ def _execute_cognitive_cycle(service, trigger, input_data, actor, owner_scope=No
         cs["last_cycle_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         cs["last_cycle_trigger"] = trigger
         cs["last_cycle_model"] = model_used
+        cs["last_observed_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         cs["cycles_completed"] = int(cs.get("cycles_completed") or 0) + 1
         service.update_self_model({"current_state": cs}, current_sm["version"], actor=actor)
         record("update_self_model", {"self_model_updated": True, "cycles_completed": cs["cycles_completed"]})
