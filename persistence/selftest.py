@@ -53,7 +53,7 @@ def _mem(marker, **over):
     return base
 
 
-def _guard(name, fn):
+def _guard(name, fn, service, created_ids):
     before_memory_ids = set(created_ids)
     try:
         result = fn()
@@ -1979,7 +1979,7 @@ def run_logic_tests(service, fresh_service_factory=None):
         ("TEST_CAPABILITY_PERSISTENCE", t_capability_persistence),
         ("TEST_CAPABILITY_VERIFICATION_APPEND_ONLY", t_capability_verification_append_only),
     ):
-        results.append(_guard(name, fn))
+        results.append(_guard(name, fn, service, created_ids))
 
     results.append({"test": "TEST_RELATION_INTEGRITY", "status": "N/A",
                     "detail": "Experiencia/Learning/Knowledge enlazados: pendiente de pruebas cruzadas."})
