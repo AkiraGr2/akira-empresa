@@ -965,7 +965,8 @@ MIGRATIONS = [
                         "agent_registry_change",
                         "tool_registry_change",
                         "owner_scope_change"
-                        (
+                    
+    (
         "041_evolution_engine_v1",
         """
         CREATE TABLE IF NOT EXISTS public.evolution_records (
@@ -1013,16 +1014,16 @@ MIGRATIONS = [
 
         CREATE POLICY "akira_deny_anon_authenticated_select"
             ON public.evolution_records AS RESTRICTIVE
-            FOR SELECT TO anon, authenticated USING (false);
+            FOR SELECT TO anon USING (false);
         CREATE POLICY "akira_deny_anon_authenticated_insert"
             ON public.evolution_records AS RESTRICTIVE
-            FOR INSERT TO anon, authenticated WITH CHECK (false);
+            FOR INSERT TO anon WITH CHECK (false);
         CREATE POLICY "akira_deny_anon_authenticated_update"
             ON public.evolution_records AS RESTRICTIVE
-            FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+            FOR UPDATE TO anon USING (false) WITH CHECK (false);
         CREATE POLICY "akira_deny_anon_authenticated_delete"
             ON public.evolution_records AS RESTRICTIVE
-            FOR DELETE TO anon, authenticated USING (false);
+            FOR DELETE TO anon USING (false);
 
         INSERT INTO public.audit_log (
             actor, action, resource, resource_id, status, detail
