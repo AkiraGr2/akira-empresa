@@ -256,4 +256,56 @@ GRAPH_PERSISTENT_CAPABILITY = {
     },
 }
 
-BASE_CAPABILITIES = (SESSION_AUTH_CAPABILITY, PERSISTENT_MEMORY_CAPABILITY, MEMORY_RECALL_CAPABILITY, LEARNING_PERSISTENT_CAPABILITY, GRAPH_PERSISTENT_CAPABILITY)
+
+
+EVOLUTION_ENGINE_CAPABILITY = {
+    "name": "evolution_engine_v1",
+    "description": "Motor de evolución controlada y auditable: registra necesidad, investigación, diseño, prototipo, pruebas, evaluación, aprobación humana y referencia de cambio sin autoescritura de código.",
+    "category": "evolution",
+    "kind": "composite",
+    "implementation_state": "implemented",
+    "verification_state": "unverified",
+    "availability_state": "available",
+    "maturity": "experimental",
+    "cost_compatibility": "free",
+    "dependencies": [
+        {"kind": "service", "id": "PersistenceService.create_evolution", "required": True},
+        {"kind": "service", "id": "PersistenceService.advance_evolution", "required": True},
+        {"kind": "service", "id": "PersistenceService.approve_evolution", "required": True},
+        {"kind": "service", "id": "PersistenceService.apply_evolution", "required": True},
+        {"kind": "storage", "id": "PostgreSQL.evolution_records", "required": True},
+        {"kind": "security", "id": "owner_scope", "required": True},
+        {"kind": "approval", "id": "human_approval", "required": True},
+    ],
+    "limitations": [
+        "F13 no escribe código ni muta GitHub automáticamente.",
+        "La aplicación requiere una referencia de cambio real y aprobación humana explícita.",
+        "Una propuesta, review o salida de un modelo no constituye evidencia de implementación.",
+    ],
+    "verification_spec": {
+        "method": "selftest",
+        "test_key": "evolution_engine_v1_contract",
+        "freshness_policy": {
+            "mode": "on_change",
+            "max_age_seconds": None,
+            "invalidate_on": [
+                "build_change",
+                "dependency_change",
+                "evolution_schema_change",
+                "ownership_change",
+            ],
+        },
+    },
+    "provenance": {
+        "source": "architecture_rebaseline_f13",
+        "created_by": "system",
+        "basis": [
+            "persistence/core.py",
+            "persistence/service.py",
+            "persistence/migrations.py",
+            "persistence/selftest.py",
+        ],
+    },
+}
+
+BASE_CAPABILITIES = (SESSION_AUTH_CAPABILITY, PERSISTENT_MEMORY_CAPABILITY, MEMORY_RECALL_CAPABILITY, LEARNING_PERSISTENT_CAPABILITY, GRAPH_PERSISTENT_CAPABILITY, EVOLUTION_ENGINE_CAPABILITY)
