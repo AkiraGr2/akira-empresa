@@ -395,7 +395,7 @@ class ControlledAutonomyContractTests(unittest.TestCase):
         }, actor="owner@example.com", owner_scope="scope:A")
         run_id = created["record"]["id"]
         service.advance(run_id, "planning", "owner@example.com", "scope:A", {"base_commit_sha": "a" * 40})
-        for status in ("delegating", "proposed", "sandboxed", "tested", "evaluating"):
+        for status in ("delegating", "proposed", "sandboxed", "tested", "evaluating", "awaiting_approval", "acting", "external_applied", "evaluated"):
             service.advance(run_id, status, "owner@example.com", "scope:A")
         with self.assertRaises(AutonomyContractError):
             service.advance(run_id, "completed", "owner@example.com", "scope:A")
@@ -428,6 +428,7 @@ class ControlledAutonomyContractTests(unittest.TestCase):
         service = Mock()
         run = {
             "id": "autonomy_test_learning_failure",
+            "goal": "F14 learning failure test",
             "repository": "AkiraGr2/akira-empresa",
             "base_branch": "main",
             "base_commit_sha": "a" * 40,
