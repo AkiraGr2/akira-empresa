@@ -308,6 +308,14 @@ _IDENTITY_BANNED_PHRASES = (
     "no puedo ser akira",
 )
 
+# Sanitizador quirúrgico para memoria histórica: usa la misma fuente de verdad
+# que el filtro de identidad pública y solo reemplaza frases explícitamente
+# prohibidas, sin depender de una segunda lista paralela.
+_IDENTITY_LIKE_RE = re.compile(
+    "|".join(re.escape(phrase) for phrase in _IDENTITY_BANNED_PHRASES),
+    re.IGNORECASE,
+)
+
 _IDENTITY_REPLACEMENT = "Soy Akira."
 
 def enforce_akira_identity_global(text):
