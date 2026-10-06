@@ -29,8 +29,8 @@ from .core import (AGENT_SCHEMA_VERSION, AGENT_TASK_SCHEMA_VERSION,
                    COGNITIVE_CYCLE_SCHEMA_VERSION, COGNITIVE_EVENT_SCHEMA_VERSION,
                    COGNITIVE_STAGES, CONVERSATION_MESSAGE_SCHEMA_VERSION,
                    CONVERSATION_SCHEMA_VERSION, GRAPH_EDGE_SCHEMA_VERSION,
-                   GRAPH_NODE_SCHEMA_VERSION, HIVE_VISIBLE, LEARNING_SCHEMA_VERSION, RELATION_TYPES,
-                   MEMORY_SCHEMA_VERSION, MISSION_SCHEMA_VERSION, MISSION_STATUSES,
+                   GRAPH_NODE_SCHEMA_VERSION, HIVE_VISIBLE, KNOWLEDGE_SCHEMA_VERSION, LEARNING_SCHEMA_VERSION, RELATION_TYPES,
+                   KNOWLEDGE_VERIFICATION_STATUSES, MEMORY_SCHEMA_VERSION, MISSION_SCHEMA_VERSION, MISSION_STATUSES,
                    EVOLUTION_SCHEMA_VERSION, EVOLUTION_STATUSES,
                    SELF_MODEL_PRIMARY_ID, SELF_MODEL_SCHEMA_VERSION,
                    TOOL_INVOCATION_SCHEMA_VERSION, TOOL_SCHEMA_VERSION,
@@ -39,7 +39,7 @@ from .core import (AGENT_SCHEMA_VERSION, AGENT_TASK_SCHEMA_VERSION,
                    validate_agent, validate_agent_task, validate_cognitive_cycle,
                    validate_cognitive_event, validate_conversation,
                    validate_conversation_message, validate_graph_edge,
-                   validate_graph_node, validate_learning_event, validate_memory,
+                   validate_graph_node, validate_knowledge, validate_learning_event, validate_memory,
                    validate_mission, validate_evolution_record, validate_self_model, validate_tool,
                    validate_tool_invocation)
 
@@ -1742,6 +1742,224 @@ class PersistenceService:
             descending=descending,
         )
 
+    def _knowledge_scope_matches(self, record, owner_scope):
+        if owner_scope is None:
+            return True
+        requested = str(owner_scope).strip()
+        stored = str(record.get("owner_scope") or "").strip()
+        return bool(requested) and (stored == requested or stored == LEGACY_OWNER_SCOPE)
+
+    def _validate_knowledge_related_nodes(self, related_nodes, owner_scope):
+        clean = []
+        for node_id in related_nodes or []:
+            node_id = str(node_id).strip()
+            if not node_id or node_id in clean:
+                continue
+            node = self.get_node(node_id, owner_scope=owner_scope)
+            if node is None:
+                raise NotFoundError(f"knowledge related node no accesible: {node_id}")
+            if node.get("status") != "active":
+                raise ValidationError(f"knowledge related node no esta activa: {node_id}")
+            clean.append(node_id)
+        return clean
+
+    def save_knowledge(self, data, actor="system", idempotency_key=None, owner_scope=None):
+        fields = validate_knowledge(data)
+        scope = str(owner_scope).strip() if owner_scope is not None else str(fields.get("owner_scope") or LEGACY_OWNER_SCOPE).strip()
+        if not scope:
+            raise ValidationError("owner_scope requerido")
+        fields["owner_scope"] = scope
+        # La autoría de persistencia se deriva del actor confiable del servicio.
+        fields["created_by"] = actor
+        fields["related_nodes"] = self._validate_knowledge_related_nodes(
+            fields.get("related_nodes") or [], owner_scope=scope
+        )
+        if fields.get("verification_status") == "verified":
+            raise ValidationError("knowledge no debe nacer como verified; use verify_knowledge con evidencia")
+        record = dict(
+            fields,
+            id=new_id("know"),
+            status="active",
+            schema_version=KNOWLEDGE_SCHEMA_VERSION,
+        )
+        if idempotency_key is not None:
+            if not isinstance(idempotency_key, str) or not 0 < len(idempotency_key.strip()) <= 200:
+                raise ValidationError("idempotency_key debe ser texto de 1 a 200 caracteres")
+            record["idempotency_key"] = idempotency_key.strip()
+        try:
+            with self.repo.transaction() as tx:
+                stored, created = tx.create("knowledge_records", record)
+                tx.append_audit({
+                    "actor": actor,
+                    "action": "knowledge.create" if created else "knowledge.create.already_synced",
+                    "resource": "knowledge_records",
+                    "resource_id": stored["id"],
+                    "status": "success",
+                    "detail": {
+                        "concept": stored.get("concept"),
+                        "verification_status": stored.get("verification_status"),
+                        "owner_scope": stored.get("owner_scope"),
+                    },
+                })
+        except PersistenceError as e:
+            self._audit_failure_generic(actor, "knowledge.create", "knowledge_records", None, e)
+            raise
+        except Exception as e:
+            self._audit_failure_generic(actor, "knowledge.create", "knowledge_records", None, e)
+            raise StorageError(type(e).__name__) from e
+        verified = self.repo.get("knowledge_records", stored["id"])
+        if verified is None:
+            raise VerificationError("knowledge no confirmado")
+        if not self._knowledge_scope_matches(verified, scope):
+            raise ConflictError("knowledge pertenece a otro owner_scope")
+        if created and verified.get("related_nodes") != fields.get("related_nodes", []):
+            raise VerificationError("related_nodes no coinciden al releer")
+        return {"outcome": "created" if created else "already_synced", "record": verified}
+
+    def get_knowledge(self, knowledge_id, owner_scope=None):
+        record = self.repo.get("knowledge_records", knowledge_id)
+        if record is None:
+            return None
+        return record if self._knowledge_scope_matches(record, owner_scope) else None
+
+    def search_knowledge(self, filters=None, limit=50, offset=0, order_by="created_at",
+                         descending=True, owner_scope=None):
+        limit = max(1, min(int(limit), 200))
+        base = dict(filters or {})
+        base.setdefault("status", "active")
+        if owner_scope is not None:
+            scope = str(owner_scope).strip()
+            if not scope:
+                raise ValidationError("owner_scope requerido")
+            base.pop("owner_scope", None)
+            base["owner_scope"] = scope
+        return self.repo.search(
+            "knowledge_records",
+            base,
+            limit=limit,
+            offset=max(0, int(offset)),
+            order_by=order_by,
+            descending=descending,
+        )
+
+    def update_knowledge(self, knowledge_id, changes, expected_version=None,
+                         actor="system", owner_scope=None):
+        current = self.get_knowledge(knowledge_id, owner_scope=owner_scope)
+        if current is None:
+            raise NotFoundError(knowledge_id)
+        clean = validate_knowledge(changes, partial=True)
+        if "related_nodes" in clean:
+            clean["related_nodes"] = self._validate_knowledge_related_nodes(
+                clean["related_nodes"], owner_scope=owner_scope or current.get("owner_scope")
+            )
+        current_status = current.get("verification_status") or "unknown"
+        factual_fields = {"concept", "content", "domain", "source", "source_id", "source_reference", "confidence", "related_nodes"}
+        if current_status == "verified" and factual_fields.intersection(clean):
+            # Cambiar el contenido de un knowledge verificado invalida su evidencia anterior.
+            # Debe volver a quedar parcialmente verificado hasta aportar nueva evidencia.
+            if clean.get("verification_status") not in (None, "partially_verified", "verified"):
+                raise ValidationError("knowledge verified no admite degradacion implicita incompatible")
+            if clean.get("verification_status") is None:
+                clean["verification_status"] = "partially_verified"
+            if clean["verification_status"] == "verified":
+                evidence = clean.get("evidence", current.get("evidence") or [])
+                if not evidence:
+                    raise ValidationError("knowledge verified requiere evidencia")
+            else:
+                clean["last_verified_at"] = None
+                clean["verified_by"] = None
+        if "verification_status" in clean:
+            next_status = clean["verification_status"]
+            transitions = {
+                "unknown": {"unverified", "partially_verified", "verified", "contradicted"},
+                "unverified": {"partially_verified", "verified", "deprecated", "contradicted"},
+                "partially_verified": {"verified", "deprecated", "contradicted"},
+                "verified": {"deprecated", "contradicted", "partially_verified"},
+                "deprecated": {"partially_verified", "verified", "contradicted"},
+                "contradicted": {"partially_verified", "verified", "deprecated"},
+            }
+            if next_status != current_status and next_status not in transitions.get(current_status, set()):
+                raise ValidationError(f"transicion de knowledge no permitida: {current_status} -> {next_status}")
+        else:
+            next_status = current_status
+        if next_status == "verified":
+            evidence = clean.get("evidence", current.get("evidence") or [])
+            if not evidence:
+                raise ValidationError("knowledge verified requiere evidencia")
+            clean["last_verified_at"] = _now_iso()
+            clean["verified_by"] = actor
+        elif "verification_status" in clean and next_status != "verified":
+            clean["last_verified_at"] = None
+            clean["verified_by"] = None
+        if "status" in clean and clean["status"] == "deleted":
+            raise ValidationError("knowledge usa archivado; deleted queda reservado a politica de retencion")
+        if expected_version is None:
+            expected_version = current["version"]
+        with self.repo.transaction() as tx:
+            try:
+                updated = tx.update("knowledge_records", knowledge_id, clean, expected_version)
+                tx.append_audit({
+                    "actor": actor,
+                    "action": "knowledge.update",
+                    "resource": "knowledge_records",
+                    "resource_id": knowledge_id,
+                    "status": "success",
+                    "detail": {"fields": sorted(clean), "new_version": updated["version"]},
+                })
+            except PersistenceError:
+                raise
+            except Exception as e:
+                raise StorageError(type(e).__name__) from e
+        verified = self.get_knowledge(knowledge_id, owner_scope=owner_scope)
+        if verified is None or verified.get("version") != expected_version + 1:
+            raise VerificationError("knowledge update no confirmado")
+        return verified
+
+    def verify_knowledge(self, knowledge_id, evidence, actor="system",
+                         expected_version=None, owner_scope=None):
+        current = self.get_knowledge(knowledge_id, owner_scope=owner_scope)
+        if current is None:
+            raise NotFoundError(knowledge_id)
+        clean = validate_knowledge({
+            "evidence": evidence,
+            "verification_status": "verified",
+            "last_verified_at": _now_iso(),
+            "verified_by": actor,
+        }, partial=True)
+        current_evidence = list(current.get("evidence") or [])
+        incoming = clean["evidence"]
+        merged = current_evidence + [item for item in incoming if item not in current_evidence]
+        if not merged:
+            raise ValidationError("evidence requerida")
+        changes = {
+            "evidence": merged,
+            "verification_status": "verified",
+            "last_verified_at": clean["last_verified_at"],
+            "verified_by": actor,
+        }
+        return self.update_knowledge(
+            knowledge_id,
+            changes,
+            expected_version=expected_version,
+            actor=actor,
+            owner_scope=owner_scope,
+        )
+
+    def archive_knowledge(self, knowledge_id, expected_version=None,
+                          actor="system", owner_scope=None):
+        current = self.get_knowledge(knowledge_id, owner_scope=owner_scope)
+        if current is None:
+            raise NotFoundError(knowledge_id)
+        if expected_version is None:
+            expected_version = current["version"]
+        return self.update_knowledge(
+            knowledge_id,
+            {"status": "archived"},
+            expected_version=expected_version,
+            actor=actor,
+            owner_scope=owner_scope,
+        )
+
     def create_node(self, data, actor="system", idempotency_key=None):
         fields = validate_graph_node(data)
         record = dict(fields, id=new_id("node"), status="active", schema_version=GRAPH_NODE_SCHEMA_VERSION)
@@ -1848,6 +2066,10 @@ class PersistenceService:
             raise NotFoundError(f"from_node no existe: {from_node}")
         if to_record is None:
             raise NotFoundError(f"to_node no existe: {to_node}")
+        if from_record.get("status") != "active":
+            raise ValidationError(f"from_node no esta activa: {from_node}")
+        if to_record.get("status") != "active":
+            raise ValidationError(f"to_node no esta activa: {to_node}")
 
         if owner_scope is not None:
             scope = str(owner_scope).strip()

@@ -12,6 +12,7 @@ SENSITIVE_PREFIXES = (
     "/api/v8/self",
     "/api/v8/learning",
     "/api/v8/graph",
+    "/api/v8/knowledge",
     "/api/v8/cognitive",
     "/api/v8/missions",
     "/api/v8/agents",
@@ -107,6 +108,25 @@ class SensitiveRouteSecurityContract(unittest.TestCase):
         for route in self.routes:
             if route["path"].startswith("/api/v8/autonomy"):
                 self.assertIn("_require_owner(request)", route["source"])
+
+    def test_knowledge_routes_are_owner_protected_and_explicit(self):
+        expected = {
+            ("GET", "/api/v8/knowledge"),
+            ("POST", "/api/v8/knowledge"),
+            ("PATCH", "/api/v8/knowledge/{knowledge_id}"),
+            ("POST", "/api/v8/knowledge/{knowledge_id}/verify"),
+            ("POST", "/api/v8/knowledge/{knowledge_id}/archive"),
+        }
+        found = {
+            (r["method"], r["path"])
+            for r in self.routes
+            if r["path"].startswith("/api/v8/knowledge")
+        }
+        self.assertEqual(found, expected)
+        for route in self.routes:
+            if route["path"].startswith("/api/v8/knowledge"):
+                self.assertIn("_require_owner(request)", route["source"])
+                self.assertNotIn('owner_scope = payload.get("owner_scope")', route["source"])
 
     def test_tool_invocation_history_is_owner_protected(self):
         route = next(

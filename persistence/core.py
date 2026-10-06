@@ -33,6 +33,8 @@ PRIVACY_LEVELS = ("PRIVATE", "SENSITIVE", "SHAREABLE", "COLLECTIVE")
 HIVE_VISIBLE = ("SHAREABLE", "COLLECTIVE")
 STATUSES = ("active", "archived", "deleted")
 MEMORY_SCHEMA_VERSION = "memory.v1"
+KNOWLEDGE_SCHEMA_VERSION = "knowledge.v1"
+KNOWLEDGE_VERIFICATION_STATUSES = ("unknown", "unverified", "partially_verified", "verified", "deprecated", "contradicted")
 
 SELF_MODEL_PRIMARY_ID = "akira_primary"
 SELF_MODEL_SCHEMA_VERSION = "self_model.v2"
@@ -251,6 +253,36 @@ ENTITIES = {
         ),
         "in_filterable": ("node_type", "owner_scope", "privacy_level", "status"),
         "orderable": ("created_at", "updated_at", "weight", "reuse_count", "last_used_at"),
+        "idempotent": True,
+        "idempotency_scope": ("owner_scope",),
+    },
+    "knowledge_records": {
+        "table": "knowledge_records",
+        "columns": (
+            "id", "concept", "content", "domain", "source", "source_id",
+            "source_reference", "created_by", "confidence", "verification_status",
+            "evidence", "tags", "related_nodes", "owner_scope", "privacy_level",
+            "status", "schema_version", "version", "idempotency_key",
+            "last_verified_at", "verified_by", "created_at", "updated_at",
+        ),
+        "json_columns": ("evidence", "tags", "related_nodes"),
+        "mutable": (
+            "concept", "content", "domain", "source", "source_id",
+            "source_reference", "confidence", "verification_status",
+            "evidence", "tags", "related_nodes", "privacy_level", "status",
+            "last_verified_at", "verified_by",
+        ),
+        "filterable": (
+            "id", "concept", "domain", "source", "source_id",
+            "owner_scope", "privacy_level", "status", "verification_status",
+            "idempotency_key",
+        ),
+        "in_filterable": (
+            "domain", "owner_scope", "privacy_level", "status", "verification_status",
+        ),
+        "orderable": (
+            "created_at", "updated_at", "last_verified_at", "confidence", "concept",
+        ),
         "idempotent": True,
         "idempotency_scope": ("owner_scope",),
     },
@@ -1095,6 +1127,97 @@ def validate_learning_event(data, partial: bool = False) -> dict:
         out["reuse_count"] = _non_negative_int("reuse_count", data["reuse_count"])
     if "last_reused_at" in data:
         out["last_reused_at"] = _str("last_reused_at", data["last_reused_at"], 64)
+    return out
+
+_KNOWLEDGE_INPUT = {
+    "concept", "content", "domain", "source", "source_id", "source_reference",
+    "created_by", "confidence", "verification_status", "evidence", "tags",
+    "related_nodes", "owner_scope", "privacy_level", "status",
+    "last_verified_at", "verified_by",
+}
+_KNOWLEDGE_UPDATABLE = {
+    "concept", "content", "domain", "source", "source_id", "source_reference",
+    "confidence", "verification_status", "evidence", "tags", "related_nodes",
+    "privacy_level", "status", "last_verified_at", "verified_by",
+}
+
+def _knowledge_related_nodes(value):
+    return _string_list("related_nodes", value or [], 100, 256)
+
+def _knowledge_verified_metadata(verification_status, evidence, verified_at, verified_by):
+    if verification_status == "verified":
+        if not evidence:
+            raise ValidationError("knowledge verified requiere evidencia")
+        if not verified_at:
+            raise ValidationError("knowledge verified requiere last_verified_at")
+        if not verified_by:
+            raise ValidationError("knowledge verified requiere verified_by")
+    elif verification_status != "verified":
+        if verified_at is not None or verified_by is not None:
+            raise ValidationError("last_verified_at/verified_by solo aplican cuando verification_status=verified")
+
+def validate_knowledge(data, partial: bool = False) -> dict:
+    if not isinstance(data, dict):
+        raise ValidationError("el registro de knowledge debe ser un objeto")
+    allowed = _KNOWLEDGE_UPDATABLE if partial else _KNOWLEDGE_INPUT
+    extra = sorted(set(data) - allowed)
+    if extra:
+        raise ValidationError(f"campos no permitidos: {extra}")
+    if partial and not data:
+        raise ValidationError("no hay cambios")
+    if not partial:
+        for req in ("concept", "content", "domain", "source"):
+            if req not in data:
+                raise ValidationError(f"falta el campo obligatorio {req}")
+
+    out = {}
+    if "concept" in data:
+        out["concept"] = _str("concept", data["concept"], 200)
+    if "content" in data:
+        out["content"] = _str("content", data["content"], 20000)
+    if "domain" in data:
+        out["domain"] = _str("domain", data["domain"], 128)
+    if "source" in data:
+        out["source"] = _str("source", data["source"], 64)
+    if "source_id" in data:
+        out["source_id"] = _optional_str("source_id", data["source_id"], 256)
+    if "source_reference" in data:
+        out["source_reference"] = _optional_str("source_reference", data["source_reference"], 500)
+    if "created_by" in data and data["created_by"] is not None:
+        out["created_by"] = _str("created_by", data["created_by"], 256)
+    if "confidence" in data or not partial:
+        out["confidence"] = _float_0_1("confidence", data.get("confidence", 0.5))
+    if "verification_status" in data or not partial:
+        out["verification_status"] = _choice(
+            "verification_status",
+            data.get("verification_status", "unverified"),
+            KNOWLEDGE_VERIFICATION_STATUSES,
+        )
+    if "evidence" in data or not partial:
+        out["evidence"] = _learning_evidence(data.get("evidence", []))
+    if "tags" in data or not partial:
+        out["tags"] = _tags(data.get("tags", []))
+    if "related_nodes" in data or not partial:
+        out["related_nodes"] = _knowledge_related_nodes(data.get("related_nodes", []))
+    if "owner_scope" in data and data["owner_scope"] is not None:
+        out["owner_scope"] = _str("owner_scope", data["owner_scope"], 128)
+    if "privacy_level" in data or not partial:
+        out["privacy_level"] = _choice(
+            "privacy_level", data.get("privacy_level", "PRIVATE"), PRIVACY_LEVELS
+        )
+    if "status" in data:
+        out["status"] = _choice("status", data["status"], STATUSES)
+    if "last_verified_at" in data:
+        out["last_verified_at"] = _optional_str("last_verified_at", data["last_verified_at"], 64)
+    if "verified_by" in data:
+        out["verified_by"] = _optional_str("verified_by", data["verified_by"], 256)
+
+    _knowledge_verified_metadata(
+        out.get("verification_status", "unverified"),
+        out.get("evidence", []),
+        out.get("last_verified_at"),
+        out.get("verified_by"),
+    )
     return out
 
 _NODE_INPUT = {

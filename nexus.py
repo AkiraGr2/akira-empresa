@@ -1945,6 +1945,160 @@ async def v8_me(request: Request):
     return {"authenticated": True, "email": s["email"], "is_owner": s["is_owner"],
             "owner_scope": s["owner_scope"], "expires_at": s["exp"]}
 
+@app.get("/api/v8/knowledge")
+def v8_knowledge_list(
+    request: Request,
+    limit: int = 50,
+    verification_status: str | None = None,
+    domain: str | None = None,
+):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None:
+        return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    filters = {"status": "active"}
+    if verification_status:
+        filters["verification_status"] = verification_status
+    if domain:
+        filters["domain"] = domain
+    try:
+        rows = service.search_knowledge(filters=filters, limit=limit, owner_scope=s["owner_scope"])
+        return {"ok": True, "count": len(rows), "knowledge": rows}
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+
+
+@app.post("/api/v8/knowledge")
+def v8_knowledge_create(request: Request, payload: dict):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None:
+        return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    if not isinstance(payload, dict):
+        return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
+    data = dict(payload)
+    data.pop("owner_scope", None)
+    data["created_by"] = s["email"]
+    try:
+        result = service.save_knowledge(
+            data,
+            actor=s["email"],
+            idempotency_key=payload.get("idempotency_key"),
+            owner_scope=s["owner_scope"],
+        )
+        return {"ok": True, "knowledge": result["record"], "outcome": result["outcome"]}
+    except ConflictError:
+        return JSONResponse({"ok": False, "reason": "conflict"}, status_code=409)
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+
+
+@app.patch("/api/v8/knowledge/{knowledge_id}")
+def v8_knowledge_update(request: Request, knowledge_id: str, payload: dict):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None:
+        return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    if not isinstance(payload, dict):
+        return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
+    changes = dict(payload.get("changes") or payload)
+    changes.pop("owner_scope", None)
+    changes.pop("created_by", None)
+    expected_version = payload.get("expected_version")
+    if not isinstance(expected_version, int) or expected_version < 1:
+        return JSONResponse({"ok": False, "reason": "expected_version_required"}, status_code=400)
+    try:
+        updated = service.update_knowledge(
+            knowledge_id, changes, expected_version=expected_version,
+            actor=s["email"], owner_scope=s["owner_scope"],
+        )
+        return {"ok": True, "knowledge": updated}
+    except NotFoundError:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    except ConflictError:
+        return JSONResponse({"ok": False, "reason": "conflict"}, status_code=409)
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+
+
+@app.post("/api/v8/knowledge/{knowledge_id}/verify")
+def v8_knowledge_verify(request: Request, knowledge_id: str, payload: dict):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None:
+        return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    if not isinstance(payload, dict) or not isinstance(payload.get("evidence"), list) or not payload["evidence"]:
+        return JSONResponse({"ok": False, "reason": "evidence_required"}, status_code=400)
+    expected_version = payload.get("expected_version")
+    if expected_version is not None and (not isinstance(expected_version, int) or expected_version < 1):
+        return JSONResponse({"ok": False, "reason": "invalid_expected_version"}, status_code=400)
+    try:
+        verified = service.verify_knowledge(
+            knowledge_id, payload["evidence"], actor=s["email"],
+            expected_version=expected_version, owner_scope=s["owner_scope"],
+        )
+        return {"ok": True, "knowledge": verified}
+    except NotFoundError:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    except ConflictError:
+        return JSONResponse({"ok": False, "reason": "conflict"}, status_code=409)
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+
+
+@app.post("/api/v8/knowledge/{knowledge_id}/archive")
+def v8_knowledge_archive(request: Request, knowledge_id: str, payload: dict | None = None):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None:
+        return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    expected_version = (payload or {}).get("expected_version")
+    if expected_version is not None and (not isinstance(expected_version, int) or expected_version < 1):
+        return JSONResponse({"ok": False, "reason": "invalid_expected_version"}, status_code=400)
+    try:
+        archived = service.archive_knowledge(
+            knowledge_id, expected_version=expected_version,
+            actor=s["email"], owner_scope=s["owner_scope"],
+        )
+        return {"ok": True, "knowledge": archived}
+    except NotFoundError:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    except ConflictError:
+        return JSONResponse({"ok": False, "reason": "conflict"}, status_code=409)
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+
+
 @app.get("/api/v8/self")
 def v8_self(request: Request):
     s, _owner_error = _require_owner(request)

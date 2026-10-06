@@ -20,7 +20,7 @@ import akira_auth
 from .core import (ConflictError, GRAPH_EDGE_SCHEMA_VERSION, GRAPH_NODE_SCHEMA_VERSION,
                    LEARNING_SCHEMA_VERSION, NotFoundError, PersistenceError, ValidationError, new_id,
                    _SELF_MODEL_DERIVED_FIELDS,
-                   validate_graph_edge, validate_graph_node, validate_memory, validate_learning_event)
+                   validate_graph_edge, validate_graph_node, validate_knowledge, validate_memory, validate_learning_event)
 from .memory_recall import recall_memories
 from .model_registry import model_registry_snapshot, PRIMARY_CHAT_MODEL, GEMINI_REASONING_MODEL, GEMINI_CHAT_FALLBACK_VARIANT, GROQ_FALLBACK_MODELS, OPENROUTER_MODEL_ROUTE, MISTRAL_MODEL_ROUTE, MEMORY_EMBEDDING_MODEL
 from .capability import (
@@ -1120,6 +1120,151 @@ def run_logic_tests(service, fresh_service_factory=None):
             except Exception:
                 pass
             return _res(name, False, f"excepcion {type(exc).__name__}: {str(exc)[:300]}")
+
+    def t_knowledge_persistent_capability():
+        name = "TEST_KNOWLEDGE_PERSISTENT_CAPABILITY"
+        rows = service.list_capabilities(filters={"name": "knowledge_persistent"}, limit=1)
+        if not rows:
+            return _res(name, False, "capacidad knowledge_persistent no fue registrada por el bootstrap")
+        capability = rows[0]
+        scope_a = "selftest:knowledge:A:" + uuid.uuid4().hex[:8]
+        scope_b = "selftest:knowledge:B:" + uuid.uuid4().hex[:8]
+        knowledge_id = None
+        checks = {}
+        try:
+            base = {
+                "concept": "F4 knowledge contract " + uuid.uuid4().hex[:8],
+                "content": "Knowledge debe conservar provenance y estado de verificacion.",
+                "domain": "selftest",
+                "source": "selftest",
+                "source_reference": "selftest://knowledge-persistent",
+                "confidence": 0.8,
+                "tags": ["selftest", "f4"],
+                "related_nodes": [],
+                "privacy_level": "PRIVATE",
+            }
+            created = service.save_knowledge(
+                {**base, "owner_scope": scope_a},
+                actor="selftest",
+                owner_scope=scope_a,
+                idempotency_key="selftest:knowledge_persistent:" + uuid.uuid4().hex,
+            )
+            knowledge_id = created["record"]["id"]
+            repeat = service.save_knowledge(
+                {**base, "owner_scope": scope_a},
+                actor="selftest",
+                owner_scope=scope_a,
+                idempotency_key=created["record"].get("idempotency_key"),
+            )
+            # La prueba idempotente reutiliza exactamente la misma clave.
+            same_scope = service.get_knowledge(knowledge_id, owner_scope=scope_a)
+            foreign_scope = service.get_knowledge(knowledge_id, owner_scope=scope_b)
+            fresh = fresh_service_factory() if fresh_service_factory else service
+            fresh_record = fresh.get_knowledge(knowledge_id, owner_scope=scope_a)
+            verified_requires_evidence = False
+            try:
+                service.update_knowledge(
+                    knowledge_id,
+                    {"verification_status": "verified"},
+                    expected_version=created["record"]["version"],
+                    actor="selftest",
+                    owner_scope=scope_a,
+                )
+            except ValidationError:
+                verified_requires_evidence = True
+
+            verified = service.verify_knowledge(
+                knowledge_id,
+                [{
+                    "type": "selftest",
+                    "title": "Knowledge persistence verification",
+                    "reference": "selftest:knowledge_persistent:v1",
+                    "note": "Contrato verificable de provenance y estado.",
+                }],
+                actor="selftest",
+                expected_version=created["record"]["version"],
+                owner_scope=scope_a,
+            )
+            factual_edit = service.update_knowledge(
+                knowledge_id,
+                {"content": "Knowledge factual content changed; requiere nueva evidencia."},
+                expected_version=verified["version"],
+                actor="selftest",
+                owner_scope=scope_a,
+            )
+            checks = {
+                "created": created["outcome"] == "created",
+                "idempotent": repeat["outcome"] == "already_synced" and repeat["record"]["id"] == knowledge_id,
+                "reread": bool(same_scope and same_scope.get("verification_status") == "unverified"),
+                "owner_isolation": foreign_scope is None,
+                "fresh_connection": bool(fresh_record and fresh_record.get("id") == knowledge_id),
+                "verified_requires_evidence": verified_requires_evidence,
+                "verified_with_evidence": verified.get("verification_status") == "verified"
+                    and bool(verified.get("evidence"))
+                    and bool(verified.get("last_verified_at"))
+                    and verified.get("verified_by") == "selftest",
+                "factual_edit_revalidates": factual_edit.get("verification_status") == "partially_verified"
+                    and factual_edit.get("last_verified_at") is None
+                    and factual_edit.get("verified_by") is None,
+            }
+            ok = all(checks.values())
+            source_digest = hashlib.sha256(
+                (inspect.getsource(service.save_knowledge) + inspect.getsource(service.verify_knowledge)).encode("utf-8")
+            ).hexdigest()[:16]
+            idem = (
+                "selftest:knowledge_persistent:v1:"
+                + source_digest
+                + ":"
+                + str(capability.get("verification_state") or "unknown")
+            )
+            event = {
+                "event_type": "verification",
+                "test_key": "knowledge_persistent_contract",
+                "test_version": "v1",
+                "result": "pass" if ok else "fail",
+                "evidence": [{
+                    "type": "selftest",
+                    "title": "First-class knowledge persistence",
+                    "reference": "selftest:knowledge_persistent:v1",
+                    "summary": "Create/read/idempotency/ownership/verificacion/revalidacion superados." if ok else "El contrato de knowledge no supero la autoprueba.",
+                    "hash": source_digest,
+                }],
+                "environment": {"runtime": "selftest", "fresh_connection": bool(fresh_record)},
+                "dependency_snapshot": [
+                    {"kind": "service", "id": "PersistenceService.save_knowledge", "version": source_digest},
+                    {"kind": "storage", "id": "PostgreSQL.knowledge_records", "version": "runtime"},
+                    {"kind": "storage", "id": "PostgreSQL.graph_nodes", "version": "runtime"},
+                    {"kind": "security", "id": "owner_scope", "version": "runtime"},
+                ],
+                "runtime_version": "selftest",
+                "build_ref": source_digest,
+                "actor": "selftest",
+                "executor": "selftest",
+                "evaluator": "system",
+                "error": None if ok else {"checks": checks},
+            }
+            verification = service.record_capability_verification(
+                capability["id"], event, actor="selftest", idempotency_key=idem
+            )
+            effective = verification.get("effective_state")
+            verified_state = effective == "verified" if ok else effective in ("failed", "stale")
+            return _res(
+                name,
+                bool(ok and verified_state),
+                f"resultado={verification.get('outcome')}; effective_state={effective}; checks={checks}",
+            )
+        except Exception as exc:
+            return _res(name, False, f"excepcion {type(exc).__name__}: {str(exc)[:300]}")
+        finally:
+            if knowledge_id:
+                try:
+                    service.repo.delete("knowledge_records", knowledge_id)
+                except Exception as exc:
+                    print(
+                        f"[persistence] knowledge selftest cleanup warning: "
+                        f"{knowledge_id}: {type(exc).__name__}",
+                        flush=True,
+                    )
 
     def t_agent_tool_reference_integrity():
         name = "TEST_AGENT_TOOL_REFERENCE_INTEGRITY"
@@ -2409,6 +2554,7 @@ def run_logic_tests(service, fresh_service_factory=None):
         ("TEST_MEMORY_RECALL_CAPABILITY", t_memory_recall_capability),
         ("TEST_LEARNING_PERSISTENT_CAPABILITY", t_learning_persistent_capability),
         ("TEST_GRAPH_PERSISTENT_CAPABILITY", t_graph_persistent_capability),
+        ("TEST_KNOWLEDGE_PERSISTENT_CAPABILITY", t_knowledge_persistent_capability),
         ("TEST_CAPABILITY_PERSISTENCE", t_capability_persistence),
         ("TEST_CAPABILITY_VERIFICATION_APPEND_ONLY", t_capability_verification_append_only),
     ):
