@@ -387,6 +387,21 @@ class ControlledAutonomyContractTests(unittest.TestCase):
         self.assertEqual(len(args[1]["evidence"]), 3)
         self.assertEqual(args[1]["evidence"][1]["type"], "human_validation")
 
+    def test_lifecycle_requires_learning_reference_for_completion(self):
+        service = AutonomyService(FakePersistence())
+        created = service.create_run({
+            "goal": "test", "repository": "AkiraGr2/akira-empresa", "base_branch": "main",
+            "paths": ["README.md"], "instruction": "small",
+        }, actor="owner@example.com", owner_scope="scope:A")
+        run_id = created["record"]["id"]
+        service.advance(run_id, "planning", "owner@example.com", "scope:A", {"base_commit_sha": "a" * 40})
+        for status in ("delegating", "proposed", "sandboxed", "tested", "evaluating"):
+            service.advance(run_id, status, "owner@example.com", "scope:A")
+        with self.assertRaises(AutonomyContractError):
+            service.advance(run_id, "completed", "owner@example.com", "scope:A")
+        service.advance(run_id, "learned", "owner@example.com", "scope:A", {"learning_reference": "learn_test"})
+        self.assertEqual(service.advance(run_id, "completed", "owner@example.com", "scope:A")["status"], "completed")
+
     def test_f14_learning_payload_matches_persistence_evidence_contract(self):
         from persistence.core import validate_learning_event
 
