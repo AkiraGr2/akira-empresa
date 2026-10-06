@@ -19,6 +19,7 @@ import akira_auth
 
 from .core import (ConflictError, GRAPH_EDGE_SCHEMA_VERSION, GRAPH_NODE_SCHEMA_VERSION,
                    LEARNING_SCHEMA_VERSION, NotFoundError, PersistenceError, ValidationError, new_id,
+                   _SELF_MODEL_DERIVED_FIELDS,
                    validate_graph_edge, validate_graph_node, validate_memory, validate_learning_event)
 from .memory_recall import recall_memories
 from .capability import (
@@ -307,6 +308,26 @@ def run_logic_tests(service, fresh_service_factory=None):
         except Exception as e:
             return _res(name, False, f"error inesperado: {type(e).__name__}")
         return _res(name, False, "identity fue aceptada por update_self_model")
+
+    def t_self_model_derived_fields_protected():
+        name = "TEST_SELF_MODEL_DERIVED_FIELDS_PROTECTED"
+        current = service.get_self_model()
+        failures = []
+        for field in sorted(_SELF_MODEL_DERIVED_FIELDS):
+            try:
+                service.update_self_model({field: []}, current["version"], actor="selftest")
+            except ValidationError:
+                continue
+            except Exception as e:
+                failures.append(f"{field}:unexpected_{type(e).__name__}")
+                continue
+            failures.append(f"{field}:accepted")
+        return _res(
+            name,
+            not failures,
+            "campos derivados protegidos: " + ", ".join(sorted(_SELF_MODEL_DERIVED_FIELDS))
+            if not failures else "; ".join(failures),
+        )
 
     def t_agent_task_mission_filter():
         name = "TEST_AGENT_TASK_MISSION_FILTER"
@@ -1890,6 +1911,7 @@ def run_logic_tests(service, fresh_service_factory=None):
         ("TEST_TOOL_PERMISSION_CONTRACT", t_tool_permission_contract),
         ("TEST_IDENTITY_ROOT_CONTRACT", t_identity_root_contract),
         ("TEST_SELF_MODEL_IDENTITY_PROTECTED", t_self_model_identity_protected),
+        ("TEST_SELF_MODEL_DERIVED_FIELDS_PROTECTED", t_self_model_derived_fields_protected),
         ("TEST_TRANSACTION_ROLLBACK", t_rollback),
         ("TEST_AGENT_TASK_PERSISTENCE", t_agent_task_persistence),
         ("TEST_AGENT_TASK_VALIDATION", t_agent_task_validation),
