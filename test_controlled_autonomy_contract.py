@@ -225,8 +225,7 @@ class ControlledAutonomyContractTests(unittest.TestCase):
     def test_runtime_registry_migration_is_deterministic_and_owner_only(self):
         source = Path("persistence/migrations.py").read_text(encoding="utf-8")
         start = source.index('"046_controlled_autonomy_runtime_registry"')
-        end = source.index("\n    )\n\n]", start) + len("\n    )")
-        block = source[start:end]
+        block = source[start:]
         self.assertIn("controlled_autonomy_start", block)
         self.assertIn("autonomy_orchestrator", block)
         self.assertIn('["owner"]', block)
