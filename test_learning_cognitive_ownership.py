@@ -46,6 +46,7 @@ class FakeRepo:
             "cognitive_events": [
                 {"id": "event_a", "cycle_id": "cycle_a", "stage": "observe", "status": "success", "version": 1},
             ]
+        }
 
     def get(self, entity, record_id):
         for row in self.rows.get(entity, []):
