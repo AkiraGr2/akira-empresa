@@ -164,6 +164,13 @@ def _scope_matches(record_scope, owner_scope):
     stored = str(record_scope or "").strip()
     return bool(requested) and (stored == requested or stored == LEGACY_OWNER_SCOPE)
 
+def _learning_scope_matches(record_scope, owner_scope):
+    if owner_scope is None:
+        return True
+    requested = str(owner_scope).strip()
+    stored = str(record_scope or "").strip()
+    return bool(requested) and stored == requested
+
 def _task_scope_filters(owner_scope):
     if owner_scope is None:
         return {}
@@ -921,9 +928,12 @@ class PersistenceService:
             tags.append(outcome)
         tags = list(dict.fromkeys(tags))[:20]
 
+        memory_filters = {"source_id": learning_id, "status": "active"}
+        if effective_scope:
+            memory_filters["owner_scope"] = effective_scope
         memories = self.repo.search(
             "memories",
-            {"source_id": learning_id, "status": "active"},
+            memory_filters,
             limit=10,
             order_by="created_at",
             descending=True,
@@ -965,7 +975,7 @@ class PersistenceService:
         # Context/source nodes (especially the permanent Akira core) are inputs,
         # not the learning node itself.
         for node_id in knowledge_nodes:
-            candidate = self.get_node(node_id)
+            candidate = self.get_node(node_id, owner_scope=effective_scope)
             metadata = (
                 candidate.get("node_metadata")
                 if isinstance(candidate, dict) and isinstance(candidate.get("node_metadata"), dict)
@@ -1053,7 +1063,10 @@ class PersistenceService:
 
         mission_id = str(context.get("mission_id") or "").strip()
         if not relationship_specs:
-            source_nodes = [x for x in knowledge_nodes if x != node["id"] and self.repo.exists("graph_nodes", x)]
+            source_nodes = [
+                x for x in knowledge_nodes
+                if x != node["id"] and self.get_node(x, owner_scope=effective_scope) is not None
+            ]
             if not source_nodes and mission_id:
                 mission_node_result = self.create_node({
                     "node_type": "mission",
@@ -1199,7 +1212,7 @@ class PersistenceService:
             node_id = str(value).strip()
             if not node_id:
                 continue
-            node = self.get_node(node_id, owner_scope=effective_scope)
+            node = self.get_node(node_id, owner_scope=owner_scope)
             metadata = (
                 node.get("node_metadata")
                 if isinstance(node, dict) and isinstance(node.get("node_metadata"), dict)
@@ -1290,11 +1303,12 @@ class PersistenceService:
         """Lee un aprendizaje respetando el ámbito del propietario cuando se suministra."""
         rec = self.repo.get("learning_events", learning_id)
         if rec is not None:
-            return rec if _scope_matches(rec.get("owner_scope"), owner_scope) else None
+            return rec if _learning_scope_matches(rec.get("owner_scope"), owner_scope) else None
         try:
-            rows = self.repo.search("learning_events", {}, limit=300)
+            filters = {"owner_scope": str(owner_scope).strip()} if owner_scope is not None else {}
+            rows = self.repo.search("learning_events", filters, limit=300)
             for r in rows:
-                if r.get("id") == learning_id and _scope_matches(r.get("owner_scope"), owner_scope):
+                if r.get("id") == learning_id and _learning_scope_matches(r.get("owner_scope"), owner_scope):
                     return r
         except Exception:
             pass
@@ -1317,12 +1331,22 @@ class PersistenceService:
         limit = max(1, min(int(limit), 200))
         base = dict(filters or {})
         if owner_scope is None:
-            return self.repo.search("learning_events", base, limit=limit,
-                                    offset=max(0, int(offset)), order_by=order_by, descending=descending)
+            return self.repo.search(
+                "learning_events", base, limit=limit,
+                offset=max(0, int(offset)), order_by=order_by, descending=descending
+            )
         scope = str(owner_scope).strip()
-        rows = self.repo.search("learning_events", base, limit=max(limit, 200), offset=0,
-                                order_by=order_by, descending=descending)
-        return [r for r in rows if _scope_matches(r.get("owner_scope"), scope)][max(0, int(offset)):max(0, int(offset))+limit]
+        if not scope:
+            raise ValidationError("owner_scope requerido")
+        base["owner_scope"] = scope
+        return self.repo.search(
+            "learning_events",
+            base,
+            limit=limit,
+            offset=max(0, int(offset)),
+            order_by=order_by,
+            descending=descending,
+        )
 
     def create_node(self, data, actor="system", idempotency_key=None):
         fields = validate_graph_node(data)
