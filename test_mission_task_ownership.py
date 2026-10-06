@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 
 from persistence.core import entity_spec
 from persistence.service import NotFoundError, PersistenceService, ValidationError
@@ -90,6 +91,16 @@ class FakeRepo:
 class MissionTaskOwnershipTests(unittest.TestCase):
     def setUp(self):
         self.service = PersistenceService(FakeRepo())
+
+    def test_mission_idempotency_scope_is_owner(self):
+        self.assertEqual(
+            entity_spec("missions")["idempotency_scope"],
+            ("created_by",),
+        )
+
+    def test_mission_approval_persists_authorized_by(self):
+        source = Path("persistence/service.py").read_text(encoding="utf-8")
+        self.assertIn('changes["authorized_by"] = owner or actor', source)
 
     def test_mission_read_is_owner_scoped(self):
         self.assertIsNotNone(self.service.get_mission("m_a", owner="a@example.test"))
