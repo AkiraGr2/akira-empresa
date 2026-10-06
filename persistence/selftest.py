@@ -3,9 +3,9 @@
 - run_logic_tests: pruebas de comportamiento (validacion, idempotencia, versiones, privacidad, rollback, agentes+tareas).
 - run_restart_probe: prueba REAL de reinicio. Un proceso escribe una sonda; otro proceso distinto la relee.
 
-Fase 1.6 (2026-10-01): la limpieza de memorias de prueba ahora hace HARD DELETE (repo.delete),
-no archive_memory. Antes se acumulaban ~6 filas selftest por cada corrida del selftest,
-contaminando la tabla memories. Ahora no queda rastro.
+Fase 1.6 (2026-10-01): la limpieza de memorias de prueba hace HARD DELETE (repo.delete).
+F3 cleanup hardening: la sonda de reinicio se conserva únicamente como registro ARCHIVED tras
+una verificación cruzada exitosa; el nodo de grafo del agente sintético se elimina al terminar.
 """
 from __future__ import annotations
 
@@ -121,11 +121,110 @@ def _ensure_test_agent(service):
     return r["record"]
 
 
+def _cleanup_test_agent_graph(service):
+    """Elimina únicamente el nodo de grafo sintético del agente de selftest y sus aristas."""
+    label = f"agent:{_TEST_AGENT_NAME}"
+    failures = []
+    deleted_nodes = 0
+    deleted_edges = 0
+
+    try:
+        candidates = service.repo.search(
+            "graph_nodes",
+            {"node_type": "person", "label": label},
+            limit=100,
+            order_by="created_at",
+            descending=False,
+        )
+    except Exception as exc:
+        return {
+            "ok": False,
+            "deleted_nodes": 0,
+            "deleted_edges": 0,
+            "remaining_nodes": "unknown",
+            "failures": [{"resource": "graph_nodes", "error": type(exc).__name__}],
+        }
+
+    for node in candidates:
+        node_id = node.get("id")
+        if not node_id:
+            continue
+
+        edge_ids = set()
+        for field in ("from_node", "to_node"):
+            try:
+                for edge in service.repo.search("graph_edges", {field: node_id}, limit=5000):
+                    edge_id = edge.get("id")
+                    if edge_id:
+                        edge_ids.add(edge_id)
+            except Exception as exc:
+                failures.append({
+                    "resource": "graph_edges",
+                    "node_id": node_id,
+                    "field": field,
+                    "error": type(exc).__name__,
+                })
+
+        for edge_id in sorted(edge_ids):
+            try:
+                service.repo.delete("graph_edges", edge_id)
+                deleted_edges += 1
+            except Exception as exc:
+                failures.append({
+                    "resource": "graph_edges",
+                    "id": edge_id,
+                    "error": type(exc).__name__,
+                })
+
+        try:
+            service.repo.delete("graph_nodes", node_id)
+            deleted_nodes += 1
+        except Exception as exc:
+            failures.append({
+                "resource": "graph_nodes",
+                "id": node_id,
+                "error": type(exc).__name__,
+            })
+
+    try:
+        remaining = service.repo.search(
+            "graph_nodes",
+            {"node_type": "person", "label": label},
+            limit=100,
+            order_by="created_at",
+            descending=False,
+        )
+        remaining_count = len(remaining)
+    except Exception as exc:
+        remaining_count = "unknown"
+        failures.append({
+            "resource": "graph_nodes",
+            "phase": "verify_cleanup",
+            "error": type(exc).__name__,
+        })
+
+    ok = not failures and remaining_count == 0
+    return {
+        "ok": ok,
+        "deleted_nodes": deleted_nodes,
+        "deleted_edges": deleted_edges,
+        "remaining_nodes": remaining_count,
+        "failures": failures,
+    }
+
+
 def _disable_test_agent(service):
+    disabled = True
     try:
         service.update_agent(_TEST_AGENT_NAME, {"status": "disabled"}, actor="selftest")
     except Exception:
-        pass
+        disabled = False
+    cleanup = _cleanup_test_agent_graph(service)
+    return {
+        "disabled": disabled,
+        "graph_cleanup": cleanup,
+        "ok": disabled and cleanup.get("ok", False),
+    }
 
 
 def run_logic_tests(service, fresh_service_factory=None):
@@ -2128,7 +2227,15 @@ def run_logic_tests(service, fresh_service_factory=None):
         )
     )
 
-    _disable_test_agent(service)
+    agent_cleanup = _disable_test_agent(service)
+    results.append(
+        _res(
+            "TEST_SELFTEST_AGENT_GRAPH_CLEANUP",
+            agent_cleanup["ok"],
+            f"agente_disabled={agent_cleanup['disabled']}; "
+            f"graph_cleanup={agent_cleanup['graph_cleanup']}",
+        )
+    )
     return results
 
 
@@ -2157,8 +2264,74 @@ def run_restart_probe(service, boot_id):
                          "success" if ok else "failure",
                          {"written_by_boot": rec.get("source_reference"), "verified_by_boot": boot_id,
                           "same_content": same_content})
-    return _res("TEST_RESTART_PROBE", ok,
-                "sonda escrita por otro proceso y releida intacta" if ok else "el contenido de la sonda cambio")
+
+    cleanup_ok = True
+    cleanup_detail = "sin limpieza: verificacion fallida"
+    if ok:
+        try:
+            if rec.get("status") == "active":
+                archived = service.archive_memory(
+                    rec["id"],
+                    expected_version=rec["version"],
+                    actor="selftest",
+                )
+                cleanup_ok = (
+                    archived.get("status") == "archived"
+                    and archived.get("version") == rec["version"] + 1
+                )
+            else:
+                cleanup_ok = rec.get("status") == "archived"
+
+            verified_cleanup = service.repo.get("memories", rec["id"])
+            cleanup_ok = cleanup_ok and (
+                verified_cleanup is not None
+                and verified_cleanup.get("status") == "archived"
+            )
+            service.record_audit(
+                "selftest",
+                "selftest.restart_probe.cleanup",
+                "memories",
+                rec["id"],
+                "success" if cleanup_ok else "failure",
+                {
+                    "status_after_cleanup": (verified_cleanup or {}).get("status"),
+                    "written_by_boot": rec.get("source_reference"),
+                    "verified_by_boot": boot_id,
+                },
+            )
+            cleanup_detail = (
+                "sonda verificada y archivada; queda como evidencia historica, no como dato activo"
+                if cleanup_ok
+                else "sonda verificada pero no se pudo confirmar el archivo"
+            )
+        except Exception as exc:
+            cleanup_ok = False
+            cleanup_detail = f"sonda verificada pero limpieza fallo: {type(exc).__name__}"
+            try:
+                service.record_audit(
+                    "selftest",
+                    "selftest.restart_probe.cleanup",
+                    "memories",
+                    rec["id"],
+                    "failure",
+                    {
+                        "error_type": type(exc).__name__,
+                        "error": str(exc)[:300],
+                        "written_by_boot": rec.get("source_reference"),
+                        "verified_by_boot": boot_id,
+                    },
+                )
+            except Exception:
+                pass
+
+    final_ok = ok and cleanup_ok
+    return _res(
+        "TEST_RESTART_PROBE",
+        final_ok,
+        "sonda escrita por otro proceso y releida intacta; " + cleanup_detail
+        if ok
+        else "el contenido de la sonda cambio",
+    )
 
 
 def summarize(results):
