@@ -66,6 +66,12 @@ class SpecializedAgentsContractTests(unittest.TestCase):
         modules = specialized_agent_tools._normalize_test_modules(["persistence.test_absorption"])
         self.assertEqual(modules, ["persistence.test_absorption"])
 
+    def test_runtime_selftest_always_cleans_up_test_agent(self):
+        source = (ROOT / "persistence" / "runtime.py").read_text(encoding="utf-8")
+        self.assertIn("finally:", source)
+        self.assertIn("_disable_test_agent", source)
+        self.assertIn("_close_extra_pools()", source)
+
     def test_startup_seed_continues_after_one_item_fails(self):
         class FakeService:
             def __init__(self):
