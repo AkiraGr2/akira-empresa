@@ -44,7 +44,7 @@ from persistence.absorption import (
 )
 from identity_root import IDENTITY_ROOT_VERSION, PUBLIC_IDENTITY, get_identity_root
 from persistence.memory_recall import recall_memories as _recall_memories_impl
-from persistence.model_registry import (PRIMARY_CHAT_MODEL, GEMINI_CHAT_FALLBACK_VARIANT, GROQ_FALLBACK_MODELS, OPENROUTER_MODEL_ROUTE, MISTRAL_MODEL_ROUTE, MEMORY_EMBEDDING_MODEL)
+from persistence.model_registry import (PRIMARY_CHAT_MODEL, GEMINI_REASONING_MODEL, GEMINI_CHAT_FALLBACK_VARIANT, GROQ_FALLBACK_MODELS, OPENROUTER_MODEL_ROUTE, MISTRAL_MODEL_ROUTE, MEMORY_EMBEDDING_MODEL)
 
 VERSION="V7.3"
 MODEL="external-inference-runtime"
@@ -268,10 +268,10 @@ def get_r2_client():
 KIRA_KNOWN_DEPRECATED = {
     "gemini-1.0-pro": {"replacement": PRIMARY_CHAT_MODEL},
     "gemini-1.5-flash": {"replacement": PRIMARY_CHAT_MODEL},
-    "gemini-1.5-pro": {"replacement": "gemini-3.1-pro-preview"},
+    "gemini-1.5-pro": {"replacement": GEMINI_REASONING_MODEL},
     "gemini-2.0-flash": {"replacement": PRIMARY_CHAT_MODEL},
     "gemini-2.5-flash": {"replacement": PRIMARY_CHAT_MODEL},
-    "gemini-2.5-pro": {"replacement": "gemini-3.1-pro-preview"},
+    "gemini-2.5-pro": {"replacement": GEMINI_REASONING_MODEL},
     "gemini-2.5-flash-thinking": {"replacement": PRIMARY_CHAT_MODEL},
     "gemini-2.5-flash-lite": {"replacement": PRIMARY_CHAT_MODEL},
     "gemini-2.5-flash-8b": {"replacement": PRIMARY_CHAT_MODEL},
@@ -423,7 +423,7 @@ def select_model_route(msg, has_image=False, web_needed=False):
     if has_image: return PRIMARY_CHAT_MODEL, "vision"
     low=msg.lower()
     if len(msg)>800 or any(t in low for t in ["analiza","codigo","debug","membrana","consciente","quien eres"]):
-        return "gemini-3.1-pro-preview", "reasoning"
+        return GEMINI_REASONING_MODEL, "reasoning"
     return PRIMARY_CHAT_MODEL, "fast"
 
 try:
