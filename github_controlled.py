@@ -51,22 +51,27 @@ def _token() -> str:
     return token
 
 
-def _headers() -> dict[str, str]:
-    return {
+def _headers(require_token: bool = False) -> dict[str, str]:
+    headers = {
         "Accept": "application/vnd.github+json",
-        "Authorization": f"Bearer {_token()}",
         "X-GitHub-Api-Version": API_VERSION,
         "User-Agent": "Akira-Controlled-Autonomy/1.0",
     }
+    token = os.getenv("GITHUB_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    elif require_token:
+        raise ControlledGitHubError("github_token_not_configured")
+    return headers
 
 
-def _request(method: str, url: str, **kwargs) -> Any:
+def _request(method: str, url: str, require_token: bool = True, **kwargs) -> Any:
     try:
         import requests
         response = requests.request(
             method,
             url,
-            headers=_headers(),
+            headers=_headers(require_token=require_token),
             timeout=REQUEST_TIMEOUT_S,
             **kwargs,
         )
@@ -107,6 +112,7 @@ def branch_head(repository: str, branch: str) -> str:
     data = _request(
         "GET",
         f"{API_ROOT}/repos/{repo}/git/ref/heads/{quote(branch, safe='')}",
+        require_token=False,
     )
     sha = str(((data.get("object") or {}).get("sha")) if isinstance(data, Mapping) else "").strip()
     if not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
@@ -120,6 +126,7 @@ def fetch_text_file(repository: str, path: str, branch: str) -> dict[str, str]:
     data = _request(
         "GET",
         f"{API_ROOT}/repos/{repo}/contents/{quote(path, safe='/')}?ref={quote(branch, safe='')}",
+        require_token=False,
     )
     if not isinstance(data, Mapping) or data.get("type") != "file":
         raise ControlledGitHubError("github_content_not_file")
@@ -143,7 +150,7 @@ def _download_archive(repository: str, ref: str, target: Path) -> str:
         import requests
         response = requests.get(
             f"{API_ROOT}/repos/{repo}/tarball/{quote(ref, safe='')}",
-            headers=_headers(),
+            headers=_headers(require_token=False),
             timeout=REQUEST_TIMEOUT_S,
             stream=True,
         )
