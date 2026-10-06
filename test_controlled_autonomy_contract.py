@@ -15,7 +15,12 @@ from persistence.autonomy import (
 )
 from github_controlled import ControlledGitHubError, apply_unified_patch
 from specialized_agent_tools import run_python_tests_in_workspace, propose_code_change
-from autonomy_engine import _record_controlled_autonomy_verification
+from autonomy_engine import (
+    ControlledAutonomyError,
+    _build_f14_learning_event,
+    _record_controlled_autonomy_verification,
+    apply_approved_controlled_autonomy,
+)
 from unittest.mock import Mock, patch
 from github_readonly import GitHubReadUpstreamError
 
@@ -102,6 +107,8 @@ class ControlledAutonomyContractTests(unittest.TestCase):
         self.assertIn("planning", AUTONOMY_STATUS_TRANSITIONS["observing"])
         with self.assertRaises(AutonomyContractError):
             validate_transition("observing", "acting")
+        with self.assertRaises(AutonomyContractError):
+            validate_transition("evaluated", "completed")
         with self.assertRaises(AutonomyContractError):
             validate_transition("completed", "acting")
 
@@ -379,6 +386,95 @@ class ControlledAutonomyContractTests(unittest.TestCase):
         self.assertEqual(args[1]["result"], "pass")
         self.assertEqual(len(args[1]["evidence"]), 3)
         self.assertEqual(args[1]["evidence"][1]["type"], "human_validation")
+
+    def test_f14_learning_payload_matches_persistence_evidence_contract(self):
+        from persistence.core import validate_learning_event
+
+        run = {
+            "id": "autonomy_test_learning",
+            "repository": "AkiraGr2/akira-empresa",
+            "base_branch": "main",
+        }
+        action = {
+            "pr_url": "https://github.com/AkiraGr2/akira-empresa/pull/999",
+            "branch_name": "akira/autonomy/autonomy_test_learning",
+            "pr_draft": True,
+            "merged": False,
+        }
+        payload = _build_f14_learning_event(run, action)
+        clean = validate_learning_event(payload)
+        self.assertEqual(clean["event"], "autonomy_run:autonomy_test_learning")
+        self.assertEqual(clean["evidence"][0]["type"], "tool_invocation")
+        self.assertIn("action_hash=", clean["evidence"][0]["note"])
+        self.assertNotIn("summary", clean["evidence"][0])
+        self.assertNotIn("hash", clean["evidence"][0])
+
+    def test_f14_learning_failure_cannot_complete_run(self):
+        service = Mock()
+        run = {
+            "id": "autonomy_test_learning_failure",
+            "repository": "AkiraGr2/akira-empresa",
+            "base_branch": "main",
+            "base_commit_sha": "a" * 40,
+            "decision": {
+                "status": "approved",
+                "mode": "human",
+                "approved_by": "owner@example.com",
+                "approved_at": "2026-10-06T17:00:00+00:00",
+            },
+            "proposal": {
+                "changes": [{
+                    "path": "docs/new.txt",
+                    "operation": "create",
+                    "reason": "test",
+                    "patch": "--- /dev/null\\n+++ b/docs/new.txt\\n@@ -0,0 +1 @@\\n+hola\\n",
+                }]
+            },
+            "sandbox": {"expected_hashes": {"docs/new.txt": "b" * 64}},
+            "evaluation": {"tests_passed": True, "review_verdict": "approve"},
+            "status": "acting",
+        }
+        action = {
+            "branch_name": "akira/autonomy/autonomy_test_learning_failure",
+            "base_sha": run["base_commit_sha"],
+            "branch_head": "c" * 40,
+            "pr_url": "https://github.com/AkiraGr2/akira-empresa/pull/999",
+            "pr_draft": True,
+            "pr_state": "open",
+            "pr_number": 999,
+            "base_branch": "main",
+            "merged": False,
+        }
+        actor = "owner@example.com"
+        owner_scope = "owner:scope"
+        fake_autonomy = Mock()
+        fake_autonomy.get_run.return_value = run
+        statuses = []
+
+        def record_advance(_a, _run_id, status, _actor, _owner_scope, changes=None):
+            statuses.append(status)
+            return dict(run, status=status, **(changes or {}))
+
+        service.save_learning.side_effect = ValueError("learning_schema_rejected")
+
+        with patch("autonomy_engine._autonomy", return_value=fake_autonomy), \
+             patch("autonomy_engine._advance", side_effect=record_advance), \
+             patch("autonomy_engine.controlled_apply", return_value=action), \
+             patch("autonomy_engine.branch_head", return_value=action["branch_head"]), \
+             patch(
+                 "autonomy_engine._record_controlled_autonomy_verification",
+                 return_value={"record": {"id": "capver_test"}, "effective_state": "verified"},
+             ):
+            with self.assertRaises(ControlledAutonomyError) as ctx:
+                apply_approved_controlled_autonomy(service, run["id"], actor, owner_scope)
+
+        self.assertEqual(str(ctx.exception), "learning_persistence_failed")
+        self.assertIn("external_applied", statuses)
+        self.assertIn("evaluated", statuses)
+        self.assertNotIn("learned", statuses)
+        self.assertNotIn("completed", statuses)
+        fake_autonomy.record_failure.assert_called_once()
+        self.assertIn("learning_persistence_failed:", fake_autonomy.record_failure.call_args.args[1])
 
     def test_controlled_gateway_contract_is_branch_only(self):
         source = Path("github_controlled.py").read_text(encoding="utf-8")
