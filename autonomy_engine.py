@@ -256,6 +256,35 @@ def _record_controlled_autonomy_verification(service, run, action):
         idempotency_key=f"f14:e2e:{run_id}",
     )
 
+def _build_f14_learning_event(run: dict[str, Any], action: dict[str, Any]) -> dict[str, Any]:
+    """Build a learning event that exactly matches the persistence evidence contract."""
+    run_id = str(run.get("id") or "").strip()
+    pr_url = str(action.get("pr_url") or "").strip()
+    action_hash = hashlib.sha256(str(action).encode("utf-8")).hexdigest()[:32]
+    return {
+        "source": "controlled_autonomy_v1",
+        "event": f"autonomy_run:{run_id}",
+        "lesson": (
+            f"F14 controlled autonomy: proposal tested and externally applied as Draft PR "
+            f"{pr_url} without writing main or merging."
+        ),
+        "knowledge_nodes": [],
+        "relationships": [],
+        "confidence": 1.0,
+        "outcome": "success",
+        "status": "candidate",
+        "evidence": [{
+            "type": "tool_invocation",
+            "title": "Controlled GitHub action",
+            "reference": pr_url or run_id,
+            "note": (
+                "Draft PR created from approved F14 run; "
+                f"action_hash={action_hash}"
+            ),
+        }],
+    }
+
+
 def apply_approved_controlled_autonomy(
     service,
     run_id: str,
@@ -338,41 +367,30 @@ def apply_approved_controlled_autonomy(
 
     learning_reference = ""
     try:
-        lesson = (
-            f"F14 controlled autonomy: proposal tested and externally applied as Draft PR "
-            f"{action['pr_url']} without writing main or merging."
-        )
         learning = service.save_learning(
-            {
-                "source": "controlled_autonomy_v1",
-                "event": f"autonomy_run:{run_id}",
-                "lesson": lesson,
-                "knowledge_nodes": [],
-                "relationships": [],
-                "confidence": 1.0,
-                "outcome": "success",
-                "status": "candidate",
-                "evidence": [{
-                    "type": "tool_invocation",
-                    "title": "Controlled GitHub action",
-                    "reference": action["pr_url"],
-                    "summary": "Draft PR created from approved F14 run.",
-                    "hash": hashlib.sha256(str(action).encode("utf-8")).hexdigest()[:32],
-                }],
-            },
+            _build_f14_learning_event(run, action),
             actor=actor,
             owner_scope=owner_scope,
             idempotency_key=f"f14:learning:{run_id}",
         )
-        learning_reference = learning["record"]["id"]
+        learning_reference = str(learning["record"]["id"]).strip()
+        if not learning_reference:
+            raise ControlledAutonomyError("learning_reference_missing")
         _advance(
             a, run_id, "learned", actor, owner_scope,
             {"learning_reference": learning_reference},
         )
-    except Exception:
-        # Learning is post-action enrichment; it must never falsely turn a verified
-        # external action into a failed action.
-        pass
+    except Exception as exc:
+        try:
+            a.record_failure(
+                run_id,
+                f"learning_persistence_failed:{type(exc).__name__}",
+                actor,
+                owner_scope,
+            )
+        except Exception:
+            pass
+        raise ControlledAutonomyError("learning_persistence_failed") from exc
 
     final = _advance(
         a, run_id, "completed", actor, owner_scope,
