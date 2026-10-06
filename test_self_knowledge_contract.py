@@ -267,6 +267,11 @@ class SelfKnowledgeSnapshotTests(unittest.TestCase):
             with self.assertRaises(ValidationError):
                 service.update_self_model({field: []}, current["version"], actor="test")
 
+    def test_self_model_capability_projection_matches_authoritative_registry(self):
+        service = PersistenceService(FakeRepo())
+        model = service.get_self_model()
+        self.assertEqual(model["capabilities"], service.capabilities_for_self_model(limit=200))
+
     def test_self_model_read_rejects_invalid_persisted_semantics(self):
         from persistence.core import ValidationError
         service = PersistenceService(FakeRepo())
