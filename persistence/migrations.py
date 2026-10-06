@@ -989,4 +989,60 @@ MIGRATIONS = [
         """
     )
 
+
+    (
+        "032_self_model_semantic_contract_v2",
+        """
+        UPDATE public.self_model
+        SET
+            uncertainties = COALESCE(
+                (
+                    SELECT jsonb_agg(
+                        CASE
+                            WHEN jsonb_typeof(item) = 'string' THEN
+                                jsonb_build_object(
+                                    'id', 'legacy_uncertainty_' || md5(item::text),
+                                    'statement', item #>> '{}',
+                                    'kind', 'other',
+                                    'status', 'open',
+                                    'evidence', '[]'::jsonb,
+                                    'created_at', to_jsonb(updated_at)
+                                )
+                            ELSE item
+                        END
+                    )
+                    FROM jsonb_array_elements(uncertainties) AS item
+                ),
+                '[]'::jsonb
+            ),
+            current_state = current_state || jsonb_build_object(
+                'last_observed_at',
+                COALESCE(current_state -> 'last_cycle_at', to_jsonb(updated_at))
+            ),
+            schema_version = 'self_model.v2',
+            version = version + 1,
+            updated_at = now()
+        WHERE id = 'akira_primary'
+          AND schema_version = 'self_model.v1';
+
+        INSERT INTO public.audit_log (
+            actor, action, resource, resource_id, status, detail
+        )
+        SELECT
+            'system',
+            'self_model.semantic_contract_migrate',
+            'self_model',
+            id,
+            'success',
+            jsonb_build_object(
+                'from_schema', 'self_model.v1',
+                'to_schema', 'self_model.v2',
+                'reason', 'semantic_contract_v2'
+            )
+        FROM public.self_model
+        WHERE id = 'akira_primary'
+          AND schema_version = 'self_model.v2'
+        """
+    )
+
 ]
