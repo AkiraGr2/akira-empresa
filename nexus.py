@@ -4149,7 +4149,7 @@ def v8_mission_progress(request: Request, mission_id: str):
         "error": result.get("error") if isinstance(result, dict) else None,
         "timing": timing,
     }
-def _selftest_missions_run():
+def _selftest_missions_run(owner=None, owner_scope=None):
     tests = []
     def add(name, status, detail):
         tests.append({"name": name, "status": status, "detail": detail})
@@ -4459,7 +4459,7 @@ def _selftest_missions_run():
                 plan = m.get("plan") or {}
                 steps = plan.get("steps") or []
                 steps_total = len(steps) if isinstance(steps, list) else 0
-                tasks = service.list_tasks(mission_id=m["id"], limit=100, owner_scope=s["owner_scope"])
+                tasks = service.list_tasks(mission_id=m["id"], limit=100, owner_scope=owner_scope)
                 by_status = {}
                 for t in tasks:
                     st = t.get("status") or "unknown"
@@ -4568,7 +4568,7 @@ def v8_memory_semantic_selftest(request: Request):
 def v8_missions_selftest(request: Request):
     s, _owner_error = _require_owner(request)
     if _owner_error is not None: return _owner_error
-    return {"ok": True, "selftest": _selftest_missions_run()}
+    return {"ok": True, "selftest": _selftest_missions_run(owner=s["email"], owner_scope=s["owner_scope"])}
 
 @app.get("/api/v8/missions/{mission_id}/diagnose")
 def v8_mission_diagnose(request: Request, mission_id: str):
