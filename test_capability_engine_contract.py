@@ -263,6 +263,53 @@ class CapabilityEngineContractTests(unittest.TestCase):
         self.assertEqual(second["outcome"], "already_synced")
         self.assertEqual(first["record"]["id"], second["record"]["id"])
 
+    def test_capability_registry_bootstrap_ignores_dynamic_verification_state(self):
+        service = PersistenceService(_CapabilityRepo())
+        payload = {
+            "name": "verified_bootstrap_capability",
+            "description": "Capability de prueba para bootstrap.",
+            "category": "general",
+            "kind": "intrinsic",
+            "implementation_state": "implemented",
+            "verification_state": "unverified",
+            "availability_state": "available",
+            "maturity": "experimental",
+            "cost_compatibility": "unknown",
+            "dependencies": [],
+            "limitations": [],
+            "verification_spec": {
+                "method": "selftest",
+                "test_key": "verified_bootstrap_contract",
+                "freshness_policy": {
+                    "mode": "on_change",
+                    "max_age_seconds": None,
+                    "invalidate_on": ["build_change"],
+                },
+            },
+            "provenance": {"source": "ci", "created_by": "ci"},
+        }
+        first = service.create_capability(
+            payload,
+            actor="ci",
+            idempotency_key="bootstrap:capability:verified:v1",
+        )
+        existing = dict(first["record"])
+        existing.update({
+            "verification_state": "verified",
+            "availability_state": "available",
+            "version": 2,
+        })
+        service.repo.rows["capabilities"][0] = existing
+
+        second = service.create_capability(
+            payload,
+            actor="ci",
+            idempotency_key="bootstrap:capability:verified:v1",
+        )
+        self.assertEqual(second["outcome"], "already_synced")
+        self.assertEqual(second["record"]["id"], first["record"]["id"])
+        self.assertEqual(second["record"]["verification_state"], "verified")
+
     def test_capability_registry_rejects_conflicting_reuse_of_name(self):
         service = PersistenceService(_CapabilityRepo())
         payload = {
