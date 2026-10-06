@@ -1438,6 +1438,130 @@ MIGRATIONS = [
         """
     ),
     (
+        "047_self_model_f2_coherence",
+        """
+        INSERT INTO capabilities (
+            id, name, description, category, kind,
+            implementation_state, verification_state, availability_state,
+            maturity, cost_compatibility, dependencies, limitations,
+            verification_spec, provenance, schema_version, idempotency_key
+        )
+        VALUES (
+            'cap_self_model_persistent',
+            'self_model_persistent',
+            'Self-Model persistente de Akira con singleton versionado, identidad autoritativa y proyecciones actuales de capabilities, tools y models.',
+            'self',
+            'composite',
+            'implemented',
+            'unverified',
+            'available',
+            'experimental',
+            'free',
+            '[{"kind":"service","id":"PersistenceService.get_self_model","required":true},{"kind":"service","id":"PersistenceService.update_self_model","required":true},{"kind":"storage","id":"PostgreSQL.self_model","required":true},{"kind":"authority","id":"IdentityRoot","required":true},{"kind":"registry","id":"CapabilityEngine","required":true}]'::jsonb,
+            '["Capabilities, tools y models son proyecciones derivadas y no se editan manualmente.","El self-model conserva incertidumbres históricas; la proyección runtime usa fuentes autoritativas actuales."]'::jsonb,
+            '{
+                "method":"selftest",
+                "test_key":"self_model_persistent_contract",
+                "freshness_policy":{"mode":"on_change","max_age_seconds":null,
+                "invalidate_on":["build_change","self_model_schema_change","identity_root_change","capability_registry_change"]}
+            }'::jsonb,
+            '{"source":"architecture_rebaseline_f2","created_by":"system"}'::jsonb,
+            'capability.v1',
+            'bootstrap:capability:self_model_persistent:v1'
+        )
+        ON CONFLICT (name) DO UPDATE SET
+            description = EXCLUDED.description,
+            category = EXCLUDED.category,
+            kind = EXCLUDED.kind,
+            implementation_state = EXCLUDED.implementation_state,
+            availability_state = EXCLUDED.availability_state,
+            maturity = EXCLUDED.maturity,
+            cost_compatibility = EXCLUDED.cost_compatibility,
+            dependencies = EXCLUDED.dependencies,
+            limitations = EXCLUDED.limitations,
+            verification_spec = EXCLUDED.verification_spec,
+            provenance = EXCLUDED.provenance,
+            schema_version = EXCLUDED.schema_version,
+            updated_at = now();
+
+        UPDATE public.self_model
+        SET
+            knowledge_state = jsonb_build_object(
+                'last_observed_at', now(),
+                'sources', jsonb_build_array(
+                    jsonb_build_object('id','IdentityRoot','kind','authority','observed_at',now()),
+                    jsonb_build_object('id','CapabilityEngine','kind','registry','observed_at',COALESCE((SELECT max(updated_at) FROM public.capabilities),now())),
+                    jsonb_build_object('id','AgentRegistry','kind','registry','observed_at',COALESCE((SELECT max(updated_at) FROM public.agents),now())),
+                    jsonb_build_object('id','ToolRegistry','kind','registry','observed_at',COALESCE((SELECT max(updated_at) FROM public.tools),now())),
+                    jsonb_build_object('id','MissionEngine','kind','registry','observed_at',COALESCE((SELECT max(updated_at) FROM public.missions),now())),
+                    jsonb_build_object('id','LearningStore','kind','storage','observed_at',COALESCE((SELECT max(updated_at) FROM public.learning_events),now())),
+                    jsonb_build_object('id','EvolutionStore','kind','storage','observed_at',COALESCE((SELECT max(updated_at) FROM public.evolution_records),now())),
+                    jsonb_build_object('id','AutonomyStore','kind','storage','observed_at',COALESCE((SELECT max(updated_at) FROM public.autonomy_runs),now())),
+                    jsonb_build_object('id','CognitiveRuntime','kind','storage','observed_at',COALESCE((SELECT max(updated_at) FROM public.cognitive_cycles),now()))
+                ),
+                'notes', 'Estado observado desde fuentes autoritativas. Capabilities, tools y models se proyectan en runtime; no se duplican como autoridad persistida.'
+            ),
+            version = version + 1,
+            updated_at = now()
+        WHERE id = 'akira_primary';
+
+        UPDATE public.self_model
+        SET
+            uncertainties = (
+                SELECT jsonb_agg(item ORDER BY item->>'id')
+                FROM (
+                    SELECT
+                        jsonb_set(
+                            item,
+                            '{status}',
+                            '"superseded"'::jsonb
+                        )
+                        || jsonb_build_object(
+                            'evidence', jsonb_build_array(
+                                'La implementación actual de Mission Engine existe y mantiene registros persistentes en PostgreSQL.',
+                                'La arquitectura vigente ya no usa Fase 10 como descripción canónica.'
+                            )
+                        ) AS item
+                    FROM jsonb_array_elements(uncertainties) item
+                    WHERE item->>'statement' = 'Los agentes existen; las misiones estan en construccion (Fase 10).'
+                    UNION ALL
+                    SELECT item
+                    FROM jsonb_array_elements(uncertainties) item
+                    WHERE item->>'statement' <> 'Los agentes existen; las misiones estan en construccion (Fase 10).'
+                    UNION ALL
+                    SELECT jsonb_build_object(
+                        'id','uncertainty_missions_current_state',
+                        'statement','Mission Engine esta implementado, pero existen misiones en estados activos, fallidos y completados; la salud operacional del flujo debe seguir verificandose.',
+                        'kind','capability',
+                        'status','open',
+                        'evidence',jsonb_build_array(
+                            'Consulta autoritativa de public.missions durante la rebaselina F2.'
+                        ),
+                        'created_at',now()
+                    )
+                ) all_items
+            ),
+            version = version + 1,
+            updated_at = now()
+        WHERE id = 'akira_primary';
+
+        INSERT INTO public.audit_log (actor, action, resource, resource_id, status, detail)
+        VALUES (
+            'system',
+            'self_model.f2_coherence_rebaseline',
+            'self_model',
+            'akira_primary',
+            'success',
+            jsonb_build_object(
+                'schema_version','self_model.v2',
+                'reason','F2 canonical self-model coherence',
+                'capability','self_model_persistent'
+            )
+        );
+        """
+    ),
+
+    (
         "046_controlled_autonomy_runtime_registry",
         """
         INSERT INTO public.tools (

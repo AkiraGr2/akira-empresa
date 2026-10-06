@@ -98,6 +98,55 @@ PERSISTENT_MEMORY_CAPABILITY = {
 }
 
 
+SELF_MODEL_PERSISTENT_CAPABILITY = {
+    "name": "self_model_persistent",
+    "description": "Self-Model persistente de Akira: singleton versionado con identidad derivada del Identity Root, estado semánticamente validado, lecturas confirmadas y proyecciones autoritativas de capabilities, tools y models.",
+    "category": "self",
+    "kind": "composite",
+    "implementation_state": "implemented",
+    "verification_state": "unverified",
+    "availability_state": "available",
+    "maturity": "experimental",
+    "cost_compatibility": "free",
+    "dependencies": [
+        {"kind": "service", "id": "PersistenceService.get_self_model", "required": True},
+        {"kind": "service", "id": "PersistenceService.update_self_model", "required": True},
+        {"kind": "storage", "id": "PostgreSQL.self_model", "required": True},
+        {"kind": "authority", "id": "IdentityRoot", "required": True},
+        {"kind": "registry", "id": "CapabilityEngine", "required": True},
+    ],
+    "limitations": [
+        "Capabilities, tools y models son proyecciones derivadas y no son editables manualmente dentro del self-model.",
+        "El self-model persistente conserva incertidumbres históricas; el runtime self-knowledge prioriza fuentes autoritativas actuales.",
+        "La verificación de escritura se cubre por el contrato de persistencia y el runtime no altera la identidad raíz.",
+    ],
+    "verification_spec": {
+        "method": "selftest",
+        "test_key": "self_model_persistent_contract",
+        "freshness_policy": {
+            "mode": "on_change",
+            "max_age_seconds": None,
+            "invalidate_on": [
+                "build_change",
+                "self_model_schema_change",
+                "identity_root_change",
+                "capability_registry_change",
+            ],
+        },
+    },
+    "provenance": {
+        "source": "architecture_rebaseline_f2",
+        "created_by": "system",
+        "basis": [
+            "persistence/core.py",
+            "persistence/service.py",
+            "persistence/selftest.py",
+            "test_self_knowledge_contract.py",
+        ],
+    },
+}
+
+
 MEMORY_RECALL_CAPABILITY = {
     "name": "memory_recall",
     "description": "Recuperación híbrida de memorias activas: búsqueda léxica como respaldo, búsqueda semántica mediante Gemini Embedding 2 + pgvector y aislamiento por owner_scope.",
@@ -360,4 +409,4 @@ CONTROLLED_AUTONOMY_CAPABILITY = {
     },
 }
 
-BASE_CAPABILITIES = (SESSION_AUTH_CAPABILITY, PERSISTENT_MEMORY_CAPABILITY, MEMORY_RECALL_CAPABILITY, LEARNING_PERSISTENT_CAPABILITY, GRAPH_PERSISTENT_CAPABILITY, EVOLUTION_ENGINE_CAPABILITY, CONTROLLED_AUTONOMY_CAPABILITY)
+BASE_CAPABILITIES = (SESSION_AUTH_CAPABILITY, SELF_MODEL_PERSISTENT_CAPABILITY, PERSISTENT_MEMORY_CAPABILITY, MEMORY_RECALL_CAPABILITY, LEARNING_PERSISTENT_CAPABILITY, GRAPH_PERSISTENT_CAPABILITY, EVOLUTION_ENGINE_CAPABILITY, CONTROLLED_AUTONOMY_CAPABILITY)
