@@ -222,7 +222,7 @@ ENTITIES = {
             "source", "event", "lesson", "knowledge_nodes", "relationships",
             "confidence", "outcome", "status", "evidence", "verification_analysis", "learning_context", "verified_at", "verified_by", "reuse_count", "last_reused_at",
         ),
-        "filterable": ("id", "source", "outcome", "status", "idempotency_key"),
+        "filterable": ("id", "source", "outcome", "status", "owner_scope", "idempotency_key"),
         "in_filterable": ("source", "outcome", "status"),
         "orderable": ("created_at", "updated_at", "reuse_count", "last_reused_at"),
         "idempotent": True,
