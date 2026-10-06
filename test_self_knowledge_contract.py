@@ -161,6 +161,42 @@ class SelfKnowledgeSnapshotTests(unittest.TestCase):
         self.assertEqual(result["errors"][0]["occurrences"], 1)
         self.assertEqual(result["repairs"][0]["status"], "completed")
         self.assertEqual(result["evolution"][0]["status"], "proposed")
+        from persistence.core import ValidationError, validate_self_model
+        with self.assertRaises(ValidationError):
+            validate_self_model({
+                "uncertainties": [{
+                    "id": "u2",
+                    "statement": "Debe resolverse",
+                    "kind": "evidence",
+                    "status": "resolved",
+                    "evidence": [],
+                    "created_at": "2026-10-06T01:00:00+00:00",
+                }]
+            }, partial=True)
+        with self.assertRaises(ValidationError):
+            validate_self_model({
+                "repairs": [{
+                    "id": "r2",
+                    "target": "chat",
+                    "reason": "test",
+                    "status": "completed",
+                    "proposed_at": "2026-10-06T01:00:00+00:00",
+                    "evidence": [],
+                    "result": "ok",
+                }]
+            }, partial=True)
+        with self.assertRaises(ValidationError):
+            validate_self_model({
+                "evolution": [{
+                    "id": "ev2",
+                    "proposal": "test",
+                    "rationale": "test",
+                    "status": "implemented",
+                    "proposed_at": "2026-10-06T01:00:00+00:00",
+                    "evidence": [],
+                }]
+            }, partial=True)
+
 
     def test_self_model_rejects_manual_derived_registry_updates(self):
         from persistence.core import ValidationError, validate_self_model
