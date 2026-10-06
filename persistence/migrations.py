@@ -1297,5 +1297,28 @@ MIGRATIONS = [
         ON CONFLICT DO NOTHING
         """
     ),
+,
+    (
+        "043_mission_task_cancellation_state",
+        """
+        ALTER TABLE public.agent_tasks
+            DROP CONSTRAINT IF EXISTS agent_tasks_status_check;
+        ALTER TABLE public.agent_tasks
+            ADD CONSTRAINT agent_tasks_status_check
+            CHECK (status IN ('pending','running','completed','failed','cancelled'));
+
+        INSERT INTO public.audit_log (
+            actor, action, resource, resource_id, status, detail
+        ) VALUES (
+            'system',
+            'mission.task.cancellation_schema',
+            'agent_tasks',
+            NULL,
+            'success',
+            '{"status":"cancelled","mission_terminal_invariant":true}'::jsonb
+        )
+        ON CONFLICT DO NOTHING
+        """
+    ),
 
 ]
