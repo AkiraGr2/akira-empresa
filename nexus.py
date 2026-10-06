@@ -1957,6 +1957,199 @@ def v8_self_update(request: Request, payload: dict):
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
     return {"ok": True, "self_model": updated}
 
+# ============================================================
+# V8-F12 — REPAIR ENGINE v1
+# Controlado, owner-scoped, allowlisted y sin escritura arbitraria de codigo.
+# ============================================================
+@app.post("/api/v8/repair")
+def v8_repair_create(request: Request, payload: dict):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    if not isinstance(payload, dict):
+        return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
+    try:
+        repair = service.create_repair(
+            target=str(payload.get("target") or ""),
+            reason=str(payload.get("reason") or ""),
+            action_type=str(payload.get("action_type") or ""),
+            actor=s["email"],
+            owner_scope=s["owner_scope"],
+        )
+        return {"ok": True, "repair": repair}
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "detail": str(e)[:300]}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+
+@app.get("/api/v8/repair")
+def v8_repair_list(request: Request, status: str = None, limit: int = 50):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    try:
+        repairs = service.list_repairs(owner_scope=s["owner_scope"], status=status, limit=limit)
+        return {"ok": True, "repairs": repairs, "count": len(repairs)}
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+
+@app.post("/api/v8/repair/{repair_id}/advance")
+def v8_repair_advance(request: Request, repair_id: str, payload: dict):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    payload = payload if isinstance(payload, dict) else {}
+    new_stage = str(payload.get("stage") or "").strip()
+    fields = {k: v for k, v in payload.items() if k != "stage"}
+    from persistence.core import PersistenceError, ValidationError, NotFoundError
+    try:
+        repair = service.advance_repair(
+            repair_id, new_stage, actor=s["email"], owner_scope=s["owner_scope"], **fields
+        )
+        return {"ok": True, "repair": repair}
+    except NotFoundError:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "detail": str(e)[:300]}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+
+@app.get("/api/v8/repair/{repair_id}")
+def v8_repair_get(request: Request, repair_id: str):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    repair = service.get_repair(repair_id, owner_scope=s["owner_scope"])
+    if repair is None:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    return {"ok": True, "repair": repair}
+
+@app.post("/api/v8/repair/{repair_id}/sandbox")
+def v8_repair_sandbox(request: Request, repair_id: str):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    from persistence.core import PersistenceError, ValidationError, NotFoundError
+    try:
+        repair = service.sandbox_repair(repair_id, actor=s["email"], owner_scope=s["owner_scope"])
+        return {"ok": repair.get("status") != "failed", "repair": repair}
+    except NotFoundError:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "detail": str(e)[:300]}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+
+@app.post("/api/v8/repair/{repair_id}/test")
+def v8_repair_test(request: Request, repair_id: str):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    from persistence.core import PersistenceError, ValidationError, NotFoundError
+    try:
+        repair = service.test_repair(repair_id, actor=s["email"], owner_scope=s["owner_scope"])
+        return {"ok": repair.get("status") != "failed", "repair": repair}
+    except NotFoundError:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "detail": str(e)[:300]}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+
+@app.post("/api/v8/repair/{repair_id}/evaluate")
+def v8_repair_evaluate(request: Request, repair_id: str):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    from persistence.core import PersistenceError, ValidationError, NotFoundError
+    try:
+        repair = service.evaluate_repair(repair_id, actor=s["email"], owner_scope=s["owner_scope"])
+        return {"ok": repair.get("status") != "failed", "repair": repair}
+    except NotFoundError:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "detail": str(e)[:300]}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+
+@app.post("/api/v8/repair/{repair_id}/approve")
+def v8_repair_approve(request: Request, repair_id: str):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    from persistence.core import PersistenceError, ValidationError, NotFoundError
+    try:
+        repair = service.approve_repair(repair_id, actor=s["email"], owner_scope=s["owner_scope"])
+        return {"ok": True, "repair": repair}
+    except NotFoundError:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "detail": str(e)[:300]}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+
+@app.post("/api/v8/repair/{repair_id}/apply")
+def v8_repair_apply(request: Request, repair_id: str):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    from persistence.core import PersistenceError, ValidationError, NotFoundError
+    try:
+        repair = service.apply_repair(repair_id, actor=s["email"], owner_scope=s["owner_scope"])
+        return {"ok": True, "repair": repair}
+    except NotFoundError:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "detail": str(e)[:300]}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+
+@app.post("/api/v8/repair/{repair_id}/discard")
+def v8_repair_discard(request: Request, repair_id: str, payload: dict = None):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None: return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    payload = payload if isinstance(payload, dict) else {}
+    from persistence.core import PersistenceError, ValidationError, NotFoundError
+    try:
+        repair = service.discard_repair(
+            repair_id,
+            actor=s["email"],
+            owner_scope=s["owner_scope"],
+            reason=payload.get("reason"),
+        )
+        return {"ok": True, "repair": repair}
+    except NotFoundError:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "detail": str(e)[:300]}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+
 @app.post("/api/v8/learning")
 def v8_learning_create(request: Request, payload: dict):
     s, _owner_error = _require_owner(request)
