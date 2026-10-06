@@ -1103,8 +1103,6 @@ MIGRATIONS = [
         """
     ),
 
-,
-
     (
         "035_graph_owner_scoped_uniqueness",
         """
