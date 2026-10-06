@@ -243,6 +243,41 @@ class MissionTaskOwnershipTests(unittest.TestCase):
                 actor="selftest",
             )
 
+    def test_cancel_mission_cascades_nonterminal_tasks_without_counting_failures(self):
+        result = self.service.cancel_mission(
+            "m_b",
+            reason="cancelacion solicitada por propietario",
+            actor="b@example.test",
+            owner="b@example.test",
+        )
+        self.assertEqual(result["status"], "cancelled")
+
+        task = self.service.get_task("t_b", owner_scope="scope:B")
+        self.assertIsNotNone(task)
+        self.assertEqual(task["status"], "cancelled")
+        self.assertEqual(
+            task["outputs"]["cancel_reason"],
+            "cancelacion solicitada por propietario",
+        )
+
+        agent = self.service.repo.get("agents", "agent_r")
+        self.assertEqual(agent["tasks_failed"], 0)
+
+    def test_cancel_mission_leaves_completed_tasks_untouched(self):
+        self.service.repo.rows["agent_tasks"].append(
+            {"id": "t_completed", "owner_scope": "scope:B", "agent_name": "researcher",
+             "tool_name": "web_search", "status": "completed", "version": 1,
+             "mission_id": "m_b", "outputs": {}, "completed_at": "2026-10-06T00:00:00Z"}
+        )
+        self.service.cancel_mission(
+            "m_b",
+            reason="ya no se necesita",
+            actor="b@example.test",
+            owner="b@example.test",
+        )
+        task = self.service.get_task("t_completed", owner_scope="scope:B")
+        self.assertEqual(task["status"], "completed")
+
     def test_task_listing_is_owner_scoped(self):
         rows = self.service.list_tasks(owner_scope="scope:A", limit=50)
         self.assertEqual({r["id"] for r in rows}, {"t_a"})
