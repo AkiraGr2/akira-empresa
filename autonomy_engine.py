@@ -87,6 +87,10 @@ def start_controlled_autonomy(service, request: dict[str, Any], actor: str, owne
             run.get("queries") or [],
         )
         proposal = validate_proposal(proposal)
+        requested_paths = set(run.get("paths") or [])
+        proposed_paths = {item["path"] for item in proposal.get("changes") or []}
+        if not proposed_paths.issubset(requested_paths):
+            raise ControlledAutonomyError("proposal_path_outside_requested_scope")
         if proposal.get("requires_human_approval") is not True or proposal.get("write_performed") is not False:
             raise ControlledAutonomyError("proposal_safety_contract_failed")
         _advance(a, run_id, "proposed", actor, owner_scope, {"proposal": proposal})
@@ -208,7 +212,7 @@ def _run_sandbox_tests_from_existing_archive(
         )
 
 
-def approve_and_apply_controlled_autonomy(
+def apply_approved_controlled_autonomy(
     service,
     run_id: str,
     actor: str,
@@ -218,11 +222,14 @@ def approve_and_apply_controlled_autonomy(
     run = a.get_run(run_id, owner_scope=owner_scope)
     if run is None:
         raise ControlledAutonomyError("autonomy_run_not_found")
-    if run.get("status") != "awaiting_approval":
-        raise ControlledAutonomyError("autonomy_run_not_awaiting_approval")
+    if run.get("status") != "acting":
+        raise ControlledAutonomyError("autonomy_run_requires_explicit_approval")
+    decision = run.get("decision") if isinstance(run.get("decision"), dict) else {}
+    if decision.get("status") != "approved" or decision.get("mode") != "human":
+        raise ControlledAutonomyError("human_approval_evidence_missing")
     if not isinstance(run.get("proposal"), dict) or not run["proposal"].get("changes"):
         raise ControlledAutonomyError("proposal_missing")
-    approval = a.approve(run_id, actor, owner_scope)
+    approval = run
     proposal = run["proposal"]
     sandbox = run.get("sandbox") if isinstance(run.get("sandbox"), dict) else {}
     expected_hashes = sandbox.get("expected_hashes") if isinstance(sandbox.get("expected_hashes"), dict) else {}
