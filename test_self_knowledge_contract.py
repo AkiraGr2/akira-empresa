@@ -207,6 +207,11 @@ class SelfKnowledgeSnapshotTests(unittest.TestCase):
             }, partial=True)
 
 
+    def test_self_model_models_follow_authoritative_registry(self):
+        from persistence.model_registry import model_registry_snapshot
+        service = PersistenceService(FakeRepo())
+        model = service.get_self_model()
+        self.assertEqual(model["models"], model_registry_snapshot()["routes"])
     def test_self_model_rejects_manual_derived_registry_updates(self):
         from persistence.core import ValidationError, validate_self_model
         for field in ("capabilities", "tools"):
