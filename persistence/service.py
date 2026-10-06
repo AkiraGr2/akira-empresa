@@ -1522,14 +1522,6 @@ class PersistenceService:
                 limit=limit, offset=max(0, int(offset)),
                 order_by=order_by, descending=descending
             )
-            if scope != LEGACY_OWNER_SCOPE:
-                legacy = self.repo.search(
-                    "graph_nodes",
-                    {"status": "active", "owner_scope": LEGACY_OWNER_SCOPE},
-                    limit=limit, offset=0,
-                    order_by=order_by, descending=descending
-                )
-                rows = rows + legacy
         if owner_scope is not None:
             core = self.repo.search(
                 "graph_nodes", {"status": "active", "label": _CORE_NODE_LABEL}, limit=1
