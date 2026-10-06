@@ -1,4 +1,5 @@
 import hashlib
+import specialized_agent_tools
 import tempfile
 import unittest
 from pathlib import Path
@@ -128,6 +129,19 @@ class ControlledAutonomyContractTests(unittest.TestCase):
                 }]
             })
 
+    def test_proposal_rejects_malformed_hunk_header(self):
+        with self.assertRaises(AutonomyContractError):
+            validate_proposal({
+                "status": "proposal",
+                "summary": "bad hunk",
+                "changes": [{
+                    "path": "README.md",
+                    "operation": "modify",
+                    "reason": "x",
+                    "patch": "--- a/README.md\n+++ b/README.md\n@@\n-old\n+new\n",
+                }],
+            })
+
     def test_patch_engine_applies_modify_and_create(self):
         source = "uno\ndos\ntres\n"
         patch = (
@@ -241,6 +255,73 @@ class ControlledAutonomyContractTests(unittest.TestCase):
         self.assertIn("docs/new.txt", calls[0])
         self.assertEqual(calls[1], [])
         self.assertEqual(calls[2], ["docs/new.txt"])
+    def test_generated_create_patch_is_canonicalized_before_sandbox(self):
+        from specialized_agent_tools import propose_code_change
+        from github_controlled import apply_unified_patch
+
+        def inspector(repo, paths=None, max_files=8, queries=None):
+            if paths:
+                raise GitHubReadUpstreamError("not_found")
+            return {
+                "ok": True, "branch": "main", "head_commit_sha": "a" * 40,
+                "root": [], "files": [], "total_bytes": 0,
+            }
+
+        malformed = (
+            "--- /dev/null\n"
+            "+++ b/docs/new.txt\n"
+            "@@\n"
+            "+hola\n"
+            "+mundo\n"
+        )
+        with patch("specialized_agent_tools._specialist_json_call", return_value={
+            "status": "proposal",
+            "summary": "create target",
+            "changes": [{
+                "path": "docs/new.txt",
+                "operation": "create",
+                "reason": "test",
+                "patch": malformed,
+            }],
+            "tests": [], "risks": [],
+        }):
+            result = propose_code_change(
+                inspector,
+                "AkiraGr2/akira-empresa",
+                ["docs/new.txt"],
+                "Crea el archivo solicitado.",
+                ["docs/new.txt"],
+            )
+
+        canonical = result["changes"][0]["patch"]
+        self.assertIn("@@ -0,0 +1,2 @@", canonical)
+        self.assertEqual(
+            apply_unified_patch("", canonical, "docs/new.txt", "create"),
+            "hola\nmundo\n",
+        )
+
+    def test_generated_modify_patch_with_malformed_hunk_fails_closed(self):
+        def inspector(repo, paths=None, max_files=8, queries=None):
+            return {"files": [{"path": "README.md", "status": "ok", "content": "hello\n"}]}
+        with patch("specialized_agent_tools._specialist_json_call", return_value={
+            "status": "proposal",
+            "summary": "modify target",
+            "changes": [{
+                "path": "README.md",
+                "operation": "modify",
+                "reason": "test",
+                "patch": "--- a/README.md\n+++ b/README.md\n@@\n-hello\n+hola\n",
+            }],
+            "tests": [], "risks": [],
+        }):
+            with self.assertRaises(specialized_agent_tools.SpecializedAgentError):
+                specialized_agent_tools.propose_code_change(
+                    inspector,
+                    "AkiraGr2/akira-empresa",
+                    ["README.md"],
+                    "Modifica el archivo solicitado.",
+                )
+
     def test_workspace_testing_uses_non_shell_commands(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

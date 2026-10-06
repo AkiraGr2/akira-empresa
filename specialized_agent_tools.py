@@ -219,6 +219,70 @@ def _normalize_queries(queries: Any) -> list[str]:
     ))
 
 
+def _canonicalize_generated_patch(change: dict[str, Any]) -> dict[str, Any]:
+    """Normalize safe model patch variants before any sandbox execution."""
+    operation = str(change.get("operation") or "").strip()
+    path = str(change.get("path") or "").strip()
+    patch = str(change.get("patch") or "")
+    lines = patch.splitlines(keepends=True)
+    old_headers = [line.rstrip("\n") for line in lines if line.startswith("--- ")]
+    new_headers = [line.rstrip("\n") for line in lines if line.startswith("+++ ")]
+    if len(old_headers) != 1 or len(new_headers) != 1:
+        raise SpecializedAgentError(f"proposal_patch_headers_invalid:{path}")
+    expected_old = "/dev/null" if operation == "create" else f"a/{path}"
+    expected_new = f"b/{path}"
+    if old_headers[0].strip() != f"--- {expected_old}" or new_headers[0].strip() != f"+++ {expected_new}":
+        raise SpecializedAgentError(f"proposal_patch_path_mismatch:{path}")
+
+    hunk_indexes = [i for i, line in enumerate(lines) if line.startswith("@@")]
+    hunk_pattern = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+    if operation != "create":
+        if not hunk_indexes or any(
+            not hunk_pattern.fullmatch(lines[i].rstrip("\n")) for i in hunk_indexes
+        ):
+            raise SpecializedAgentError(f"proposal_invalid_patch_hunk:{path}")
+        return change
+
+    if len(hunk_indexes) != 1:
+        raise SpecializedAgentError(f"proposal_invalid_create_patch:{path}")
+
+    idx = hunk_indexes[0]
+    hunk_header = lines[idx].rstrip("\n")
+    match = hunk_pattern.fullmatch(hunk_header)
+    if match:
+        old_start = int(match.group(1))
+        old_count = int(match.group(2) or "1")
+        new_start = int(match.group(3))
+        new_count = int(match.group(4) or "1")
+        body = lines[idx + 1:]
+        if old_start != 0 or old_count != 0 or new_start != 1:
+            raise SpecializedAgentError(f"proposal_invalid_create_patch:{path}")
+        if not body or any(not line.startswith("+") for line in body):
+            raise SpecializedAgentError(f"proposal_invalid_create_patch:{path}")
+        if new_count != len(body):
+            raise SpecializedAgentError(f"proposal_hunk_count_invalid:{path}")
+        return change
+
+    if hunk_header.strip() != "@@":
+        raise SpecializedAgentError(f"proposal_invalid_hunk_header:{path}")
+
+    body = lines[idx + 1:]
+    if not body or any(not line.startswith("+") for line in body):
+        raise SpecializedAgentError(f"proposal_invalid_create_patch:{path}")
+
+    additions = len(body)
+    canonical = "".join(lines[:idx]) + f"@@ -0,0 +1,{additions} @@\n" + "".join(body)
+    return {**change, "patch": canonical}
+
+
+def _prepare_generated_proposal(proposal: dict[str, Any]) -> dict[str, Any]:
+    """Apply deterministic safety normalization to model output without writing anything."""
+    changes = proposal.get("changes")
+    if not isinstance(changes, list):
+        return proposal
+    return {**proposal, "changes": [_canonicalize_generated_patch(dict(item)) for item in changes]}
+
+
 def _context_from_inspection(inspection: dict[str, Any]) -> str:
     parts = []
     for item in inspection.get("files") or []:
@@ -345,6 +409,7 @@ EVIDENCIA:
 </repository_evidence>
 """
     result = _specialist_json_call(prompt, max_output_tokens=3200)
+    result = _prepare_generated_proposal(result)
     result["write_performed"] = False
     result["requires_human_approval"] = True
     result["repository"] = repo
@@ -465,7 +530,12 @@ def review_code_change(
     if not proposal_text:
         raise SpecializedAgentError("proposal_required")
 
-    inspection = inspect_repository(repo, paths=clean_paths, max_files=len(clean_paths), queries=[])
+    inspection = _inspect_for_proposal(
+        inspect_repository,
+        repo,
+        clean_paths,
+        [],
+    )
     context = _context_from_inspection(inspection)
     test_text = json.dumps(test_results, ensure_ascii=False)[:12000] if test_results is not None else "NO_TEST_EVIDENCE"
 
