@@ -1,6 +1,8 @@
 import datetime as dt
 import unittest
 
+from persistence.service import PersistenceService, ConflictError
+
 from persistence.capability import (
     CapabilityContractError,
     apply_verification_result,
@@ -26,6 +28,49 @@ def state(
         "maturity": maturity,
         "cost_compatibility": cost_compatibility,
     }
+
+
+
+
+class _CapabilityTx:
+    def __init__(self, repo):
+        self.repo = repo
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def create(self, entity, record):
+        self.repo.rows.setdefault(entity, []).append(dict(record))
+        return dict(record), True
+
+    def append_audit(self, payload):
+        return None
+
+
+class _CapabilityRepo:
+    def __init__(self):
+        self.rows = {"capabilities": []}
+
+    def search(self, entity, filters=None, limit=50, offset=0, order_by="created_at", descending=True):
+        rows = [dict(row) for row in self.rows.get(entity, [])]
+        for key, value in (filters or {}).items():
+            rows = [row for row in rows if row.get(key) == value]
+        return rows[offset:offset + limit]
+
+    def transaction(self):
+        return _CapabilityTx(self)
+
+    def get(self, entity, record_id):
+        for row in self.rows.get(entity, []):
+            if row.get("id") == record_id:
+                return dict(row)
+        return None
+
+    def append_audit(self, payload):
+        return None
 
 
 class CapabilityEngineContractTests(unittest.TestCase):
@@ -158,6 +203,85 @@ class CapabilityEngineContractTests(unittest.TestCase):
             },
         }
         self.assertEqual(derive_effective_state(record), "partial_verified")
+
+
+    def test_capability_registry_bootstrap_is_idempotent_by_name_and_key(self):
+        service = PersistenceService(_CapabilityRepo())
+        payload = {
+            "name": "bootstrap_capability",
+            "description": "Capability de prueba para bootstrap.",
+            "category": "general",
+            "kind": "intrinsic",
+            "implementation_state": "implemented",
+            "verification_state": "unverified",
+            "availability_state": "available",
+            "maturity": "experimental",
+            "cost_compatibility": "unknown",
+            "dependencies": [],
+            "limitations": [],
+            "verification_spec": {
+                "method": "selftest",
+                "test_key": "bootstrap_capability_contract",
+                "freshness_policy": {
+                    "mode": "on_change",
+                    "max_age_seconds": None,
+                    "invalidate_on": ["build_change"],
+                },
+            },
+            "provenance": {"source": "ci", "created_by": "ci"},
+        }
+        first = service.create_capability(
+            payload,
+            actor="ci",
+            idempotency_key="bootstrap:capability:bootstrap_capability:v1",
+        )
+        second = service.create_capability(
+            payload,
+            actor="ci",
+            idempotency_key="bootstrap:capability:bootstrap_capability:v1",
+        )
+        self.assertEqual(first["outcome"], "created")
+        self.assertEqual(second["outcome"], "already_synced")
+        self.assertEqual(first["record"]["id"], second["record"]["id"])
+
+    def test_capability_registry_rejects_conflicting_reuse_of_name(self):
+        service = PersistenceService(_CapabilityRepo())
+        payload = {
+            "name": "conflicting_capability",
+            "description": "Definicion A.",
+            "category": "general",
+            "kind": "intrinsic",
+            "implementation_state": "implemented",
+            "verification_state": "unverified",
+            "availability_state": "available",
+            "maturity": "experimental",
+            "cost_compatibility": "unknown",
+            "dependencies": [],
+            "limitations": [],
+            "verification_spec": {
+                "method": "selftest",
+                "test_key": "conflicting_capability_contract",
+                "freshness_policy": {
+                    "mode": "on_change",
+                    "max_age_seconds": None,
+                    "invalidate_on": [],
+                },
+            },
+            "provenance": {"source": "ci", "created_by": "ci"},
+        }
+        service.create_capability(
+            payload,
+            actor="ci",
+            idempotency_key="bootstrap:conflicting_capability:v1",
+        )
+        changed = dict(payload)
+        changed["description"] = "Definicion B."
+        with self.assertRaises(ConflictError):
+            service.create_capability(
+                changed,
+                actor="ci",
+                idempotency_key="bootstrap:conflicting_capability:v2",
+            )
 
 
 if __name__ == "__main__":
