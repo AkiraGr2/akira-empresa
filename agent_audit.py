@@ -401,17 +401,26 @@ def run_agent_audit(
 
     missing = [name for name in PRODUCTION_AGENT_ORDER if name not in agents]
     unexpected = sorted(name for name in agents if name not in PRODUCTION_AGENT_ORDER)
-    if missing or unexpected:
+    unavailable_tools = sorted({
+        tool_name
+        for contract in AGENT_CONTRACTS.values()
+        for tool_name in contract["allowed_tools"]
+        if not service.get_tool_by_name(tool_name)
+        or service.get_tool_by_name(tool_name).get("status") != "available"
+    })
+    if missing or unexpected or unavailable_tools:
         report = {
             "agent": "_registry",
             "verdict": "FAILED",
             "checks": {
                 "all_production_agents_registered": not missing,
                 "no_uncontracted_active_agents": not unexpected,
+                "all_contract_tools_available": not unavailable_tools,
             },
             "evidence": {
                 "missing_agents": missing,
                 "unexpected_active_agents": unexpected,
+                "unavailable_contract_tools": unavailable_tools,
             },
         }
         service.record_audit(
@@ -538,8 +547,11 @@ def run_agent_audit(
         and not missing
         and not unexpected
         and not unavailable_tools
-        and {report.get("agent") for report in reports if report.get("agent") in PRODUCTION_AGENT_ORDER}
-            == set(PRODUCTION_AGENT_ORDER)
+        and {
+            report.get("agent")
+            for report in reports
+            if report.get("agent") in PRODUCTION_AGENT_ORDER
+        } == set(PRODUCTION_AGENT_ORDER)
         and counts.get("FAILED", 0) == 0
         and cleanup.get("ok") is True
     )
