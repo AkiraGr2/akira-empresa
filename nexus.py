@@ -53,6 +53,7 @@ from identity_root import IDENTITY_ROOT_VERSION, PUBLIC_IDENTITY, get_identity_r
 from persistence.memory_recall import recall_memories as _recall_memories_impl
 from persistence.model_registry import (PRIMARY_CHAT_MODEL, GEMINI_REASONING_MODEL, GEMINI_CHAT_FALLBACK_VARIANT, GROQ_FALLBACK_MODELS, OPENROUTER_MODEL_ROUTE, MISTRAL_MODEL_ROUTE, MEMORY_EMBEDDING_MODEL)
 from persistence.core import PersistenceError, ValidationError, validate_tool_inputs
+from tool_audit import TOOL_ORDER, run_tool_audit
 
 VERSION="V7.3"
 MODEL="external-inference-runtime"
@@ -4382,6 +4383,264 @@ def v8_github_read(request: Request, payload: dict):
         "result": outputs.get("result") if isinstance(outputs, dict) else outputs,
     }
 
+_TOOL_AUDIT_RUNS = {}
+_TOOL_AUDIT_RUNS_LOCK = threading.Lock()
+
+
+def _current_build_ref():
+    return (
+        os.getenv("RENDER_GIT_COMMIT")
+        or os.getenv("RENDER_GIT_COMMIT_SHA")
+        or BACKEND_BUILD_MARKER
+    )
+
+
+def _run_tool_audit_background(service, actor, owner_scope, run_id):
+    try:
+        report = run_tool_audit(
+            service,
+            _invoke_registered_tool,
+            actor=actor,
+            owner_scope=owner_scope,
+            run_id=run_id,
+        )
+        with _TOOL_AUDIT_RUNS_LOCK:
+            _TOOL_AUDIT_RUNS[run_id] = {
+                "status": "completed",
+                "finished_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "report": report,
+            }
+        service.record_audit(
+            "tool_audit",
+            "tool_audit.completed",
+            "tool_audit_runs",
+            run_id,
+            "success" if report.get("ok") else "failure",
+            {
+                "run_id": run_id,
+                "requested_by": actor,
+                "owner_scope": owner_scope,
+                "build_ref": _current_build_ref(),
+                "summary": report.get("summary"),
+                "cleanup_ok": bool((report.get("cleanup") or {}).get("ok")),
+            },
+        )
+    except Exception as exc:
+        error = {"type": type(exc).__name__, "message": str(exc)[:500]}
+        with _TOOL_AUDIT_RUNS_LOCK:
+            _TOOL_AUDIT_RUNS[run_id] = {
+                "status": "failed",
+                "finished_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "error": error,
+            }
+        try:
+            service.record_audit(
+                "tool_audit",
+                "tool_audit.completed",
+                "tool_audit_runs",
+                run_id,
+                "failure",
+                {
+                    "run_id": run_id,
+                    "requested_by": actor,
+                    "owner_scope": owner_scope,
+                    "build_ref": _current_build_ref(),
+                    "error": error,
+                },
+            )
+        except Exception:
+            pass
+
+
+@app.post("/api/v8/tools/audit")
+def v8_tools_audit_start(request: Request):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None:
+        return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    run_id = "tool_audit_" + uuid.uuid4().hex[:16]
+    started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    with _TOOL_AUDIT_RUNS_LOCK:
+        _TOOL_AUDIT_RUNS[run_id] = {
+            "status": "running",
+            "started_at": started_at,
+            "requested_by": s["email"],
+            "owner_scope": s["owner_scope"],
+            "build_ref": _current_build_ref(),
+            "tool_order": TOOL_ORDER,
+        }
+    service.record_audit(
+        "tool_audit",
+        "tool_audit.started",
+        "tool_audit_runs",
+        run_id,
+        "success",
+        {
+            "run_id": run_id,
+            "requested_by": s["email"],
+            "owner_scope": s["owner_scope"],
+            "build_ref": _current_build_ref(),
+            "tool_order": TOOL_ORDER,
+        },
+    )
+    threading.Thread(
+        target=_run_tool_audit_background,
+        args=(service, s["email"], s["owner_scope"], run_id),
+        daemon=True,
+        name="akira-tool-audit",
+    ).start()
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "status": "running",
+        "tool_count": len(TOOL_ORDER),
+        "build_ref": _current_build_ref(),
+    }
+
+
+@app.get("/api/v8/tools/audit/{run_id}")
+def v8_tools_audit_get(request: Request, run_id: str):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None:
+        return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+
+    with _TOOL_AUDIT_RUNS_LOCK:
+        current = _TOOL_AUDIT_RUNS.get(run_id)
+    if current is not None:
+        if current.get("owner_scope") and current.get("owner_scope") != s["owner_scope"]:
+            return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+        return {"ok": True, "run_id": run_id, **current}
+
+    # Recover completed runs from persistent audit records after a restart.
+    records = service.recent_audit(actor="tool_audit", limit=300)
+    matched = [
+        item for item in records
+        if isinstance(item.get("detail"), dict)
+        and item["detail"].get("run_id") == run_id
+    ]
+    if not matched:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    started = next((x for x in reversed(matched) if x.get("action") == "tool_audit.started"), None)
+    completed = next((x for x in matched if x.get("action") == "tool_audit.completed"), None)
+    cases = [
+        x for x in matched
+        if x.get("action") == "tool_audit.case"
+    ]
+    if started and started.get("detail", {}).get("owner_scope") != s["owner_scope"]:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    reports = [
+        (x.get("detail") or {}).get("report")
+        for x in reversed(cases)
+        if isinstance((x.get("detail") or {}).get("report"), dict)
+    ]
+    summary = {}
+    for report in reports:
+        verdict = report.get("verdict", "FAILED")
+        summary[verdict] = summary.get(verdict, 0) + 1
+    ok = bool(completed and completed.get("status") == "success")
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "status": "completed" if completed else "running",
+        "report": {
+            "run_id": run_id,
+            "tool_count": len(reports),
+            "summary": summary,
+            "ok": ok and len(reports) == len(TOOL_ORDER),
+            "reports": reports,
+        },
+    }
+
+
+def _invoke_registered_tool(service, name, inputs, actor, owner_scope=None, idempotency_key=""):
+    tool = service.get_tool_by_name(name)
+    if tool is None:
+        return {
+            "ok": False,
+            "reason": "tool_not_found",
+            "error": {"type": "ToolNotFoundError", "message": f"tool no registrada: {name}"},
+        }
+    if tool.get("status") != "available":
+        return {
+            "ok": False,
+            "reason": f"tool_status_{tool.get('status')}",
+            "error": {"type": "ToolUnavailableError", "message": f"tool no disponible: {name}"},
+        }
+
+    perms = tool.get("permissions") or []
+    if "owner" in perms and owner_scope is None:
+        return {
+            "ok": False,
+            "reason": "owner_required",
+            "error": {"type": "OwnerRequiredError", "message": f"la tool requiere owner_scope: {name}"},
+        }
+    if not isinstance(inputs, dict):
+        return {
+            "ok": False,
+            "reason": "inputs_must_be_object",
+            "error": {"type": "ToolInputValidationError", "message": "inputs debe ser objeto"},
+        }
+
+    key = str(idempotency_key or "").strip()
+    if key:
+        existing = service.get_invocation_by_idempotency_key(name, actor, owner_scope, key)
+        if existing is not None:
+            return {
+                "ok": existing.get("status") == "success",
+                "tool_name": name,
+                "outputs": existing.get("outputs") or {},
+                "duration_ms": int(existing.get("duration_ms") or 0),
+                "idempotency_key": key,
+                "replayed": True,
+                "invocation_id": existing.get("id"),
+                "error": existing.get("error"),
+            }
+
+    t0 = time.time()
+    outputs, error = None, None
+    try:
+        outputs, error = _invoke_tool(
+            service,
+            name,
+            inputs,
+            actor=actor,
+            owner_scope=owner_scope,
+        )
+    except Exception as exc:
+        error = {"type": type(exc).__name__, "message": str(exc)[:300]}
+    duration_ms = int((time.time() - t0) * 1000)
+    status = "success" if error is None else "failure"
+    outputs = outputs or {}
+    try:
+        service.log_invocation(
+            name,
+            inputs,
+            outputs,
+            status,
+            actor,
+            duration_ms,
+            error=error,
+            idempotency_key=key or None,
+            owner_scope=owner_scope,
+        )
+    except Exception as exc:
+        print(f"[tool] log_invocation fallo: {type(exc).__name__}", flush=True)
+    return {
+        "ok": error is None,
+        "tool_name": name,
+        "outputs": outputs,
+        "duration_ms": duration_ms,
+        "idempotency_key": key or None,
+        "replayed": False,
+        "error": error,
+    }
+
+
 @app.get("/api/v8/tools/{name}")
 def v8_tools_get(request: Request, name: str):
     s = get_session(request)
@@ -4626,14 +4885,6 @@ def v8_tools_invoke(request: Request, name: str, payload: dict):
     service = _persistence_service()
     if service is None:
         return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
-    tool = service.get_tool_by_name(name)
-    if tool is None:
-        return JSONResponse({"ok": False, "reason": "tool_not_found"}, status_code=404)
-    if tool.get("status") != "available":
-        return JSONResponse({"ok": False, "reason": f"tool_status_{tool.get('status')}"}, status_code=403)
-    perms = tool.get("permissions") or []
-    if "owner" in perms and not s.get("is_owner"):
-        return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
     if not isinstance(payload, dict):
         return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
 
@@ -4642,85 +4893,37 @@ def v8_tools_invoke(request: Request, name: str, payload: dict):
     if idempotency_key and len(idempotency_key) > 200:
         return JSONResponse({"ok": False, "reason": "idempotency_key_too_long"}, status_code=400)
 
-    owner_scope = s.get("owner_scope") if s.get("is_owner") else None
     inputs = payload.get("inputs") or {}
     if not isinstance(inputs, dict):
         return JSONResponse({"ok": False, "reason": "inputs_must_be_object"}, status_code=400)
 
-    if idempotency_key:
-        existing = service.get_invocation_by_idempotency_key(
-            name, s["email"], owner_scope, idempotency_key
-        )
-        if existing is not None:
-            replay_status = existing.get("status")
-            replay_body = {
-                "tool_name": name,
-                "outputs": existing.get("outputs") or {},
-                "duration_ms": int(existing.get("duration_ms") or 0),
-                "idempotency_key": idempotency_key,
-                "replayed": True,
-                "invocation_id": existing.get("id"),
-            }
-            if replay_status == "success":
-                return {"ok": True, **replay_body}
-            return JSONResponse({
-                "ok": False,
-                "reason": "invocation_failed",
-                "error": existing.get("error") or {
-                    "type": "PreviousInvocationFailed",
-                    "message": "invocacion previa fallida",
-                },
-                **{k: v for k, v in replay_body.items() if k != "outputs"},
-            }, status_code=500)
-
-    t0 = time.time()
-    outputs, error = None, None
-    try:
-        outputs, error = _invoke_tool(
-            service,
-            name,
-            inputs,
-            actor=s["email"],
-            owner_scope=owner_scope,
-        )
-    except Exception as e:
-        error = {"type": type(e).__name__, "message": str(e)[:200]}
-    duration_ms = int((time.time() - t0) * 1000)
-    status = "success" if error is None else "failure"
-    outputs = outputs or {}
-    try:
-        service.log_invocation(
-            name,
-            inputs,
-            outputs,
-            status,
-            s["email"],
-            duration_ms,
-            error=error,
-            idempotency_key=idempotency_key or None,
-            owner_scope=owner_scope,
-        )
-    except Exception as e:
-        print(f"[tool] log_invocation fallo: {e}")
-
-    if error is not None:
+    result = _invoke_registered_tool(
+        service,
+        name,
+        inputs,
+        actor=s["email"],
+        owner_scope=s.get("owner_scope") if s.get("is_owner") else None,
+        idempotency_key=idempotency_key,
+    )
+    if result.get("replayed"):
+        if result.get("ok"):
+            return {"ok": True, **{k: v for k, v in result.items() if k != "error"}}
         return JSONResponse({
             "ok": False,
             "reason": "invocation_failed",
-            "error": error,
-            "duration_ms": duration_ms,
-            "idempotency_key": idempotency_key or None,
+            "error": result.get("error") or {"type": "PreviousInvocationFailed", "message": "invocacion previa fallida"},
+            **{k: v for k, v in result.items() if k not in {"ok", "error", "outputs"}},
+        }, status_code=500)
+    if not result.get("ok"):
+        return JSONResponse({
+            "ok": False,
+            "reason": "invocation_failed",
+            "error": result.get("error"),
+            "duration_ms": result.get("duration_ms", 0),
+            "idempotency_key": result.get("idempotency_key"),
             "replayed": False,
         }, status_code=500)
-
-    return {
-        "ok": True,
-        "tool_name": name,
-        "outputs": outputs,
-        "duration_ms": duration_ms,
-        "idempotency_key": idempotency_key or None,
-        "replayed": False,
-    }
+    return {"ok": True, **{k: v for k, v in result.items() if k != "error"}}
 
 
 @app.get("/api/v8/agents")
