@@ -8,6 +8,7 @@ Contrato:
 from __future__ import annotations
 
 import ast
+import difflib
 import json
 import os
 import re
@@ -220,39 +221,112 @@ def _normalize_queries(queries: Any) -> list[str]:
     ))
 
 
-def _canonicalize_generated_patch(change: dict[str, Any]) -> dict[str, Any]:
-    """Normalize safe model patch variants before any sandbox execution."""
+def _deterministic_modify_patch(path: str, source: str, find_text: str, replace_text: str) -> str:
+    """Build a real unified diff from a bounded exact text replacement.
+
+    The model chooses *what* exact text to replace. Python owns line numbering and
+    diff syntax so LLM formatting cannot make the proposal invalid.
+    """
+    if not isinstance(source, str):
+        raise SpecializedAgentError(f"proposal_source_unavailable:{path}")
+    find_text = str(find_text or "")
+    replace_text = str(replace_text if replace_text is not None else "")
+    if not find_text:
+        raise SpecializedAgentError(f"proposal_edit_find_empty:{path}")
+    occurrences = source.count(find_text)
+    if occurrences == 0:
+        raise SpecializedAgentError(f"proposal_edit_context_not_found:{path}")
+    if occurrences != 1:
+        raise SpecializedAgentError(f"proposal_edit_context_ambiguous:{path}")
+
+    updated = source.replace(find_text, replace_text, 1)
+    if updated == source:
+        raise SpecializedAgentError(f"proposal_edit_noop:{path}")
+
+    diff = "".join(
+        difflib.unified_diff(
+            source.splitlines(keepends=True),
+            updated.splitlines(keepends=True),
+            fromfile=f"a/{path}",
+            tofile=f"b/{path}",
+            lineterm="\n",
+        )
+    )
+    if not diff.startswith(f"--- a/{path}\n+++ b/{path}\n@@ "):
+        raise SpecializedAgentError(f"proposal_deterministic_diff_failed:{path}")
+    return diff
+
+
+def _inspection_file_content(inspection: dict[str, Any], path: str) -> str | None:
+    for item in inspection.get("files") or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("path") or "").strip() == path and isinstance(item.get("content"), str):
+            return item["content"]
+    return None
+
+
+def _canonicalize_generated_patch(
+    change: dict[str, Any],
+    inspection: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Normalize model output; generate modify diffs deterministically when possible."""
     operation = str(change.get("operation") or "").strip()
     path = str(change.get("path") or "").strip()
     patch = str(change.get("patch") or "")
+
+    # For existing files, prefer a structured exact edit. This removes line-number
+    # synthesis from the LLM trust boundary while preserving the bounded proposal.
+    structured = change.get("edit")
+    if operation == "modify" and isinstance(structured, dict):
+        find_text = structured.get("find")
+        replace_text = structured.get("replace")
+        source = _inspection_file_content(inspection or {}, path)
+        if source is None:
+            raise SpecializedAgentError(f"proposal_source_unavailable:{path}")
+        patch = _deterministic_modify_patch(path, source, str(find_text or ""), str(
+            replace_text if replace_text is not None else ""
+        ))
+        cleaned = {k: v for k, v in change.items() if k != "edit"}
+        cleaned["patch"] = patch
+        return cleaned
+
     lines = patch.splitlines(keepends=True)
     old_headers = [line.rstrip("\n") for line in lines if line.startswith("--- ")]
     new_headers = [line.rstrip("\n") for line in lines if line.startswith("+++ ")]
-    # El contrato permite una descripción precisa en lugar de un diff. No
-    # rechazarla como si fuera un parche mal formado: el propuesta sigue siendo
-    # read-only y cualquier ejecución posterior debe exigir un patch canónico.
+
+    if operation == "modify":
+        # Backward compatibility: already-valid unified diffs remain accepted.
+        hunk_indexes = [i for i, line in enumerate(lines) if line.startswith("@@")]
+        hunk_pattern = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$")
+        if (
+            len(old_headers) == 1
+            and len(new_headers) == 1
+            and old_headers[0].strip() == f"--- a/{path}"
+            and new_headers[0].strip() == f"+++ b/{path}"
+            and hunk_indexes
+            and all(hunk_pattern.fullmatch(lines[i].rstrip("\n")) for i in hunk_indexes)
+        ):
+            return change
+
+        # A malformed diff is not repaired by guessing its hunk numbers. If the
+        # model supplied a structured edit, the branch above would have materialized it.
+        raise SpecializedAgentError(f"proposal_invalid_patch_hunk:{path}")
+
     if not old_headers and not new_headers:
         if patch.strip():
             return change
         raise SpecializedAgentError(f"proposal_patch_headers_invalid:{path}")
     if len(old_headers) != 1 or len(new_headers) != 1:
         raise SpecializedAgentError(f"proposal_patch_headers_invalid:{path}")
+
     expected_old = "/dev/null" if operation == "create" else f"a/{path}"
     expected_new = f"b/{path}"
     if old_headers[0].strip() != f"--- {expected_old}" or new_headers[0].strip() != f"+++ {expected_new}":
         raise SpecializedAgentError(f"proposal_patch_path_mismatch:{path}")
 
     hunk_indexes = [i for i, line in enumerate(lines) if line.startswith("@@")]
-    # Unified-diff hunk headers may include an optional section/context after
-    # the closing @@ (for example: "@@ -10,2 +10,3 @@ function_name").
     hunk_pattern = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$")
-    if operation != "create":
-        if not hunk_indexes or any(
-            not hunk_pattern.fullmatch(lines[i].rstrip("\n")) for i in hunk_indexes
-        ):
-            raise SpecializedAgentError(f"proposal_invalid_patch_hunk:{path}")
-        return change
-
     if len(hunk_indexes) != 1:
         raise SpecializedAgentError(f"proposal_invalid_create_patch:{path}")
 
@@ -285,12 +359,21 @@ def _canonicalize_generated_patch(change: dict[str, Any]) -> dict[str, Any]:
     return {**change, "patch": canonical}
 
 
-def _prepare_generated_proposal(proposal: dict[str, Any]) -> dict[str, Any]:
-    """Apply deterministic safety normalization to model output without writing anything."""
+def _prepare_generated_proposal(
+    proposal: dict[str, Any],
+    inspection: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Materialize model edits deterministically without writing anything."""
     changes = proposal.get("changes")
     if not isinstance(changes, list):
         return proposal
-    return {**proposal, "changes": [_canonicalize_generated_patch(dict(item)) for item in changes]}
+    return {
+        **proposal,
+        "changes": [
+            _canonicalize_generated_patch(dict(item), inspection)
+            for item in changes
+        ],
+    }
 
 
 def _context_from_inspection(inspection: dict[str, Any]) -> str:
@@ -400,14 +483,23 @@ REGLAS:
   "status": "proposal" | "blocked",
   "summary": "...",
   "changes": [
-    {{"path":"...", "operation":"modify|create|delete", "reason":"...", "patch":"..."}}
+    {{
+      "path":"...",
+      "operation":"modify|create",
+      "reason":"...",
+      "edit": {{
+        "find":"texto exacto existente a reemplazar",
+        "replace":"texto exacto nuevo"
+      }}
+    }}
   ],
   "tests": ["..."],
   "risks": ["..."],
   "requires_human_approval": true,
   "write_performed": false
 }}
-7. patch debe ser un diff unificado o una descripción suficientemente precisa; no lo presentes como aplicado.
+7. Para "modify", usa SIEMPRE "edit.find" y "edit.replace" con texto literal que exista en la evidencia del repositorio. No inventes numeros de linea ni headers "@@".
+8. Para "create", usa "patch" como diff unificado. El servidor generara/validara cualquier numeracion de hunk; no escribas GitHub.
 
 SOLICITUD DEL USUARIO:
 <request>{request}</request>
@@ -419,7 +511,7 @@ EVIDENCIA:
 </repository_evidence>
 """
     result = _specialist_json_call(prompt, max_output_tokens=3200)
-    result = _prepare_generated_proposal(result)
+    result = _prepare_generated_proposal(result, inspection)
     result["write_performed"] = False
     result["requires_human_approval"] = True
     result["repository"] = repo
