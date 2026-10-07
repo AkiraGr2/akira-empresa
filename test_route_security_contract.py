@@ -205,5 +205,14 @@ class SensitiveRouteSecurityContract(unittest.TestCase):
                         f"{route['method']} {route['path']} trusts client identity",
                     )
 
+    def test_tool_invocation_route_requires_owner_and_preserves_idempotency_scope(self):
+        route = next(
+            r for r in self.routes
+            if (r["method"], r["path"]) == ("POST", "/api/v8/tools/{name}/invoke")
+        )
+        self.assertIn('s.get("is_owner")', route["source"])
+        self.assertIn("idempotency_key", route["source"])
+        self.assertIn("owner_scope", route["source"])
+
 if __name__ == "__main__":
     unittest.main()
