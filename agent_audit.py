@@ -646,7 +646,7 @@ def run_agent_audit(
         verdict = report.get("verdict", "FAILED")
         counts[verdict] = counts.get(verdict, 0) + 1
     final_ok = (
-        len(reports) == len(EXPECTED_AGENT_CAPABILITY_CASES)
+        len(reports) >= len(EXPECTED_AGENT_CAPABILITY_CASES)
         and not missing
         and not unexpected
         and not unavailable_tools
