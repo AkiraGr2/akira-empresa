@@ -2460,7 +2460,7 @@ def run_logic_tests(service, fresh_service_factory=None):
             "environment": {"runtime": "selftest"},
             "dependency_snapshot": [],
             "runtime_version": "selftest",
-            "build_ref": "selftest",
+            "build_ref": build_ref,
             "actor": "selftest",
             "executor": "selftest",
             "evaluator": "system",
