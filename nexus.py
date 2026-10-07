@@ -608,12 +608,27 @@ async def _akira_lifespan(_app):
         print(f"[providers] configured key counts: {provider_key_inventory()}")
     except Exception as e:
         print(f"[providers] inventory error: {type(e).__name__}")
+
+    # Wait for persistence to become ready instead of racing a fixed delay.
+    # A missed seed would leave the persisted tool registry stale after a code deploy.
+    persistence_ready = False
+    for attempt in range(15):
+        if _persistence_service() is not None:
+            persistence_ready = True
+            break
+        if attempt < 14:
+            await asyncio.sleep(1)
     try:
-        _seed_tools_and_agents()
+        if persistence_ready:
+            _seed_tools_and_agents()
+        else:
+            print("[startup seed] persistence not ready after 15s; seed skipped", flush=True)
     except Exception as e:
         print(f"[startup seed] error: {e}")
     try:
-        _cleanup_orphan_missions(_persistence_service())
+        service = _persistence_service()
+        if service is not None:
+            _cleanup_orphan_missions(service)
     except Exception as e:
         print(f"[startup cleanup] error: {e}")
     yield
