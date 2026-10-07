@@ -129,7 +129,7 @@ def validate_agent_result(
         elif tool_name == "github_repo_read":
             ok = bool(result.get("ok")) and bool(result.get("files") or result.get("root"))
         elif tool_name == "memory_search":
-            ok = isinstance(result.get("results"), list)
+            ok = isinstance(outputs.get("results"), list)
         return ok, detail
 
     if agent_name == "memorizer":
