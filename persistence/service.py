@@ -2192,17 +2192,42 @@ class PersistenceService:
         limit = max(1, min(int(limit), 5000))
         base_filters = dict(filters or {})
         base_filters.setdefault("status", "active")
-        rows = self.repo.search(
+
+        # Graph edges do not carry owner_scope themselves; ownership is defined
+        # by both endpoint nodes. The previous implementation validated every
+        # returned edge through get_edge(), which performs node lookups per edge
+        # and can turn a small graph request into hundreds of remote DB queries.
+        # Resolve the owner's active node IDs once, then filter edges in memory.
+        if owner_scope is not None:
+            scope = str(owner_scope).strip()
+            if not scope:
+                return []
+            owner_nodes = self.list_graph_nodes(
+                limit=2000,
+                offset=0,
+                order_by="weight",
+                descending=True,
+                owner_scope=scope,
+            )
+            owner_node_ids = {
+                str(node.get("id"))
+                for node in owner_nodes
+                if node.get("id") is not None
+            }
+            rows = self.repo.search(
+                "graph_edges", base_filters, limit=limit, offset=max(0, int(offset)),
+                order_by=order_by, descending=descending
+            )
+            return [
+                edge for edge in rows
+                if str(edge.get("from_node")) in owner_node_ids
+                and str(edge.get("to_node")) in owner_node_ids
+            ][:limit]
+
+        return self.repo.search(
             "graph_edges", base_filters, limit=limit, offset=max(0, int(offset)),
             order_by=order_by, descending=descending
         )
-        if owner_scope is None:
-            return rows
-        scope = str(owner_scope).strip()
-        return [
-            edge for edge in rows
-            if self.get_edge(edge.get("id"), owner_scope=scope) is not None
-        ][:limit]
 
     def start_cycle(self, trigger, input_data=None, actor="system", idempotency_key=None, owner_scope=None):
         scope = str(owner_scope).strip() if owner_scope is not None else LEGACY_OWNER_SCOPE
