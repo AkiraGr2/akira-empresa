@@ -4616,8 +4616,9 @@ def _invoke_registered_tool(service, name, inputs, actor, owner_scope=None, idem
     duration_ms = int((time.time() - t0) * 1000)
     status = "success" if error is None else "failure"
     outputs = outputs or {}
+    persisted = None
     try:
-        service.log_invocation(
+        persisted = service.log_invocation(
             name,
             inputs,
             outputs,
@@ -4629,14 +4630,18 @@ def _invoke_registered_tool(service, name, inputs, actor, owner_scope=None, idem
             owner_scope=owner_scope,
         )
     except Exception as exc:
-        print(f"[tool] log_invocation fallo: {type(exc).__name__}", flush=True)
+        print(f"[tool] log_invocation fallo: {type(exc).__name__}: {str(exc)[:300]}", flush=True)
+    stored = (persisted or {}).get("record") if isinstance(persisted, dict) else None
+    already_synced = (persisted or {}).get("outcome") == "already_synced" if isinstance(persisted, dict) else False
     return {
         "ok": error is None,
         "tool_name": name,
         "outputs": outputs,
         "duration_ms": duration_ms,
         "idempotency_key": key or None,
-        "replayed": False,
+        "replayed": bool(already_synced),
+        "invocation_id": stored.get("id") if isinstance(stored, dict) else None,
+        "persisted": isinstance(stored, dict),
         "error": error,
     }
 
