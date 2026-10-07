@@ -336,29 +336,21 @@ def _canonicalize_generated_patch(
     new_headers = [line.rstrip("\n") for line in lines if line.startswith("+++ ")]
 
     if operation == "modify":
-        # Backward compatibility: already-valid unified diffs remain accepted.
-        hunk_indexes = [i for i, line in enumerate(lines) if line.startswith("@@")]
-        hunk_pattern = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$")
-        if (
-            len(old_headers) == 1
-            and len(new_headers) == 1
-            and old_headers[0].strip() == f"--- a/{path}"
-            and new_headers[0].strip() == f"+++ b/{path}"
-            and hunk_indexes
-            and all(hunk_pattern.fullmatch(lines[i].rstrip("\n")) for i in hunk_indexes)
-        ):
-            return change
-
-        # If the model returned a syntactically valid diff with stale/wrong hunk
-        # coordinates, recover only from exact source text. Never guess a location.
+        # A source snapshot is authoritative whenever it is available. Even a
+        # syntactically valid unified diff must be reconciled against that exact
+        # source before acceptance; otherwise stale hunk coordinates can escape
+        # this boundary and fail later during sandbox materialization.
         source = _inspection_file_content(inspection or {}, path)
         if source is not None:
             recovered = _recover_modify_patch_from_diff(path, source, patch)
             if recovered:
                 return {**change, "patch": recovered}
+            # Source is available but the proposed hunk cannot be recovered from
+            # one exact, unique anchor. Fail closed instead of trusting coordinates.
+            raise SpecializedAgentError(f"proposal_invalid_patch_hunk:{path}")
 
-        # No exact, unique recovery is possible: fail closed.
-        raise SpecializedAgentError(f"proposal_invalid_patch_hunk:{path}")
+        # Without source evidence we cannot safely validate a modify patch.
+        raise SpecializedAgentError(f"proposal_source_unavailable:{path}")
 
     if not old_headers and not new_headers:
         if patch.strip():
