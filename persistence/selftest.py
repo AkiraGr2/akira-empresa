@@ -24,13 +24,14 @@ from .core import (ConflictError, GRAPH_EDGE_SCHEMA_VERSION, GRAPH_NODE_SCHEMA_V
 from .memory_recall import recall_memories
 from .model_registry import model_registry_snapshot, PRIMARY_CHAT_MODEL, GEMINI_REASONING_MODEL, GEMINI_CHAT_FALLBACK_VARIANT, GROQ_FALLBACK_MODELS, OPENROUTER_MODEL_ROUTE, MISTRAL_MODEL_ROUTE, MEMORY_EMBEDDING_MODEL
 from .capability import (
-from .build_identity import runtime_build_ref
     CapabilityContractError,
     derive_effective_state,
     validate_capability,
     validate_capability_state,
     validate_capability_transition,
 )
+
+from .build_identity import runtime_build_ref
 
 PROBE_KEY = "selftest:restart-probe:v1"
 PROBE_CONTENT = "AKIRA selftest restart probe v1: si puedes leer esto tras un reinicio, la persistencia funciona."
