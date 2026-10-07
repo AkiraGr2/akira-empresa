@@ -95,6 +95,40 @@ class ToolRegistryContractTests(unittest.TestCase):
                 msg=f"faltante branch de dispatcher: {tool_name}",
             )
 
+    def test_individual_tool_auditor_covers_exact_registry_set(self):
+        audit = Path("tool_audit.py").read_text(encoding="utf-8")
+        expected = {
+            "web_search", "github_repo_read",
+            "memory_save", "memory_search",
+            "graph_create_node", "graph_create_edge", "graph_related",
+            "learning_save", "self_model_read", "extract_pdf",
+            "image_generate", "cognitive_cycle",
+            "developer_propose", "python_test", "code_review",
+            "controlled_autonomy_start",
+        }
+        import ast
+        tree = ast.parse(audit)
+        value = None
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == "TOOL_ORDER":
+                        value = [elt.value for elt in node.value.elts]
+        self.assertEqual(set(value or []), expected)
+        self.assertEqual(len(value or []), 16)
+
+    def test_individual_tool_auditor_is_persistent_and_uses_runtime_dispatcher(self):
+        source = Path("nexus.py").read_text(encoding="utf-8")
+        audit = Path("tool_audit.py").read_text(encoding="utf-8")
+        self.assertIn("from tool_audit import TOOL_ORDER, run_tool_audit", source)
+        self.assertIn('target="_blank"', "") if False else None
+        self.assertIn('def _invoke_registered_tool(', source)
+        self.assertIn('run_tool_audit(', source)
+        self.assertIn('service.record_audit(', audit)
+        self.assertIn('service.get_invocation_by_idempotency_key(', audit)
+        self.assertIn('AutonomyService(service)', audit)
+        self.assertIn('F7 E2E verification; no duplicate cognitive cycle', audit)
+
     def test_canonical_tool_registry_capability_exists(self):
         from persistence.capability_catalog import BASE_CAPABILITIES
         matches = [c for c in BASE_CAPABILITIES if c.get("name") == "tool_registry"]
