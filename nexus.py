@@ -3979,9 +3979,45 @@ def _run_reason_stage(message, memories):
     return answer, model_used
 
 def _execute_cognitive_cycle(service, trigger, input_data, actor, owner_scope=None):
+    recovery_context = {}
+    try:
+        return _execute_cognitive_cycle_core(
+            service, trigger, input_data, actor,
+            owner_scope=owner_scope,
+            recovery_context=recovery_context,
+        )
+    except Exception as exc:
+        cycle_id = recovery_context.get("cycle_id")
+        if cycle_id is None:
+            raise
+        failed_cycle = None
+        try:
+            failed_cycle = service.complete_cycle(
+                cycle_id, "failed", actor=actor, owner_scope=owner_scope
+            )
+        except Exception:
+            try:
+                failed_cycle = service.complete_cycle(
+                    cycle_id, "aborted", actor=actor, owner_scope=owner_scope
+                )
+            except Exception:
+                failed_cycle = service.get_cycle(cycle_id, owner_scope=owner_scope)
+        return {
+            "cycle": failed_cycle,
+            "events": recovery_context.get("events", []),
+            "answer": None,
+            "learning_id": None,
+            "error": {"type": type(exc).__name__, "message": str(exc)[:200]},
+        }
+
+def _execute_cognitive_cycle_core(service, trigger, input_data, actor, owner_scope=None, recovery_context=None):
     start_result = service.start_cycle(trigger, input_data, actor=actor, owner_scope=owner_scope)
     cycle_id = start_result["record"]["id"]
+    if isinstance(recovery_context, dict):
+        recovery_context["cycle_id"] = cycle_id
     events = []
+    if isinstance(recovery_context, dict):
+        recovery_context["events"] = events
     stage_failures = []
     def record(stage, data, status="success", error=None):
         r = service.record_stage(cycle_id, stage, data=data, status=status, error=error, actor=actor, owner_scope=owner_scope)

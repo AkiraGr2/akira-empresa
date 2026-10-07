@@ -102,6 +102,26 @@ class CognitiveExecutorTests(unittest.TestCase):
         self.assertEqual(result["events"][-1]["status"], "failure")
         self.assertEqual(result["events"][-1]["error"]["type"], "RuntimeError")
 
+    def test_unexpected_executor_failure_recovers_cycle_from_in_progress(self):
+        service = FakeCognitiveService()
+
+        with patch.object(nexus, "_recall_memories", return_value=[]), \
+             patch.object(nexus, "_run_reason_stage", return_value=("respuesta", "test-model")), \
+             patch.object(nexus, "enforce_akira_identity_global", side_effect=RuntimeError("synthetic executor failure")):
+            result = nexus._execute_cognitive_cycle(
+                service,
+                "test",
+                {"message": "hola"},
+                actor="tester",
+                owner_scope="scope:A",
+            )
+
+        self.assertEqual(service.completed_status, "failed")
+        self.assertEqual(result["cycle"]["status"], "failed")
+        self.assertEqual(result["error"]["type"], "RuntimeError")
+        self.assertEqual(result["events"][-1]["stage"], "decide")
+        self.assertLess(len(result["events"]), 9)
+
 
 if __name__ == "__main__":
     unittest.main()
