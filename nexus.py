@@ -4641,6 +4641,7 @@ def _invoke_registered_tool(service, name, inputs, actor, owner_scope=None, idem
         "idempotency_key": key or None,
         "replayed": bool(already_synced),
         "invocation_id": stored.get("id") if isinstance(stored, dict) else None,
+        "owner_scope": owner_scope,
         "persisted": isinstance(stored, dict),
         "error": error,
     }
