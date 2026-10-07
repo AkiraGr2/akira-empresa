@@ -999,9 +999,9 @@ def run_logic_tests(service, fresh_service_factory=None):
                 "memory_recall",
                 "learning_persistent",
                 "graph_persistent",
+                "knowledge_persistent",
                 "evolution_engine_v1",
                 "repair_engine_v1",
-                "controlled_autonomy_v1",
                 "selftest_capability",
             )
             checks["authoritative_source"] = (
@@ -1091,6 +1091,8 @@ def run_logic_tests(service, fresh_service_factory=None):
                 + source_digest
                 + ":"
                 + snapshot_digest
+                + ":"
+                + build_ref
                 + ":"
                 + str(capability.get("verification_state") or "unknown")
             )
@@ -1219,6 +1221,8 @@ def run_logic_tests(service, fresh_service_factory=None):
             idem = (
                 "selftest:knowledge_persistent:v1:"
                 + source_digest
+                + ":"
+                + build_ref
                 + ":"
                 + str(capability.get("verification_state") or "unknown")
             )
@@ -2116,7 +2120,7 @@ def run_logic_tests(service, fresh_service_factory=None):
                 event,
                 actor="selftest",
                 idempotency_key=(
-                    "selftest:persistent_memory:verification:v1:" + source_digest
+                    "selftest:persistent_memory:verification:v1:" + source_digest + ":" + build_ref
                 ),
             )
         except Exception as exc:
@@ -2394,7 +2398,7 @@ def run_logic_tests(service, fresh_service_factory=None):
             "owner_scope_server_derived", "tampered_rejected", "expired_rejected", "bearer_parsed",
         ))
         source_digest = hashlib.sha256(inspect.getsource(akira_auth).encode("utf-8")).hexdigest()[:16]
-        idem = "selftest:session_auth:v1:" + source_digest + (":configured" if configured else ":missing")
+        idem = "selftest:session_auth:v1:" + source_digest + ":" + build_ref + (":configured" if configured else ":missing")
         evidence = [{
             "type": "selftest",
             "title": "Session auth runtime contract",
@@ -2549,8 +2553,6 @@ def run_logic_tests(service, fresh_service_factory=None):
         ("TEST_REPAIR_ENGINE_V1_CAPABILITY", t_repair_engine_v1_capability),
         ("TEST_EVOLUTION_ENGINE_V1_CAPABILITY", t_evolution_engine_v1_capability),
         ("TEST_SELF_MODEL_PERSISTENT_CAPABILITY", t_self_model_persistent_capability),
-        ("TEST_SELF_KNOWLEDGE_SNAPSHOT", t_self_knowledge_snapshot),
-        ("TEST_SELF_KNOWLEDGE_RUNTIME_CAPABILITY", t_self_knowledge_runtime_capability),
         ("TEST_AGENT_TOOL_REFERENCE_INTEGRITY", t_agent_tool_reference_integrity),
         ("TEST_AGENT_STATE_TRANSITION", t_agent_state_transition),
         ("TEST_LEARNING_STATE_CONTRACT", t_learning_state_contract),
@@ -2561,6 +2563,8 @@ def run_logic_tests(service, fresh_service_factory=None):
         ("TEST_LEARNING_PERSISTENT_CAPABILITY", t_learning_persistent_capability),
         ("TEST_GRAPH_PERSISTENT_CAPABILITY", t_graph_persistent_capability),
         ("TEST_KNOWLEDGE_PERSISTENT_CAPABILITY", t_knowledge_persistent_capability),
+        ("TEST_SELF_KNOWLEDGE_SNAPSHOT", t_self_knowledge_snapshot),
+        ("TEST_SELF_KNOWLEDGE_RUNTIME_CAPABILITY", t_self_knowledge_runtime_capability),
         ("TEST_CAPABILITY_PERSISTENCE", t_capability_persistence),
         ("TEST_CAPABILITY_VERIFICATION_APPEND_ONLY", t_capability_verification_append_only),
     ):

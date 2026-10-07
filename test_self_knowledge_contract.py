@@ -272,6 +272,22 @@ class SelfKnowledgeSnapshotTests(unittest.TestCase):
         self.assertIn('"selftest:self_model_persistent:v1:"', source)
         self.assertIn('str(capability.get("verification_state") or "unknown")', source)
         self.assertIn('"selftest:self_knowledge_runtime:v1:"', source)
+        self.assertIn('"selftest:session_auth:v1:" + source_digest + ":" + build_ref', source)
+        self.assertIn('"selftest:persistent_memory:verification:v1:" + source_digest + ":" + build_ref', source)
+        self.assertIn('"selftest:knowledge_persistent:v1:"', source)
+        self.assertIn('                + build_ref\n                + ":"\n                + str(capability.get("verification_state") or "unknown")', source)
+
+    def test_self_knowledge_revalidation_runs_after_foundational_capabilities(self):
+        source = __import__("pathlib").Path("persistence/selftest.py").read_text(encoding="utf-8")
+        self.assertLess(
+            source.index('(\"TEST_KNOWLEDGE_PERSISTENT_CAPABILITY\", t_knowledge_persistent_capability)'),
+            source.index('(\"TEST_SELF_KNOWLEDGE_SNAPSHOT\", t_self_knowledge_snapshot)'),
+        )
+        self.assertLess(
+            source.index('(\"TEST_SELF_KNOWLEDGE_SNAPSHOT\", t_self_knowledge_snapshot)'),
+            source.index('(\"TEST_SELF_KNOWLEDGE_RUNTIME_CAPABILITY\", t_self_knowledge_runtime_capability)'),
+        )
+        self.assertNotIn('"controlled_autonomy_v1",', source[source.index('required_capabilities ='):source.index('checks["authoritative_source"] =')])
 
     def test_self_model_capability_projection_matches_authoritative_registry(self):
         service = PersistenceService(FakeRepo())
