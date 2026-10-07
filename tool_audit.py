@@ -196,14 +196,15 @@ def _expected_inputs(tool_name: str, repo_name: str, fixture_tag: str) -> dict[s
             "goal": "Auditoría F8 segura y sin escritura externa",
             "repository": repo_name,
             "base_branch": "main",
-            "paths": ["docs/f8_audit_scratch.md"],
+            "paths": ["test_tool_registry_contract.py"],
             "instruction": (
-                "Propón únicamente crear docs/f8_audit_scratch.md como nota documental "
-                "de una sola línea para esta auditoría F8. No modifiques archivos existentes. "
-                "La propuesta debe usar un diff unificado válido. No aplicar ni escribir cambios; "
-                "la ejecución debe detenerse esperando aprobación humana."
+                "Propón únicamente una mejora documental mínima en test_tool_registry_contract.py: "
+                "agregar un comentario de una sola línea que explique que este archivo contiene el "
+                "contrato de pruebas del registro de herramientas. No cambies lógica ni comportamiento, "
+                "no modifiques archivos de producción y no escribas en GitHub. La propuesta debe usar "
+                "un diff unificado válido. La ejecución debe detenerse esperando aprobación humana."
             ),
-            "queries": ["docs/f8_audit_scratch.md"],
+            "queries": ["test_registered_inputs_are_schema_validated_before_dispatch"],
             "tests": [
                 "test_tool_registry_contract.ToolRegistryContractTests.test_registered_inputs_are_schema_validated_before_dispatch",
             ],
