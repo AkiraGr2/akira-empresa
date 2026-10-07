@@ -186,6 +186,44 @@ class SpecializedAgentMissionWiringTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("review_requires_two_dependencies", reason)
 
+    def test_review_dependencies_must_be_developer_then_tester(self):
+        plan = {
+            "steps": [
+                {
+                    "order": 1,
+                    "task": "ejecutar pruebas",
+                    "agent": "tester",
+                    "tool": "python_test",
+                    "tests": ["test_specialized_agents_contract"],
+                    "expected_output": "resultado de pruebas reproducible",
+                    "receives_from": None,
+                },
+                {
+                    "order": 2,
+                    "task": "propuesta",
+                    "agent": "developer",
+                    "tool": "developer_propose",
+                    "repo": "AkiraGr2/akira-empresa",
+                    "paths": ["README.md"],
+                    "expected_output": "propuesta de cambio verificable",
+                    "receives_from": None,
+                },
+                {
+                    "order": 3,
+                    "task": "revisar propuesta y pruebas",
+                    "agent": "reviewer",
+                    "tool": "code_review",
+                    "repo": "AkiraGr2/akira-empresa",
+                    "paths": ["README.md"],
+                    "expected_output": "veredicto de revisión",
+                    "receives_from": [1, 2],
+                },
+            ]
+        }
+        ok, reason = _validate_mission_plan(plan, StubService())
+        self.assertFalse(ok)
+        self.assertIn("review_first_dependency_must_be_developer", reason)
+
 
 if __name__ == "__main__":
     unittest.main()

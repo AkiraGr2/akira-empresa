@@ -84,7 +84,7 @@ AGENT_TASK_STATUSES = ("pending", "running", "completed", "failed", "cancelled")
 
 AGENT_ROLES = (
     "researcher", "memorizer", "graph_builder", "learner",
-    "internal", "developer", "tester", "reviewer", "generic",
+    "internal", "developer", "tester", "reviewer", "autonomy_orchestrator", "generic",
 )
 
 MISSION_SCHEMA_VERSION = "mission.v1"

@@ -54,6 +54,7 @@ from persistence.memory_recall import recall_memories as _recall_memories_impl
 from persistence.model_registry import (PRIMARY_CHAT_MODEL, GEMINI_REASONING_MODEL, GEMINI_CHAT_FALLBACK_VARIANT, GROQ_FALLBACK_MODELS, OPENROUTER_MODEL_ROUTE, MISTRAL_MODEL_ROUTE, MEMORY_EMBEDDING_MODEL)
 from persistence.core import PersistenceError, ValidationError, validate_tool_inputs
 from tool_audit import TOOL_ORDER, run_tool_audit
+from agent_audit import PRODUCTION_AGENT_ORDER, run_agent_audit
 
 VERSION="V7.3"
 MODEL="external-inference-runtime"
@@ -1116,6 +1117,7 @@ def _validate_mission_plan(plan, service):
                     return False, f"step_{i}_review_requires_two_dependencies"
                 if len(receives) != 2:
                     return False, f"step_{i}_review_requires_two_dependencies"
+                normalized_review_deps = []
                 for dep in receives:
                     try:
                         dep = int(dep)
@@ -1125,6 +1127,13 @@ def _validate_mission_plan(plan, service):
                         return False, f"step_{i}_receives_not_previous"
                     if dep not in orders_seen:
                         return False, f"step_{i}_receives_unknown:{dep}"
+                    normalized_review_deps.append(dep)
+                proposal_step = steps_by_order.get(normalized_review_deps[0])
+                test_step = steps_by_order.get(normalized_review_deps[1])
+                if not proposal_step or proposal_step.get("tool") != "developer_propose" or proposal_step.get("agent") != "developer":
+                    return False, f"step_{i}_review_first_dependency_must_be_developer"
+                if not test_step or test_step.get("tool") != "python_test" or test_step.get("agent") != "tester":
+                    return False, f"step_{i}_review_second_dependency_must_be_tester"
             elif isinstance(receives, list):
                 return False, f"step_{i}_receives_list_not_allowed"
             elif receives is not None:
@@ -1778,12 +1787,34 @@ def _run_mission_sync(mission_id, actor, owner_scope=None):
             db_t0 = time.time()
             _set_mission_runtime(mission_id, "creating_task", step=order, agent=agent_name, tool=tool_name)
             try:
+                task_idempotency_key = f"mission:{mission_id}:agent_task:{order}"
                 create_result = service.create_task(
                     agent_name, tool_name, inputs=inputs,
                     model=None, mission_id=mission_id, actor="orchestrator",
-                    owner_scope=owner_scope, owner=actor
+                    owner_scope=owner_scope, owner=actor,
+                    idempotency_key=task_idempotency_key,
                 )
-                task_id = create_result["record"]["id"]
+                existing_task = create_result["record"]
+                if create_result.get("outcome") == "already_synced":
+                    if existing_task.get("status") == "completed":
+                        replayed_outputs = existing_task.get("outputs") or {}
+                        outputs_by_order[order] = replayed_outputs
+                        step_reports.append({
+                            "order": order, "agent": agent_name, "tool": tool_name,
+                            "task_id": existing_task["id"],
+                            "duration_ms": int(existing_task.get("duration_ms") or 0),
+                            "status": "replayed",
+                            "output_keys": list(replayed_outputs.keys()) if isinstance(replayed_outputs, dict) else [],
+                        })
+                        _set_mission_runtime(mission_id, "task_replayed", step=order, task_id=existing_task["id"])
+                        continue
+                    _fail_mission_with_autonomous_learning(
+                        service, mission_id, actor,
+                        {"type": "task_idempotency_conflict", "step": order,
+                         "task_id": existing_task.get("id"), "status": existing_task.get("status")},
+                        owner_scope=owner_scope)
+                    return
+                task_id = existing_task["id"]
                 task_ids.append(task_id)
                 _set_mission_runtime(mission_id, "task_created", step=order, task_id=task_id)
             except Exception as e:
@@ -1811,8 +1842,18 @@ def _run_mission_sync(mission_id, actor, owner_scope=None):
             tool_t0 = time.time()
             outputs, error = None, None
             try:
-                outputs, error = _invoke_tool(service, tool_name, inputs, actor=f"agent:{agent_name}", owner_scope=owner_scope)
+                invocation = _invoke_registered_tool(
+                    service,
+                    tool_name,
+                    inputs,
+                    actor=f"agent:{agent_name}",
+                    owner_scope=owner_scope,
+                    idempotency_key=f"mission:{mission_id}:tool:{order}",
+                )
+                outputs = invocation.get("outputs") if invocation.get("ok") else None
+                error = invocation.get("error")
             except Exception as e:
+                outputs = None
                 error = {"type": type(e).__name__, "message": str(e)[:300]}
             duration_ms = int((time.time() - tool_t0) * 1000)
 
@@ -4435,6 +4476,8 @@ def v8_github_read(request: Request, payload: dict):
 
 _TOOL_AUDIT_RUNS = {}
 _TOOL_AUDIT_RUNS_LOCK = threading.Lock()
+_AGENT_AUDIT_RUNS = {}
+_AGENT_AUDIT_RUNS_LOCK = threading.Lock()
 
 
 def _current_build_ref():
@@ -4607,6 +4650,165 @@ def v8_tools_audit_get(request: Request, run_id: str):
     }
 
 
+def _run_agent_audit_background(service, actor, owner_scope, run_id):
+    try:
+        report = run_agent_audit(
+            service,
+            _invoke_registered_tool,
+            actor=actor,
+            owner_scope=owner_scope,
+            run_id=run_id,
+        )
+        with _AGENT_AUDIT_RUNS_LOCK:
+            _AGENT_AUDIT_RUNS[run_id] = {
+                "status": "completed",
+                "finished_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "report": report,
+            }
+        service.record_audit(
+            "agent_audit",
+            "agent_audit.completed",
+            "agent_audit_runs",
+            run_id,
+            "success" if report.get("ok") else "failure",
+            {
+                "run_id": run_id,
+                "requested_by": actor,
+                "owner_scope": owner_scope,
+                "build_ref": _current_build_ref(),
+                "summary": report.get("summary"),
+                "cleanup_ok": bool((report.get("cleanup") or {}).get("ok")),
+            },
+        )
+    except Exception as exc:
+        error = {"type": type(exc).__name__, "message": str(exc)[:500]}
+        with _AGENT_AUDIT_RUNS_LOCK:
+            _AGENT_AUDIT_RUNS[run_id] = {
+                "status": "failed",
+                "finished_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "error": error,
+            }
+        try:
+            service.record_audit(
+                "agent_audit",
+                "agent_audit.completed",
+                "agent_audit_runs",
+                run_id,
+                "failure",
+                {
+                    "run_id": run_id,
+                    "requested_by": actor,
+                    "owner_scope": owner_scope,
+                    "build_ref": _current_build_ref(),
+                    "error": error,
+                },
+            )
+        except Exception:
+            pass
+
+
+@app.post("/api/v8/agents/audit")
+def v8_agents_audit_start(request: Request):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None:
+        return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    run_id = "agent_audit_" + uuid.uuid4().hex[:16]
+    started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    with _AGENT_AUDIT_RUNS_LOCK:
+        _AGENT_AUDIT_RUNS[run_id] = {
+            "status": "running",
+            "started_at": started_at,
+            "requested_by": s["email"],
+            "owner_scope": s["owner_scope"],
+            "build_ref": _current_build_ref(),
+            "agent_order": PRODUCTION_AGENT_ORDER,
+        }
+    service.record_audit(
+        "agent_audit",
+        "agent_audit.started",
+        "agent_audit_runs",
+        run_id,
+        "success",
+        {
+            "run_id": run_id,
+            "requested_by": s["email"],
+            "owner_scope": s["owner_scope"],
+            "build_ref": _current_build_ref(),
+            "agent_order": PRODUCTION_AGENT_ORDER,
+        },
+    )
+    threading.Thread(
+        target=_run_agent_audit_background,
+        args=(service, s["email"], s["owner_scope"], run_id),
+        daemon=True,
+        name="akira-agent-audit",
+    ).start()
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "status": "running",
+        "agent_count": len(PRODUCTION_AGENT_ORDER),
+        "build_ref": _current_build_ref(),
+    }
+
+
+@app.get("/api/v8/agents/audit/{run_id}")
+def v8_agents_audit_get(request: Request, run_id: str):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None:
+        return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+
+    with _AGENT_AUDIT_RUNS_LOCK:
+        current = _AGENT_AUDIT_RUNS.get(run_id)
+    if current is not None:
+        if current.get("owner_scope") and current.get("owner_scope") != s["owner_scope"]:
+            return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+        return {"ok": True, "run_id": run_id, **current}
+
+    records = service.recent_audit(actor="agent_audit", limit=500)
+    matched = [
+        item for item in records
+        if isinstance(item.get("detail"), dict)
+        and item["detail"].get("run_id") == run_id
+    ]
+    if not matched:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    started = next((x for x in reversed(matched) if x.get("action") == "agent_audit.started"), None)
+    completed = next((x for x in matched if x.get("action") == "agent_audit.completed"), None)
+    cases = [x for x in matched if x.get("action") == "agent_audit.case"]
+    if started and started.get("detail", {}).get("owner_scope") != s["owner_scope"]:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    reports = [
+        (x.get("detail") or {}).get("report")
+        for x in reversed(cases)
+        if isinstance((x.get("detail") or {}).get("report"), dict)
+    ]
+    summary = {}
+    for report in reports:
+        verdict = report.get("verdict", "FAILED")
+        summary[verdict] = summary.get(verdict, 0) + 1
+    ok = bool(completed and completed.get("status") == "success")
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "status": "completed" if completed else "running",
+        "report": {
+            "run_id": run_id,
+            "agent_count": len(PRODUCTION_AGENT_ORDER),
+            "case_count": len(reports),
+            "summary": summary,
+            "ok": ok and len(reports) == 15,
+            "reports": reports,
+        },
+    }
+
+
 def _invoke_registered_tool(service, name, inputs, actor, owner_scope=None, idempotency_key=""):
     tool = service.get_tool_by_name(name)
     if tool is None:
@@ -4667,6 +4869,7 @@ def _invoke_registered_tool(service, name, inputs, actor, owner_scope=None, idem
     status = "success" if error is None else "failure"
     outputs = outputs or {}
     persisted = None
+    persistence_error = None
     try:
         persisted = service.log_invocation(
             name,
@@ -4680,11 +4883,16 @@ def _invoke_registered_tool(service, name, inputs, actor, owner_scope=None, idem
             owner_scope=owner_scope,
         )
     except Exception as exc:
+        persistence_error = {
+            "type": type(exc).__name__,
+            "message": "tool invocation persistence failed",
+        }
         print(f"[tool] log_invocation fallo: {type(exc).__name__}: {str(exc)[:300]}", flush=True)
     stored = (persisted or {}).get("record") if isinstance(persisted, dict) else None
     already_synced = (persisted or {}).get("outcome") == "already_synced" if isinstance(persisted, dict) else False
+    effective_error = error if error is not None else persistence_error
     return {
-        "ok": error is None,
+        "ok": effective_error is None and isinstance(stored, dict),
         "tool_name": name,
         "outputs": outputs,
         "duration_ms": duration_ms,
@@ -4693,7 +4901,7 @@ def _invoke_registered_tool(service, name, inputs, actor, owner_scope=None, idem
         "invocation_id": stored.get("id") if isinstance(stored, dict) else None,
         "owner_scope": owner_scope,
         "persisted": isinstance(stored, dict),
-        "error": error,
+        "error": effective_error,
     }
 
 
@@ -5034,6 +5242,15 @@ def v8_agents_run_task(request: Request, name: str, payload: dict):
     inputs = payload.get("inputs") or {}
     if not tool_name: return JSONResponse({"ok": False, "reason": "tool_name_required"}, status_code=400)
     if not isinstance(inputs, dict): return JSONResponse({"ok": False, "reason": "inputs_must_be_object"}, status_code=400)
+
+    raw_idempotency_key = payload.get("idempotency_key")
+    if raw_idempotency_key is None:
+        idempotency_key = f"agent-task:{s['owner_scope']}:{uuid.uuid4().hex}"
+    elif not isinstance(raw_idempotency_key, str) or not 0 < len(raw_idempotency_key.strip()) <= 200:
+        return JSONResponse({"ok": False, "reason": "invalid_idempotency_key"}, status_code=400)
+    else:
+        idempotency_key = raw_idempotency_key.strip()
+
     model = payload.get("model")
     model = str(model)[:64] if isinstance(model, str) and model.strip() else None
     mission_id = payload.get("mission_id")
@@ -5048,9 +5265,12 @@ def v8_agents_run_task(request: Request, name: str, payload: dict):
                              "allowed_tools": allowed}, status_code=403)
     from persistence.core import NotFoundError, PersistenceError, ValidationError
     try:
-        create_result = service.create_task(name, tool_name, inputs=inputs,
-                                            model=model, mission_id=mission_id,
-                                            actor=s["email"], owner_scope=s["owner_scope"], owner=s["email"])
+        create_result = service.create_task(
+            name, tool_name, inputs=inputs,
+            model=model, mission_id=mission_id,
+            actor=s["email"], owner_scope=s["owner_scope"], owner=s["email"],
+            idempotency_key=idempotency_key,
+        )
     except NotFoundError as e:
         return JSONResponse({"ok": False, "reason": "not_found", "detail": str(e)[:200]}, status_code=404)
     except ValidationError as e:
@@ -5060,45 +5280,101 @@ def v8_agents_run_task(request: Request, name: str, payload: dict):
         return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
-    task_id = create_result["record"]["id"]
+
+    task = create_result["record"]
+    if create_result.get("outcome") == "already_synced":
+        task_status = task.get("status")
+        if task_status == "completed":
+            return {
+                "ok": True,
+                "replayed": True,
+                "agent_name": name,
+                "task_id": task["id"],
+                "tool_name": task.get("tool_name"),
+                "model": task.get("model"),
+                "mission_id": task.get("mission_id"),
+                "outputs": task.get("outputs") or {},
+                "duration_ms": int(task.get("duration_ms") or 0),
+                "idempotency_key": idempotency_key,
+                "task": task,
+            }
+        if task_status in {"failed", "cancelled"}:
+            return JSONResponse({
+                "ok": False, "replayed": True, "reason": "previous_task_failed",
+                "task": task, "idempotency_key": idempotency_key,
+            }, status_code=500)
+        return JSONResponse({
+            "ok": False, "reason": "task_already_active",
+            "task": task, "idempotency_key": idempotency_key,
+        }, status_code=409)
+
+    task_id = task["id"]
     try:
         service.start_task(task_id, actor=s["email"], owner_scope=s["owner_scope"])
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "start_failed", "detail": str(e)[:200]}, status_code=500)
+
     t0 = time.time()
-    outputs, error = None, None
-    try:
-        outputs, error = _invoke_tool(service, tool_name, inputs, actor=f"agent:{name}", owner_scope=s["owner_scope"])
-    except Exception as e:
-        error = {"type": type(e).__name__, "message": str(e)[:200]}
+    invocation = _invoke_registered_tool(
+        service,
+        tool_name,
+        inputs,
+        actor=f"agent:{name}",
+        owner_scope=s["owner_scope"],
+        idempotency_key=f"{idempotency_key}:invoke",
+    )
+    outputs = invocation.get("outputs") or {}
+    error = invocation.get("error")
     duration_ms = int((time.time() - t0) * 1000)
     memory_used = None
-    if error is None and tool_name == "memory_search" and isinstance(outputs, dict):
-        try:
-            results = outputs.get("results") or []
-            memory_used = [r.get("id") for r in results if isinstance(r, dict) and r.get("id")]
-        except Exception:
-            memory_used = None
+    if error is None and tool_name == "memory_search":
+        results = outputs.get("results") if isinstance(outputs, dict) else []
+        memory_used = [r.get("id") for r in results if isinstance(r, dict) and r.get("id")]
+
     if error is None:
         try:
-            service.complete_task(task_id, outputs=outputs or {}, duration_ms=duration_ms,
-                                  memory_used=memory_used, actor=s["email"], owner_scope=s["owner_scope"])
+            completed = service.complete_task(
+                task_id, outputs=outputs, duration_ms=duration_ms,
+                memory_used=memory_used, actor=s["email"], owner_scope=s["owner_scope"],
+            )
         except Exception as e:
-            print(f"[agent] complete_task fallo: {e}")
-        return {"ok": True, "agent_name": name, "task_id": task_id, "tool_name": tool_name,
-                "model": model, "mission_id": mission_id,
-                "outputs": outputs or {}, "memory_used": memory_used or [],
-                "duration_ms": duration_ms}
-    else:
-        try:
-            service.fail_task(task_id, error, duration_ms=duration_ms,
-                              memory_used=memory_used, actor=s["email"], owner_scope=s["owner_scope"])
-        except Exception as e:
-            print(f"[agent] fail_task fallo: {e}")
-        return JSONResponse({"ok": False, "agent_name": name, "task_id": task_id,
-                             "tool_name": tool_name, "model": model, "mission_id": mission_id,
-                             "error": error, "memory_used": memory_used or [],
-                             "duration_ms": duration_ms}, status_code=500)
+            try:
+                service.fail_task(
+                    task_id,
+                    {"type": "task_completion_persist_failed", "message": str(e)[:200]},
+                    duration_ms=duration_ms, memory_used=memory_used,
+                    actor=s["email"], owner_scope=s["owner_scope"],
+                )
+            except Exception:
+                pass
+            return JSONResponse({
+                "ok": False, "reason": "task_completion_unconfirmed",
+                "task_id": task_id, "idempotency_key": idempotency_key,
+                "persistence_unconfirmed": True,
+            }, status_code=503)
+        return {
+            "ok": True, "replayed": False,
+            "agent_name": name, "task_id": task_id, "tool_name": tool_name,
+            "model": model, "mission_id": mission_id,
+            "outputs": completed.get("outputs") if isinstance(completed, dict) else outputs,
+            "memory_used": memory_used or [], "duration_ms": duration_ms,
+            "idempotency_key": idempotency_key, "invocation_id": invocation.get("invocation_id"),
+        }
+
+    try:
+        service.fail_task(
+            task_id, error, duration_ms=duration_ms,
+            memory_used=memory_used, actor=s["email"], owner_scope=s["owner_scope"],
+        )
+    except Exception:
+        pass
+    return JSONResponse({
+        "ok": False, "replayed": False,
+        "agent_name": name, "task_id": task_id, "tool_name": tool_name,
+        "model": model, "mission_id": mission_id, "error": error,
+        "memory_used": memory_used or [], "duration_ms": duration_ms,
+        "idempotency_key": idempotency_key, "invocation_id": invocation.get("invocation_id"),
+    }, status_code=500)
 
 @app.get("/api/v8/graph/overview")
 def v8_graph_overview(request: Request, limit_nodes: int = 500, limit_edges: int = 1000):
