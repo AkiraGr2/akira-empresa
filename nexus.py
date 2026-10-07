@@ -2833,7 +2833,7 @@ def v8_learning_experience(request: Request, payload: dict):
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     if not isinstance(payload, dict): return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
-    from persistence.core import ValidationError, validate_tool_inputs, PersistenceError
+    from persistence.core import ValidationError, PersistenceError
 
     mission_id = str(payload.get("mission_id") or "").strip()[:128]
     task = str(payload.get("task") or payload.get("objective") or "").strip()[:1000]
@@ -4291,6 +4291,10 @@ def _invoke_tool(service, tool_name, inputs, actor, owner_scope=None):
         return None, {"type": "ToolNotFoundError", "message": f"tool no registrada: {tool_name}"}
     if tool.get("status") != "available":
         return None, {"type": "ToolUnavailableError", "message": f"tool no disponible: {tool_name}"}
+    try:
+        inputs = validate_tool_inputs(tool, inputs)
+    except ValidationError as e:
+        return None, {"type": "ToolInputValidationError", "message": str(e)[:300]}
     permissions = {str(p).strip().lower() for p in (tool.get("permissions") or [])}
     if "owner" in permissions and owner_scope is None:
         return None, {"type": "OwnerRequiredError", "message": f"la tool requiere owner_scope: {tool_name}"}
@@ -4510,25 +4514,67 @@ def _invoke_tool(service, tool_name, inputs, actor, owner_scope=None):
 @app.post("/api/v8/tools/{name}/invoke")
 def v8_tools_invoke(request: Request, name: str, payload: dict):
     s = get_session(request)
-    if not s: return JSONResponse({"authenticated": False}, status_code=401)
+    if not s:
+        return JSONResponse({"authenticated": False}, status_code=401)
     service = _persistence_service()
-    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     tool = service.get_tool_by_name(name)
-    if tool is None: return JSONResponse({"ok": False, "reason": "tool_not_found"}, status_code=404)
+    if tool is None:
+        return JSONResponse({"ok": False, "reason": "tool_not_found"}, status_code=404)
     if tool.get("status") != "available":
         return JSONResponse({"ok": False, "reason": f"tool_status_{tool.get('status')}"}, status_code=403)
     perms = tool.get("permissions") or []
     if "owner" in perms and not s.get("is_owner"):
         return JSONResponse({"ok": False, "reason": "owner_required"}, status_code=403)
-    inputs = (payload.get("inputs") if isinstance(payload, dict) else None) or {}
+    if not isinstance(payload, dict):
+        return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
+
+    raw_idempotency_key = payload.get("idempotency_key")
+    idempotency_key = str(raw_idempotency_key).strip() if raw_idempotency_key is not None else ""
+    if idempotency_key and len(idempotency_key) > 200:
+        return JSONResponse({"ok": False, "reason": "idempotency_key_too_long"}, status_code=400)
+
+    owner_scope = s.get("owner_scope") if s.get("is_owner") else None
+    inputs = payload.get("inputs") or {}
     if not isinstance(inputs, dict):
         return JSONResponse({"ok": False, "reason": "inputs_must_be_object"}, status_code=400)
+
+    if idempotency_key:
+        existing = service.get_invocation_by_idempotency_key(
+            name, s["email"], owner_scope, idempotency_key
+        )
+        if existing is not None:
+            replay_status = existing.get("status")
+            replay_body = {
+                "tool_name": name,
+                "outputs": existing.get("outputs") or {},
+                "duration_ms": int(existing.get("duration_ms") or 0),
+                "idempotency_key": idempotency_key,
+                "replayed": True,
+                "invocation_id": existing.get("id"),
+            }
+            if replay_status == "success":
+                return {"ok": True, **replay_body}
+            return JSONResponse({
+                "ok": False,
+                "reason": "invocation_failed",
+                "error": existing.get("error") or {
+                    "type": "PreviousInvocationFailed",
+                    "message": "invocacion previa fallida",
+                },
+                **{k: v for k, v in replay_body.items() if k != "outputs"},
+            }, status_code=500)
+
     t0 = time.time()
     outputs, error = None, None
     try:
         outputs, error = _invoke_tool(
-            service, name, inputs, actor=s["email"],
-            owner_scope=s["owner_scope"] if s.get("is_owner") else None,
+            service,
+            name,
+            inputs,
+            actor=s["email"],
+            owner_scope=owner_scope,
         )
     except Exception as e:
         error = {"type": type(e).__name__, "message": str(e)[:200]}
@@ -4536,13 +4582,39 @@ def v8_tools_invoke(request: Request, name: str, payload: dict):
     status = "success" if error is None else "failure"
     outputs = outputs or {}
     try:
-        service.log_invocation(name, inputs, outputs, status, s["email"], duration_ms, error=error)
+        service.log_invocation(
+            name,
+            inputs,
+            outputs,
+            status,
+            s["email"],
+            duration_ms,
+            error=error,
+            idempotency_key=idempotency_key or None,
+            owner_scope=owner_scope,
+        )
     except Exception as e:
         print(f"[tool] log_invocation fallo: {e}")
+
     if error is not None:
-        return JSONResponse({"ok": False, "reason": "invocation_failed", "error": error,
-                             "duration_ms": duration_ms}, status_code=500)
-    return {"ok": True, "tool_name": name, "outputs": outputs, "duration_ms": duration_ms}
+        return JSONResponse({
+            "ok": False,
+            "reason": "invocation_failed",
+            "error": error,
+            "duration_ms": duration_ms,
+            "idempotency_key": idempotency_key or None,
+            "replayed": False,
+        }, status_code=500)
+
+    return {
+        "ok": True,
+        "tool_name": name,
+        "outputs": outputs,
+        "duration_ms": duration_ms,
+        "idempotency_key": idempotency_key or None,
+        "replayed": False,
+    }
+
 
 @app.get("/api/v8/agents")
 def v8_agents_list(request: Request, role: str = None, status: str = None):
