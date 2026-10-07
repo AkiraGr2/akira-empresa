@@ -97,7 +97,7 @@ def boot(backend_factory=None, attempts=3, wait_seconds=(5, 10), sleep=time.slee
             service = PersistenceService(repo)
             service.health()
             _seed_capabilities(service)
-            build_ref = _runtime_build_ref()
+            build_ref = runtime_build_ref()
             try:
                 build_event = service.handle_runtime_build_change(build_ref)
                 print(
