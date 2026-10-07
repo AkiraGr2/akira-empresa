@@ -3639,7 +3639,18 @@ class PersistenceService:
         self._validate_mission_transition(current.get("status"), new_status)
         changes = {"status": new_status}
         if new_status == "running" and current.get("status") == "waiting_approval":
-            changes["authorized_by"] = owner or actor
+            authorized_by = owner or actor
+            authorized_at = _now_iso()
+            changes["authorized_by"] = authorized_by
+            prior_result = current.get("result")
+            approval_result = dict(prior_result) if isinstance(prior_result, dict) else {}
+            approval_result["approval"] = {
+                "authorized_by": authorized_by,
+                "authorized_at": authorized_at,
+                "from_status": "waiting_approval",
+                "to_status": "running",
+            }
+            changes["result"] = approval_result
         if new_status == "running" and not current.get("started_at"):
             changes["started_at"] = _now_iso()
         if new_status in ("completed", "failed", "cancelled") and not current.get("completed_at"):
@@ -3692,6 +3703,10 @@ class PersistenceService:
         if result is not None:
             if not isinstance(result, dict):
                 raise ValidationError("result debe ser un objeto (dict)")
+            prior_result = current.get("result")
+            if isinstance(prior_result, dict) and isinstance(prior_result.get("approval"), dict):
+                result = dict(result)
+                result["approval"] = dict(prior_result["approval"])
             changes["result"] = result
         if learning_refs is not None:
             if not isinstance(learning_refs, list) or not all(isinstance(x, str) for x in learning_refs):
