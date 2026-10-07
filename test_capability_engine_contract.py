@@ -245,7 +245,7 @@ class CapabilityEngineContractTests(unittest.TestCase):
             if version == "051_cognitive_cycle_persistent_capability"
         )
         statements = [stmt.strip() for stmt in sql.split(";") if stmt.strip()]
-        self.assertEqual(len(statements), 2)
+        self.assertEqual(len(statements), 1)
         self.assertIn("INSERT INTO public.capabilities", statements[0])
         self.assertIn("ON CONFLICT (name) DO UPDATE SET", statements[0])
         self.assertIn("updated_at = now()", statements[0])
