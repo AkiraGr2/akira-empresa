@@ -65,6 +65,35 @@ class AgentContractTests(unittest.TestCase):
         )
         self.assertFalse(ok)
 
+    def test_shared_capabilities_are_verified_for_every_allowed_agent(self):
+        github_output = {
+            "result": {
+                "ok": True,
+                "files": [{"path": "test_agent_contract.py"}],
+                "root": [],
+                "head_commit_sha": "a" * 40,
+            }
+        }
+        for agent_name in ("researcher", "developer", "tester", "reviewer"):
+            self.assertTrue(
+                validate_agent_result(agent_name, "github_repo_read", github_output)[0],
+                agent_name,
+            )
+
+        python_output = {"status": "passed", "tests": [{"name": "example", "status": "passed"}]}
+        for agent_name in ("tester", "reviewer"):
+            self.assertTrue(
+                validate_agent_result(agent_name, "python_test", python_output)[0],
+                agent_name,
+            )
+
+        memory_output = {"results": [{"id": "mem_1", "content": "audit"}], "found": 1}
+        for agent_name in ("researcher", "memorizer"):
+            self.assertTrue(
+                validate_agent_result(agent_name, "memory_search", memory_output)[0],
+                agent_name,
+            )
+
     def test_semantic_contract_rejects_apparent_success(self):
         ok, _ = validate_agent_result(
             "developer",
