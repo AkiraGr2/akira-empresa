@@ -173,7 +173,9 @@ def _expected_inputs(tool_name: str, repo_name: str, fixture_tag: str) -> dict[s
         }
     if tool_name == "python_test":
         return {
-            "tests": ["test_tool_registry_contract"],
+            "tests": [
+                "ToolRegistryContractTests.test_registered_inputs_are_schema_validated_before_dispatch",
+            ],
             "compile_paths": [],
         }
     if tool_name == "code_review":
@@ -202,7 +204,9 @@ def _expected_inputs(tool_name: str, repo_name: str, fixture_tag: str) -> dict[s
                 "la ejecución debe detenerse esperando aprobación humana."
             ),
             "queries": ["docs/f8_audit_scratch.md"],
-            "tests": ["test_tool_registry_contract"],
+            "tests": [
+                "ToolRegistryContractTests.test_registered_inputs_are_schema_validated_before_dispatch",
+            ],
             "idempotency_key": "",
         }
     return {}
