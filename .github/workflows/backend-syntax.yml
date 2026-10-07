@@ -135,6 +135,10 @@ jobs:
         run: |
           python -m unittest test_agent_contract -v
 
+      - name: Test agent audit contract
+        run: |
+          python -m unittest test_agent_audit_contract -v
+
       - name: Test specialized agent contract
         run: |
           python -m unittest test_specialized_agents_contract -v
