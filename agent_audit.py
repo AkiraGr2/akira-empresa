@@ -20,6 +20,12 @@ from agent_contracts import (
 from persistence.autonomy import AutonomyService
 from persistence.core import ValidationError, validate_tool_inputs
 
+EXPECTED_AGENT_CAPABILITY_CASES = {
+    (agent_name, tool_name)
+    for agent_name in PRODUCTION_AGENT_ORDER
+    for tool_name in AGENT_CONTRACTS[agent_name]["allowed_tools"]
+}
+
 
 def _matches_type(value: Any, expected: str) -> bool:
     expected = str(expected or "").strip().lower()
@@ -571,7 +577,7 @@ def run_agent_audit(
         verdict = report.get("verdict", "FAILED")
         counts[verdict] = counts.get(verdict, 0) + 1
     final_ok = (
-        len(reports) == 20
+        len(reports) == len(EXPECTED_AGENT_CAPABILITY_CASES)
         and not missing
         and not unexpected
         and not unavailable_tools
