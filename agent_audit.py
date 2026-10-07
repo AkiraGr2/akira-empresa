@@ -180,8 +180,8 @@ def _audit_task(
 
     report["verdict"] = "VERIFIED" if all(report["checks"].values()) else "FAILED"
 
-    if agent_name == "memorizer" and tool_name == "memory_save" and outputs.get("id"):
-        fixture["memory_id"] = outputs.get("id")
+    if agent_name in {"memorizer", "learner"} and tool_name == "memory_save" and outputs.get("id"):
+        fixture.setdefault("memory_ids", []).append(outputs.get("id"))
     if agent_name == "graph_builder" and tool_name == "graph_create_node" and outputs.get("id"):
         fixture.setdefault("graph_node_ids", []).append(outputs.get("id"))
     if agent_name == "graph_builder" and tool_name == "graph_create_edge" and outputs.get("id"):
@@ -199,8 +199,8 @@ def _cleanup_fixture(service, fixture: dict[str, Any], actor: str, owner_scope: 
     cleanup = {"ok": True, "actions": []}
 
     node_ids = list(dict.fromkeys(fixture.get("graph_node_ids") or []))
-    memory_id = fixture.get("memory_id")
-    if memory_id:
+    memory_ids = list(dict.fromkeys(fixture.get("memory_ids") or []))
+    for memory_id in memory_ids:
         memory_nodes = service.repo.search(
             "graph_nodes",
             {"label": f"memory:{memory_id}"},
@@ -262,7 +262,6 @@ def _cleanup_fixture(service, fixture: dict[str, Any], actor: str, owner_scope: 
 
     for entity, record_id in (
         ("learning_events", fixture.get("learning_id")),
-        ("memories", fixture.get("memory_id")),
     ):
         if not record_id:
             continue
@@ -281,6 +280,25 @@ def _cleanup_fixture(service, fixture: dict[str, Any], actor: str, owner_scope: 
             cleanup["actions"].append({
                 "entity": entity,
                 "id": record_id,
+                "error_type": type(exc).__name__,
+            })
+
+    for memory_id in memory_ids:
+        try:
+            deleted = service.repo.delete("memories", memory_id)
+            absent = service.repo.get("memories", memory_id) is None
+            cleanup["actions"].append({
+                "entity": "memories",
+                "id": memory_id,
+                "deleted": bool(deleted),
+                "confirmed_absent": absent,
+            })
+            cleanup["ok"] &= absent
+        except Exception as exc:
+            cleanup["ok"] = False
+            cleanup["actions"].append({
+                "entity": "memories",
+                "id": memory_id,
                 "error_type": type(exc).__name__,
             })
 
@@ -330,7 +348,7 @@ def run_agent_audit(
     repo_name: str = "AkiraGr2/akira-empresa",
 ) -> dict[str, Any]:
     """Run the complete F9 audit over every active production agent."""
-    fixture: dict[str, Any] = {}
+    fixture: dict[str, Any] = {"memory_ids": []}
     developer_output: dict[str, Any] = {}
     tester_output: dict[str, Any] = {}
     reports: list[dict[str, Any]] = []
@@ -356,12 +374,19 @@ def run_agent_audit(
     }
 
     missing = [name for name in PRODUCTION_AGENT_ORDER if name not in agents]
-    if missing:
+    unexpected = sorted(name for name in agents if name not in PRODUCTION_AGENT_ORDER)
+    if missing or unexpected:
         report = {
             "agent": "_registry",
             "verdict": "FAILED",
-            "checks": {"all_production_agents_registered": False},
-            "evidence": {"missing_agents": missing},
+            "checks": {
+                "all_production_agents_registered": not missing,
+                "no_uncontracted_active_agents": not unexpected,
+            },
+            "evidence": {
+                "missing_agents": missing,
+                "unexpected_active_agents": unexpected,
+            },
         }
         service.record_audit(
             "agent_audit",
