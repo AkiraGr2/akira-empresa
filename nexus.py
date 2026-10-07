@@ -1857,6 +1857,33 @@ def _run_mission_sync(mission_id, actor, owner_scope=None):
                 error = {"type": type(e).__name__, "message": str(e)[:300]}
             duration_ms = int((time.time() - tool_t0) * 1000)
 
+            # Cancellation can race with a long-running tool. The cancel route
+            # already closes the mission/tasks; do not try to complete a task
+            # that has just been cancelled.
+            if _is_mission_cancelled(mission_id):
+                _set_mission_runtime(
+                    mission_id,
+                    "step_cancelled_after_tool",
+                    step=order,
+                    task_id=task_id,
+                    duration_ms=duration_ms,
+                )
+                return
+            try:
+                latest_mission = service.get_mission(mission_id, owner=actor)
+            except Exception:
+                latest_mission = None
+            if latest_mission is None or latest_mission.get("status") == "cancelled":
+                _set_mission_runtime(
+                    mission_id,
+                    "step_cancelled_after_tool",
+                    step=order,
+                    task_id=task_id,
+                    duration_ms=duration_ms,
+                    reason="mission_status_cancelled",
+                )
+                return
+
             total_db_ms += db_ms
             total_tool_ms += duration_ms
 
@@ -1941,6 +1968,18 @@ def _run_mission_sync(mission_id, actor, owner_scope=None):
             if tool_name == "graph_create_node" and isinstance(outputs, dict) and outputs.get("id"):
                 step_report["node_id"] = str(outputs["id"])
             step_reports.append(step_report)
+
+        try:
+            final_mission = service.get_mission(mission_id, owner=actor)
+        except Exception:
+            final_mission = None
+        if final_mission is None or final_mission.get("status") == "cancelled" or _is_mission_cancelled(mission_id):
+            _set_mission_runtime(
+                mission_id,
+                "orchestrator_stopped_before_completion",
+                reason="mission_cancelled",
+            )
+            return
 
         total_elapsed_ms = int((time.time() - mission_start) * 1000)
         overhead_ms = total_elapsed_ms - total_db_ms - total_tool_ms
