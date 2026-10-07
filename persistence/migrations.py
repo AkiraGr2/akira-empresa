@@ -1847,6 +1847,7 @@ MIGRATIONS = [
             schema_version = EXCLUDED.schema_version,
             updated_at = now()
         """
+    ),
     (
         "052_cognitive_cycle_persistent_capability_contract_sync",
         """
@@ -1867,7 +1868,5 @@ MIGRATIONS = [
             ELSE 0
         END
         """
-    ),
-
     )
 ]
