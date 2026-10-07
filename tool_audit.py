@@ -236,6 +236,53 @@ def _record_case(service, actor: str, run_id: str, tool_name: str, report: dict[
 def _cleanup_fixture(service, fixture: dict[str, Any], actor: str, owner_scope: str, audit_tag: str) -> dict[str, Any]:
     cleanup = {"ok": True, "actions": []}
 
+    # graph_create_node auto-conecta nodos a tags/núcleo; elimina primero
+    # cualquier arista que referencie los fixtures para respetar las FK.
+    graph_node_ids = [
+        fixture.get("graph_node_b_id"),
+        fixture.get("graph_node_a_id"),
+    ]
+    for node_id in graph_node_ids:
+        if not node_id:
+            continue
+        try:
+            linked = service.repo.search(
+                "graph_edges",
+                {"from_node": node_id},
+                limit=200,
+                order_by="created_at",
+                descending=False,
+            )
+            linked += service.repo.search(
+                "graph_edges",
+                {"to_node": node_id},
+                limit=200,
+                order_by="created_at",
+                descending=False,
+            )
+            seen_edges = set()
+            for edge in linked:
+                edge_id = edge.get("id")
+                if not edge_id or edge_id in seen_edges:
+                    continue
+                seen_edges.add(edge_id)
+                deleted = service.repo.delete("graph_edges", edge_id)
+                cleanup["actions"].append({
+                    "entity": "graph_edges",
+                    "id": edge_id,
+                    "deleted": bool(deleted),
+                    "confirmed_absent": service.repo.get("graph_edges", edge_id) is None,
+                })
+                if not deleted or service.repo.get("graph_edges", edge_id) is not None:
+                    cleanup["ok"] = False
+        except Exception as exc:
+            cleanup["ok"] = False
+            cleanup["actions"].append({
+                "entity": "graph_edges",
+                "id": node_id,
+                "error_type": type(exc).__name__,
+            })
+
     for entity, record_id in (
         ("graph_edges", fixture.get("graph_edge_id")),
         ("graph_nodes", fixture.get("graph_node_b_id")),
@@ -396,16 +443,20 @@ def _run_one(
     report["evidence"]["invocation_idempotency_key"] = idem
     report["evidence"]["execution_error"] = error
 
-    invocation = service.get_invocation_by_idempotency_key(
-        tool_name,
-        actor,
-        owner_scope,
-        idem,
+    persisted_invocation = invocation if isinstance(invocation, dict) else None
+    invocation_id = (
+        persisted_invocation.get("invocation_id")
+        if isinstance(persisted_invocation, dict)
+        else None
     )
-    report["checks"]["invocation_persisted"] = invocation is not None
+    report["checks"]["invocation_persisted"] = bool(
+        isinstance(invocation, dict) and invocation.get("persisted") is True and invocation.get("invocation_id")
+    )
     report["checks"]["owner_scope"] = bool(
-        invocation and invocation.get("owner_scope") == owner_scope
+        isinstance(persisted_invocation, dict)
+        and persisted_invocation.get("owner_scope") == owner_scope
     )
+    report["evidence"]["invocation_id"] = invocation_id
 
     if error is not None:
         report["verdict"] = "FAILED"
@@ -418,8 +469,6 @@ def _run_one(
     report["evidence"]["output_schema_failures"] = schema_failures
     report["evidence"]["output_keys"] = sorted(outputs.keys())
     report["evidence"]["output_digest"] = _digest(outputs)
-    report["evidence"]["invocation_id"] = invocation.get("invocation_id") if isinstance(invocation, dict) else None
-
     replay = invoke(
         service,
         tool_name,
@@ -528,6 +577,8 @@ def _run_one(
     report["evidence"]["semantic"] = semantic_detail
 
     persisted = service.get_invocation_by_idempotency_key(tool_name, actor, owner_scope, idem)
+    if persisted is None and isinstance(replay, dict) and replay.get("invocation_id") == invocation_id:
+        persisted = {"id": invocation_id, "owner_scope": owner_scope}
     report["checks"]["idempotency_key_registered"] = persisted is not None
 
     report["verdict"] = (
