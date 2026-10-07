@@ -221,6 +221,16 @@ class SpecializedAgentsContractTests(unittest.TestCase):
             applied,
         )
 
+    def test_developer_canonicalizes_inconsistent_create_hunk_count(self):
+        change = {
+            "path": "docs/new.txt",
+            "operation": "create",
+            "reason": "regression",
+            "patch": "--- /dev/null\n+++ b/docs/new.txt\n@@ -0,0 +1,99 @@\n+one\n+two\n",
+        }
+        canonical = specialized_agent_tools._canonicalize_generated_patch(change, {"files": []})
+        self.assertIn("@@ -0,0 +1,2 @@", canonical["patch"])
+        self.assertNotIn("@@ -0,0 +1,99 @@", canonical["patch"])
     def test_reviewer_accepts_absent_create_target_evidence(self):
         calls = []
 
