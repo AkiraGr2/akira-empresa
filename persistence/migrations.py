@@ -1805,7 +1805,6 @@ MIGRATIONS = [
             FOR DELETE TO anon, authenticated USING (false);
         """
     ),
-,
     (
         "051_cognitive_cycle_persistent_capability",
         """
