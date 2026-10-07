@@ -1117,6 +1117,7 @@ def _validate_mission_plan(plan, service):
                     return False, f"step_{i}_review_requires_two_dependencies"
                 if len(receives) != 2:
                     return False, f"step_{i}_review_requires_two_dependencies"
+                normalized_review_deps = []
                 for dep in receives:
                     try:
                         dep = int(dep)
@@ -1126,6 +1127,13 @@ def _validate_mission_plan(plan, service):
                         return False, f"step_{i}_receives_not_previous"
                     if dep not in orders_seen:
                         return False, f"step_{i}_receives_unknown:{dep}"
+                    normalized_review_deps.append(dep)
+                proposal_step = steps_by_order.get(normalized_review_deps[0])
+                test_step = steps_by_order.get(normalized_review_deps[1])
+                if not proposal_step or proposal_step.get("tool") != "developer_propose" or proposal_step.get("agent") != "developer":
+                    return False, f"step_{i}_review_first_dependency_must_be_developer"
+                if not test_step or test_step.get("tool") != "python_test" or test_step.get("agent") != "tester":
+                    return False, f"step_{i}_review_second_dependency_must_be_tester"
             elif isinstance(receives, list):
                 return False, f"step_{i}_receives_list_not_allowed"
             elif receives is not None:
