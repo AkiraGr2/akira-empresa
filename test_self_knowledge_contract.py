@@ -275,7 +275,7 @@ class SelfKnowledgeSnapshotTests(unittest.TestCase):
         self.assertIn('"selftest:session_auth:v1:" + source_digest + ":" + build_ref', source)
         self.assertIn('"selftest:persistent_memory:verification:v1:" + source_digest + ":" + build_ref', source)
         self.assertIn('"selftest:knowledge_persistent:v1:"', source)
-        self.assertIn('" + build_ref + ":"', source)
+        self.assertIn('                + build_ref\n                + ":"\n                + str(capability.get("verification_state") or "unknown")', source)
 
     def test_self_knowledge_revalidation_runs_after_foundational_capabilities(self):
         source = __import__("pathlib").Path("persistence/selftest.py").read_text(encoding="utf-8")
