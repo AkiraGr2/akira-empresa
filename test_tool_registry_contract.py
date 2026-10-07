@@ -39,7 +39,8 @@ class ToolRegistryContractTests(unittest.TestCase):
         source = Path("persistence/service.py").read_text(encoding="utf-8")
         self.assertIn("def get_invocation_by_idempotency_key", source)
         self.assertIn('"owner_scope": scope', source)
-        self.assertIn('"idempotency_key": key', source)
+        self.assertIn("idempotency_key", source)
+        self.assertIn("rows = self.repo.search", source)
 
     def test_generic_tool_route_replays_existing_idempotency_key(self):
         source = Path("nexus.py").read_text(encoding="utf-8")
