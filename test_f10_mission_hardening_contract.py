@@ -25,6 +25,29 @@ class F10MissionHardeningContractTests(unittest.TestCase):
         guard = 'final_mission.get("status") == "cancelled" or _is_mission_cancelled(mission_id)'
         self.assertIn(guard, block)
 
+    def test_memory_search_after_memory_save_requires_recovery(self):
+        source = Path("nexus.py").read_text(encoding="utf-8")
+        self.assertIn('"search_hint": content[:200]', source)
+        self.assertIn('return {"query": str(prior["search_hint"])[:200]}', source)
+        self.assertIn('memory_search_did_not_recover_prior_memory', source)
+
+    def test_semantic_gate_is_conservative_and_deterministic(self):
+        source = Path("nexus.py").read_text(encoding="utf-8")
+        start = source.index("def _mission_output_semantic_gate")
+        end = source.index("def _build_tool_inputs", start)
+        block = source[start:end]
+        self.assertIn('tool_name == "memory_search"', block)
+        self.assertIn('found < 1', block)
+        self.assertIn('tool_name == "memory_save"', block)
+        self.assertIn('tool_name == "cognitive_cycle"', block)
+
+    def test_semantic_gate_runs_before_step_is_recorded_complete(self):
+        source = Path("nexus.py").read_text(encoding="utf-8")
+        gate = source.index("_mission_output_semantic_gate(")
+        report = source.index('step_report = {', gate)
+        self.assertLess(gate, report)
+        self.assertIn('step_semantic_failed', source[gate:report])
+
 
 if __name__ == "__main__":
     unittest.main()
