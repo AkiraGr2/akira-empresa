@@ -237,6 +237,20 @@ class CapabilityEngineContractTests(unittest.TestCase):
                 "orchestration", "repair", "evolution", "hive", "external", "general",
             })
 
+    def test_f7_capability_migration_contains_no_sql_statement_split_semicolons(self):
+        from persistence.migrations import MIGRATIONS
+
+        sql = next(
+            sql for version, sql in MIGRATIONS
+            if version == "051_cognitive_cycle_persistent_capability"
+        )
+        statements = [stmt.strip() for stmt in sql.split(";") if stmt.strip()]
+        self.assertEqual(len(statements), 1)
+        self.assertIn("INSERT INTO public.capabilities", statements[0])
+        self.assertIn("ON CONFLICT (name) DO UPDATE SET", statements[0])
+        self.assertIn("updated_at = now()", statements[0])
+        self.assertIn("cognitive_cycle_persistent", statements[0])
+
     def test_self_model_migration_split_is_quote_safe(self):
         from persistence.migrations import MIGRATIONS
 
