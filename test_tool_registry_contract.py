@@ -95,6 +95,12 @@ class ToolRegistryContractTests(unittest.TestCase):
                 msg=f"faltante branch de dispatcher: {tool_name}",
             )
 
+    def test_tool_auditor_has_uuid_dependency_for_run_ids(self):
+        source = Path("nexus.py").read_text(encoding="utf-8")
+        import_line = source.splitlines()[24]
+        self.assertIn("uuid", import_line)
+        self.assertIn('uuid.uuid4()', source)
+
     def test_individual_tool_auditor_covers_exact_registry_set(self):
         audit = Path("tool_audit.py").read_text(encoding="utf-8")
         expected = {
