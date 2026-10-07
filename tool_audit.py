@@ -174,7 +174,7 @@ def _expected_inputs(tool_name: str, repo_name: str, fixture_tag: str) -> dict[s
     if tool_name == "python_test":
         return {
             "tests": [
-                "ToolRegistryContractTests.test_registered_inputs_are_schema_validated_before_dispatch",
+                "test_tool_registry_contract.ToolRegistryContractTests.test_registered_inputs_are_schema_validated_before_dispatch",
             ],
             "compile_paths": [],
         }
@@ -185,7 +185,7 @@ def _expected_inputs(tool_name: str, repo_name: str, fixture_tag: str) -> dict[s
             "proposal": {
                 "summary": "F8 audit synthetic proposal",
                 "changes": [],
-                "tests": ["ToolRegistryContractTests.test_registered_inputs_are_schema_validated_before_dispatch"],
+                "tests": ["test_tool_registry_contract.ToolRegistryContractTests.test_registered_inputs_are_schema_validated_before_dispatch"],
                 "requires_human_approval": True,
                 "write_performed": False,
             },
@@ -205,7 +205,7 @@ def _expected_inputs(tool_name: str, repo_name: str, fixture_tag: str) -> dict[s
             ),
             "queries": ["docs/f8_audit_scratch.md"],
             "tests": [
-                "ToolRegistryContractTests.test_registered_inputs_are_schema_validated_before_dispatch",
+                "test_tool_registry_contract.ToolRegistryContractTests.test_registered_inputs_are_schema_validated_before_dispatch",
             ],
             "idempotency_key": "",
         }
