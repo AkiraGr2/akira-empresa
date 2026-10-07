@@ -152,6 +152,30 @@ def _audit_task(
     report["checks"]["output_schema"] = schema_ok
     report["evidence"]["output_schema_failures"] = schema_failures
 
+    if tool_name == "memory_search":
+        expected_memory_ids = set(fixture.get("memory_ids") or [])
+        returned_memory_ids = {
+            item.get("id")
+            for item in (outputs.get("results") or [])
+            if isinstance(item, dict) and item.get("id")
+        }
+        report["checks"]["memory_search_retrieves_fixture"] = bool(
+            expected_memory_ids and expected_memory_ids.intersection(returned_memory_ids)
+        )
+
+    if tool_name == "github_repo_read":
+        requested_paths = [str(x) for x in (inputs.get("paths") or []) if str(x).strip()]
+        repo_result = outputs.get("result") if isinstance(outputs, dict) else {}
+        returned_paths = {
+            str(item.get("path"))
+            for item in (repo_result.get("files") or [])
+            if isinstance(item, dict) and item.get("path")
+        }
+        if requested_paths:
+            report["checks"]["github_read_returns_requested_source"] = any(
+                path in returned_paths for path in requested_paths
+            )
+
     if invocation.get("ok") and semantic_ok and schema_ok:
         try:
             service.complete_task(

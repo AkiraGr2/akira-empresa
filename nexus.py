@@ -54,7 +54,7 @@ from persistence.memory_recall import recall_memories as _recall_memories_impl
 from persistence.model_registry import (PRIMARY_CHAT_MODEL, GEMINI_REASONING_MODEL, GEMINI_CHAT_FALLBACK_VARIANT, GROQ_FALLBACK_MODELS, OPENROUTER_MODEL_ROUTE, MISTRAL_MODEL_ROUTE, MEMORY_EMBEDDING_MODEL)
 from persistence.core import PersistenceError, ValidationError, validate_tool_inputs
 from tool_audit import TOOL_ORDER, run_tool_audit
-from agent_audit import PRODUCTION_AGENT_ORDER, run_agent_audit
+from agent_audit import EXPECTED_AGENT_CAPABILITY_CASES, PRODUCTION_AGENT_ORDER, run_agent_audit
 
 VERSION="V7.3"
 MODEL="external-inference-runtime"
@@ -4665,21 +4665,6 @@ def _run_agent_audit_background(service, actor, owner_scope, run_id):
                 "finished_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "report": report,
             }
-        service.record_audit(
-            "agent_audit",
-            "agent_audit.completed",
-            "agent_audit_runs",
-            run_id,
-            "success" if report.get("ok") else "failure",
-            {
-                "run_id": run_id,
-                "requested_by": actor,
-                "owner_scope": owner_scope,
-                "build_ref": _current_build_ref(),
-                "summary": report.get("summary"),
-                "cleanup_ok": bool((report.get("cleanup") or {}).get("ok")),
-            },
-        )
     except Exception as exc:
         error = {"type": type(exc).__name__, "message": str(exc)[:500]}
         with _AGENT_AUDIT_RUNS_LOCK:
@@ -4803,7 +4788,7 @@ def v8_agents_audit_get(request: Request, run_id: str):
             "agent_count": len(PRODUCTION_AGENT_ORDER),
             "case_count": len(reports),
             "summary": summary,
-            "ok": ok and len(reports) == 15,
+            "ok": ok and len(reports) == len(EXPECTED_AGENT_CAPABILITY_CASES),
             "reports": reports,
         },
     }

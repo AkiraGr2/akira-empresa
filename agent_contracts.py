@@ -124,6 +124,7 @@ def validate_agent_result(
                 isinstance(result.get("results"), list)
                 and isinstance(result.get("query"), str)
                 and int(result.get("result_count") or 0) > 0
+                and int(result.get("result_count") or 0) == len(result.get("results") or [])
                 and all(
                     isinstance(item, dict)
                     and isinstance(item.get("reference"), str)
