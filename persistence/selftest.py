@@ -902,6 +902,8 @@ def run_logic_tests(service, fresh_service_factory=None):
                     + source_digest
                     + ":"
                     + str(capability.get("verification_state") or "unknown")
+                    + ":"
+                    + build_ref
                 ),
             )
             effective = verification.get("effective_state")
