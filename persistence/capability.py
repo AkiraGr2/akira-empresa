@@ -403,6 +403,12 @@ def validate_capability_verification(data: Mapping[str, Any], partial: bool = Fa
     now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
     started_at = _text("started_at", data.get("started_at", now_iso), 80)
     finished_at = _text("finished_at", data.get("finished_at", now_iso), 80)
+    started_dt = _parse_iso(started_at)
+    finished_dt = _parse_iso(finished_at)
+    if started_dt is None or finished_dt is None:
+        raise CapabilityContractError("started_at y finished_at deben ser timestamps ISO validos")
+    if finished_dt < started_dt:
+        raise CapabilityContractError("finished_at no puede ser anterior a started_at")
     error = data.get("error")
     if error is not None:
         error = _json_safe("error", error, max_items=20)
