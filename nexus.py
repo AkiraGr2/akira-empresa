@@ -4191,7 +4191,8 @@ def v8_cognitive_cycle(request: Request, payload: dict):
                              "detail": str(e)[:200]}, status_code=500)
     return {"ok": True, "cycle_id": result["cycle"]["id"], "cycle": result["cycle"],
             "events": result["events"], "events_count": len(result["events"]),
-            "answer": result["answer"], "learning_id": result.get("learning_id")}
+            "answer": result["answer"], "learning_id": result.get("learning_id"),
+            "capability_verification": result.get("capability_verification")}
 
 @app.get("/api/v8/cognitive/cycle/{cycle_id}")
 def v8_cognitive_cycle_get(request: Request, cycle_id: str):
