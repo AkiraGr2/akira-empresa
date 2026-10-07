@@ -4560,11 +4560,90 @@ def v8_graph_overview(request: Request, limit_nodes: int = 500, limit_edges: int
         nodes = service.list_graph_nodes(limit=limit_nodes, owner_scope=s["owner_scope"])
         edges = service.list_graph_edges(limit=limit_edges, owner_scope=s["owner_scope"])
 
+        # Owner visibility is the union of the persisted private graph and the
+        # safe public architecture graph. Public visitors still use the
+        # separate public-overview endpoint and never reach this path.
+        public_nodes = PUBLIC_BRAIN_GRAPH["nodes"]
+        public_edges = PUBLIC_BRAIN_GRAPH["edges"]
+
+        by_label = {}
+        for node in nodes:
+            label_key = str(node.get("label") or "").strip().casefold()
+            if label_key:
+                by_label.setdefault(label_key, node)
+
+        public_to_owner = {}
+        private_ids = {
+            str(node.get("id"))
+            for node in nodes
+            if node.get("id") is not None
+        }
+
+        for public_node in public_nodes:
+            public_id = str(public_node.get("id") or "")
+            label_key = str(public_node.get("label") or "").strip().casefold()
+            if not public_id:
+                continue
+
+            # Reuse an existing owner node when the public architecture and
+            # persisted graph already represent the same canonical concept
+            # (notably Akira). Otherwise add the namespaced public node.
+            existing = by_label.get(label_key) if label_key else None
+            if existing and existing.get("id") is not None:
+                public_to_owner[public_id] = str(existing["id"])
+                continue
+
+            if public_id not in private_ids:
+                nodes.append({
+                    "id": public_id,
+                    "node_type": public_node.get("node_type"),
+                    "label": public_node.get("label"),
+                    "weight": public_node.get("weight", 1),
+                    "confidence": public_node.get("confidence", 1),
+                    "reuse_count": public_node.get("reuse_count", 0),
+                    "last_used_at": public_node.get("last_used_at"),
+                })
+                private_ids.add(public_id)
+                if label_key:
+                    by_label[label_key] = nodes[-1]
+            public_to_owner[public_id] = public_id
+
+        # Add public architecture relations to the owner's combined graph,
+        # remapping public:akira to the canonical owner Akira node when present.
+        existing_edge_keys = {
+            (
+                str(edge.get("from_node")),
+                str(edge.get("to_node")),
+                str(edge.get("relation_type") or ""),
+            )
+            for edge in edges
+        }
+        for public_edge in public_edges:
+            from_node = public_to_owner.get(str(public_edge.get("from_node") or ""))
+            to_node = public_to_owner.get(str(public_edge.get("to_node") or ""))
+            if not from_node or not to_node:
+                continue
+            edge_key = (
+                from_node,
+                to_node,
+                str(public_edge.get("relation_type") or ""),
+            )
+            if edge_key in existing_edge_keys:
+                continue
+            edges.append({
+                "id": public_edge.get("id"),
+                "from_node": from_node,
+                "to_node": to_node,
+                "relation_type": public_edge.get("relation_type"),
+                "weight": public_edge.get("weight", 1),
+                "frequency": public_edge.get("frequency", 1),
+            })
+            existing_edge_keys.add(edge_key)
+
         # The owner graph is intentionally bounded well above the current
         # persisted graph size. list_graph_edges() resolves ownership from the
-        # endpoint-node set in one pass, so a second related_nodes() lookup here
-        # would only reintroduce the N+1 remote-query bottleneck this endpoint
-        # must avoid. Do not perform a per-core-node expansion.
+        # endpoint-node set in one pass, so do not perform a per-core-node
+        # related_nodes() expansion that would reintroduce N+1 remote queries.
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
     compact_nodes = []
