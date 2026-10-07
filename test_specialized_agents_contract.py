@@ -174,7 +174,7 @@ class SpecializedAgentsContractTests(unittest.TestCase):
         from github_controlled import apply_unified_patch
         applied = apply_unified_patch(inspection["files"][0]["content"], generated, "test_tool_registry_contract.py", "modify")
         self.assertIn("# This file contains the test contract for the tool registry\nimport unittest", applied)
-        self.assertRegex(generated, r"^--- a/test_tool_registry_contract\\.py\n\\+\\+\\+ b/test_tool_registry_contract\\.py\n@@ ")
+        self.assertTrue(generated.startswith("--- a/test_tool_registry_contract.py\n+++ b/test_tool_registry_contract.py\n@@ "))
 
     def test_valid_unified_diff_with_stale_hunk_coordinates_is_recovered_before_acceptance(self):
         source = (
@@ -208,10 +208,7 @@ class SpecializedAgentsContractTests(unittest.TestCase):
             }]},
         )
         self.assertNotEqual(canonical["patch"], stale_patch)
-        self.assertRegex(
-            canonical["patch"],
-            r"^--- a/test_tool_registry_contract\\.py\n\\+\\+\\+ b/test_tool_registry_contract\\.py\n@@ ",
-        )
+        self.assertTrue(canonical["patch"].startswith("--- a/test_tool_registry_contract.py\n+++ b/test_tool_registry_contract.py\n@@ "))
         from github_controlled import apply_unified_patch
         applied = apply_unified_patch(
             source,
