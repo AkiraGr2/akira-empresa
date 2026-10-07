@@ -121,7 +121,6 @@ class ToolRegistryContractTests(unittest.TestCase):
         source = Path("nexus.py").read_text(encoding="utf-8")
         audit = Path("tool_audit.py").read_text(encoding="utf-8")
         self.assertIn("from tool_audit import TOOL_ORDER, run_tool_audit", source)
-        self.assertIn('target="_blank"', "") if False else None
         self.assertIn('def _invoke_registered_tool(', source)
         self.assertIn('run_tool_audit(', source)
         self.assertIn('service.record_audit(', audit)
