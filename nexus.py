@@ -17,7 +17,7 @@
 # Sub-fase 1.7: migración del ciclo startup de FastAPI a lifespan, sin cambiar comportamiento.
 # Sub-fase 1.8: contrato de capacidades + endurecimiento de endpoints multimedia en modo gratuito.
 # Sub-fase 1.9: imagen experimental protegida por doble opt-in y proxy seguro del servidor.
-import os, json, datetime, threading, time, hashlib, base64, math, asyncio, random, re
+import os, json, datetime, threading, time, hashlib, base64, math, asyncio, random, re, uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from collections import defaultdict
