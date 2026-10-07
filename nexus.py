@@ -799,7 +799,7 @@ def _require_owner(request):
     return s, None
 
 _TOOL_SEED = [
-    {"name": "web_search", "description": "Busqueda web via DuckDuckGo.", "category": "web", "permissions": ["auth"], "inputs_schema": {"query": "str"}, "outputs_schema": {"result": "str"}, "limits_json": {"timeout_s": 10}, "risks": ["dependencia de red"],},
+    {"name": "web_search", "description": "Busqueda web via DuckDuckGo con evidencia estructurada.", "category": "web", "permissions": ["auth"], "inputs_schema": {"query": "str"}, "outputs_schema": {"result": "dict"}, "limits_json": {"timeout_s": 10}, "risks": ["dependencia de red"],},
     {"name": "github_repo_read", "description": "Inspeccion de solo lectura de repositorios GitHub allow-listados.", "category": "code", "permissions": ["auth"], "inputs_schema": {"repo": "str", "path": "str", "paths": "list", "queries": "list", "max_files": "int"}, "outputs_schema": {"result": "dict"}, "limits_json": {"timeout_s": 8, "max_files": 24, "max_file_bytes": 40000, "max_total_bytes": 120000, "max_search_source_bytes": 800000, "max_search_matches_per_file": 8}, "risks": ["dependencia de red", "lectura de codigo"]},
     {"name": "memory_save", "description": "Guarda una memoria persistente.", "category": "memory", "permissions": ["owner"], "inputs_schema": {"content": "str", "memory_type": "str"}, "outputs_schema": {"id": "str"}, "limits_json": {"max_content": 20000}, "risks": []},
     {"name": "memory_search", "description": "Busca memorias por texto.", "category": "memory", "permissions": ["owner"], "inputs_schema": {"query": "str"}, "outputs_schema": {"results": "list"}, "limits_json": {"max_results": 20}, "risks": []},
