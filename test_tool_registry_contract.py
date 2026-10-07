@@ -50,7 +50,8 @@ class ToolRegistryContractTests(unittest.TestCase):
     def test_generic_tool_route_passes_schema_validated_inputs_to_executor(self):
         source = Path("nexus.py").read_text(encoding="utf-8")
         self.assertIn("validate_tool_inputs(tool, inputs)", source)
-        self.assertIn('owner_scope=s["owner_scope"] if s.get("is_owner") else None', source)
+        self.assertIn('owner_scope = s.get("owner_scope") if s.get("is_owner") else None', source)
+        self.assertIn("owner_scope=owner_scope", source)
 
     def test_canonical_tool_registry_capability_exists(self):
         from persistence.capability_catalog import BASE_CAPABILITIES
