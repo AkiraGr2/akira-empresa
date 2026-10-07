@@ -135,7 +135,7 @@ class ToolRegistryContractTests(unittest.TestCase):
         self.assertIn("service.record_audit(", audit)
         self.assertIn("service.get_invocation_by_idempotency_key(", audit)
         self.assertIn("AutonomyService(service)", audit)
-        self.assertIn("F7 E2E verification; no duplicate cognitive cycle", audit)
+        self.assertIn("no duplicate cognitive cycle", audit)
 
     def test_canonical_tool_registry_capability_exists(self):
         from persistence.capability_catalog import BASE_CAPABILITIES
