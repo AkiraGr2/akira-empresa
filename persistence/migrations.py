@@ -1897,7 +1897,7 @@ MIGRATIONS = [
             ELSE 0
         END
         """
-    ),,
+    ),
     (
         "054_tool_invocation_owner_scope_and_idempotency",
         """
