@@ -2833,7 +2833,7 @@ def v8_learning_experience(request: Request, payload: dict):
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     if not isinstance(payload, dict): return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
-    from persistence.core import ValidationError, PersistenceError
+    from persistence.core import ValidationError, validate_tool_inputs, PersistenceError
 
     mission_id = str(payload.get("mission_id") or "").strip()[:128]
     task = str(payload.get("task") or payload.get("objective") or "").strip()[:1000]
