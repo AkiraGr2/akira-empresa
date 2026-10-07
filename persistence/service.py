@@ -2545,8 +2545,29 @@ class PersistenceService:
         return self.repo.search("tools", filters, limit=limit, offset=0, order_by="name", descending=False)
     def count_tools(self, filters=None): return self.repo.count("tools", filters or {})
 
-    def log_invocation(self, tool_name, inputs, outputs, status, actor, duration_ms, error=None, idempotency_key=None):
+    def get_invocation_by_idempotency_key(self, tool_name, actor, owner_scope, idempotency_key):
+        key = str(idempotency_key or "").strip()
+        scope = str(owner_scope or "").strip()
+        tool = str(tool_name or "").strip()
+        who = str(actor or "").strip()
+        if not key or not scope or not tool or not who:
+            return None
+        rows = self.repo.search(
+            "tool_invocations",
+            {
+                "tool_name": tool,
+                "actor": who,
+                "owner_scope": scope,
+                "idempotency_key": key,
+            },
+            limit=1,
+        )
+        return rows[0] if rows else None
+
+    def log_invocation(self, tool_name, inputs, outputs, status, actor, duration_ms,
+                       error=None, idempotency_key=None, owner_scope=None):
         data = {"tool_name": tool_name, "actor": actor,
+                "owner_scope": owner_scope or "owner",
                 "inputs": inputs if isinstance(inputs, dict) else {},
                 "outputs": outputs if isinstance(outputs, dict) else {},
                 "status": status, "duration_ms": int(duration_ms)}

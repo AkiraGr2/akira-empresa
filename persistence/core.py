@@ -356,15 +356,16 @@ ENTITIES = {
     "tool_invocations": {
         "table": "tool_invocations",
         "columns": (
-            "id", "tool_name", "actor", "inputs", "outputs", "status",
+            "id", "tool_name", "actor", "owner_scope", "inputs", "outputs", "status",
             "error", "duration_ms", "schema_version", "idempotency_key",
         ),
         "json_columns": ("inputs", "outputs", "error"),
         "mutable": (),
-        "filterable": ("id", "tool_name", "actor", "status", "idempotency_key"),
-        "in_filterable": ("tool_name", "actor", "status"),
+        "filterable": ("id", "tool_name", "actor", "owner_scope", "status", "idempotency_key"),
+        "in_filterable": ("tool_name", "actor", "owner_scope", "status"),
         "orderable": ("created_at", "updated_at", "duration_ms"),
         "idempotent": True,
+        "idempotency_scope": ("owner_scope", "tool_name"),
     },
     "agents": {
         "table": "agents",
@@ -1452,8 +1453,56 @@ def validate_tool(data, partial: bool = False) -> dict:
     return out
 
 _INVOCATION_INPUT = {
-    "tool_name", "actor", "inputs", "outputs", "status", "error", "duration_ms",
+    "tool_name", "actor", "owner_scope", "inputs", "outputs", "status", "error", "duration_ms",
 }
+
+
+
+def _tool_input_type_matches(value, expected: str) -> bool:
+    kind = str(expected or "").strip().lower()
+    if kind in {"any", "object"}:
+        return True if kind == "any" else isinstance(value, dict)
+    if kind == "str":
+        return isinstance(value, str)
+    if kind == "list":
+        return isinstance(value, list)
+    if kind == "dict":
+        return isinstance(value, dict)
+    if kind == "int":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if kind == "float":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if kind == "bool":
+        return isinstance(value, bool)
+    return False
+
+
+def validate_tool_inputs(tool: dict, inputs: dict) -> dict:
+    """Validate invocation inputs against the registered tool contract.
+
+    The registry schema currently declares accepted field names plus simple types.
+    Missing fields remain optional at this layer because individual tools may have
+    branch-specific defaults; tool implementations remain responsible for semantic
+    required-field checks.
+    """
+    if not isinstance(tool, dict):
+        raise ValidationError("tool invalida")
+    if not isinstance(inputs, dict):
+        raise ValidationError("inputs debe ser un objeto")
+    schema = tool.get("inputs_schema") or {}
+    if not isinstance(schema, dict):
+        raise ValidationError("inputs_schema invalido")
+    unknown = sorted(set(inputs) - set(schema))
+    if unknown:
+        raise ValidationError(f"campos no permitidos para la tool: {unknown}")
+    for key, expected in schema.items():
+        if key not in inputs:
+            continue
+        if not _tool_input_type_matches(inputs[key], str(expected)):
+            raise ValidationError(
+                f"tipo invalido para {key}: se esperaba {expected}"
+            )
+    return dict(inputs)
 
 def validate_tool_invocation(data, partial: bool = False) -> dict:
     if partial:
@@ -1469,6 +1518,7 @@ def validate_tool_invocation(data, partial: bool = False) -> dict:
     out = {}
     out["tool_name"] = _str("tool_name", data["tool_name"], 64)
     out["actor"] = _str("actor", data.get("actor", "system"), 64)
+    out["owner_scope"] = _str("owner_scope", data.get("owner_scope", "owner"), 64)
     v = data.get("inputs", {})
     if not isinstance(v, dict):
         raise ValidationError("inputs debe ser un objeto (dict)")
