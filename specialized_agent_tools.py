@@ -19,6 +19,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 from github_readonly import GitHubReadUpstreamError
+from github_controlled import (
+    ControlledGitHubError,
+    canonicalize_modify_patch,
+    deterministic_modify_patch,
+)
 
 MAX_PROPOSAL_FILES = 4
 MAX_PROPOSAL_QUERIES = 8
@@ -222,64 +227,19 @@ def _normalize_queries(queries: Any) -> list[str]:
 
 
 def _deterministic_modify_patch(path: str, source: str, find_text: str, replace_text: str) -> str:
-    """Build a real unified diff from a bounded exact text replacement.
-
-    The model chooses *what* exact text to replace. Python owns line numbering and
-    diff syntax so LLM formatting cannot make the proposal invalid.
-    """
-    if not isinstance(source, str):
-        raise SpecializedAgentError(f"proposal_source_unavailable:{path}")
-    find_text = str(find_text or "")
-    replace_text = str(replace_text if replace_text is not None else "")
-    if not find_text:
-        raise SpecializedAgentError(f"proposal_edit_find_empty:{path}")
-    occurrences = source.count(find_text)
-    if occurrences == 0:
-        raise SpecializedAgentError(f"proposal_edit_context_not_found:{path}")
-    if occurrences != 1:
-        raise SpecializedAgentError(f"proposal_edit_context_ambiguous:{path}")
-
-    updated = source.replace(find_text, replace_text, 1)
-    if updated == source:
-        raise SpecializedAgentError(f"proposal_edit_noop:{path}")
-
-    diff = "".join(
-        difflib.unified_diff(
-            source.splitlines(keepends=True),
-            updated.splitlines(keepends=True),
-            fromfile=f"a/{path}",
-            tofile=f"b/{path}",
-            lineterm="\n",
-        )
-    )
-    if not diff.startswith(f"--- a/{path}\n+++ b/{path}\n@@ "):
-        raise SpecializedAgentError(f"proposal_deterministic_diff_failed:{path}")
-    return diff
+    """Compatibility wrapper around the authoritative patch contract."""
+    try:
+        return deterministic_modify_patch(path, source, find_text, replace_text)
+    except ControlledGitHubError as exc:
+        raise SpecializedAgentError(str(exc)) from exc
 
 
 def _recover_modify_patch_from_diff(path: str, source: str, patch: str) -> str | None:
-    """Recover a modify diff from its content, never from its coordinates."""
-    lines = patch.splitlines(keepends=True)
-    hunk_indexes = [i for i, line in enumerate(lines) if line.startswith("@@")]
-    if len(hunk_indexes) != 1:
+    """Compatibility wrapper around the authoritative source-aware recovery."""
+    try:
+        return canonicalize_modify_patch(path, source, patch)
+    except ControlledGitHubError:
         return None
-
-    body = lines[hunk_indexes[0] + 1:]
-    if not body or not all(line[:1] in {" ", "-", "+"} for line in body):
-        return None
-
-    # Reconstruct the old/new file fragments represented by this hunk.
-    # The hunk coordinates are deliberately ignored here: the observed source
-    # is authoritative and Python owns the final location and line numbering.
-    old_text = "".join(line[1:] for line in body if line.startswith((" ", "-")))
-    new_text = "".join(line[1:] for line in body if line.startswith((" ", "+")))
-    if not old_text or old_text == new_text:
-        return None
-
-    if source.count(old_text) != 1:
-        return None
-
-    return _deterministic_modify_patch(path, source, old_text, new_text)
 
 
 def _inspection_file_content(inspection: dict[str, Any], path: str) -> str | None:
