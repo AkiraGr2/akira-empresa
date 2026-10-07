@@ -3877,6 +3877,8 @@ class PersistenceService:
         try:
             with self.repo.transaction() as tx:
                 stored, created = tx.create("conversations", record)
+                if not created and stored.get("created_by") != actor:
+                    raise ConflictError("idempotency_key pertenece a otra conversacion del sistema")
                 tx.append_audit({"actor": actor,
                     "action": "conversation.create" if created else "conversation.create.already_synced",
                     "resource": "conversations", "resource_id": stored["id"], "status": "success",
