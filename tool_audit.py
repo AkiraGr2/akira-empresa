@@ -367,6 +367,11 @@ def _run_one(
     if tool_name == "graph_create_edge":
         inputs["from_node"] = fixture.get("graph_node_a_id") or ""
         inputs["to_node"] = fixture.get("graph_node_b_id") or ""
+    if tool_name == "code_review":
+        if dependency_outputs.get("developer_propose"):
+            inputs["proposal"] = dependency_outputs["developer_propose"]
+        if dependency_outputs.get("python_test"):
+            inputs["test_results"] = dependency_outputs["python_test"]
     if tool_name == "graph_related":
         inputs["node_id"] = fixture.get("graph_node_a_id") or ""
 
@@ -413,6 +418,21 @@ def _run_one(
     report["evidence"]["output_schema_failures"] = schema_failures
     report["evidence"]["output_keys"] = sorted(outputs.keys())
     report["evidence"]["output_digest"] = _digest(outputs)
+    report["evidence"]["invocation_id"] = invocation.get("invocation_id") if isinstance(invocation, dict) else None
+
+    replay = invoke(
+        service,
+        tool_name,
+        inputs,
+        actor,
+        owner_scope,
+        idempotency_key=idem,
+    )
+    report["checks"]["idempotency_replay"] = bool(
+        isinstance(replay, dict)
+        and replay.get("replayed") is True
+        and replay.get("invocation_id") == report["evidence"]["invocation_id"]
+    )
 
     semantic_ok = True
     semantic_detail: dict[str, Any] = {}
@@ -507,9 +527,8 @@ def _run_one(
     report["checks"]["semantic_result"] = semantic_ok
     report["evidence"]["semantic"] = semantic_detail
 
-    # Probar replay sin ejecutar por segunda vez.
-    replay = service.get_invocation_by_idempotency_key(tool_name, actor, owner_scope, idem)
-    report["checks"]["idempotency_key_registered"] = replay is not None
+    persisted = service.get_invocation_by_idempotency_key(tool_name, actor, owner_scope, idem)
+    report["checks"]["idempotency_key_registered"] = persisted is not None
 
     report["verdict"] = (
         "VERIFIED"
