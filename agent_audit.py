@@ -602,7 +602,7 @@ def run_agent_audit(
             elif tool_name == "graph_related":
                 ids = fixture.get("graph_node_ids") or []
                 inputs["node_id"] = ids[0] if ids else ""
-            elif agent_name == "reviewer":
+            elif agent_name == "reviewer" and tool_name == "code_review":
                 inputs["proposal"] = developer_output
                 inputs["test_results"] = tester_output
 
