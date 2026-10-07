@@ -89,7 +89,7 @@ def canonicalize_modify_patch(path: str, source: str, patch: str) -> str:
     old_headers = [line.rstrip("\n") for line in lines if line.startswith("--- ")]
     new_headers = [line.rstrip("\n") for line in lines if line.startswith("+++ ")]
     hunk_indexes = [i for i, line in enumerate(lines) if line.startswith("@@")]
-    hunk_pattern = re.compile(r"^@@ -(\\d+)(?:,(\\d+))? \\+(\\d+)(?:,(\\d+))? @@(?: .*)?$")
+    hunk_pattern = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$")
     if (
         len(old_headers) != 1
         or len(new_headers) != 1
