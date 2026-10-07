@@ -559,7 +559,11 @@ def _run_one(
         dependency_outputs["python_test"] = outputs
     elif tool_name == "code_review":
         review = outputs.get("review") if isinstance(outputs.get("review"), dict) else {}
-        semantic_ok = str(review.get("verdict") or "").lower() in {"approve", "approved"}
+        # Un reviewer correcto puede aprobar o pedir cambios; ambos son
+        # resultados semánticamente válidos del contrato read-only.
+        semantic_ok = str(review.get("verdict") or "").lower() in {
+            "approve", "approved", "request_changes"
+        }
     elif tool_name == "controlled_autonomy_start":
         semantic_ok = (
             outputs.get("awaits_human_approval") is True
