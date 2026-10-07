@@ -47,6 +47,10 @@ class ToolRegistryContractTests(unittest.TestCase):
         self.assertIn('"replayed": True', source)
         self.assertIn('idempotency_key = payload.get("idempotency_key")', source)
 
+    def test_generic_tool_route_imports_runtime_validation_contract(self):
+        source = Path("nexus.py").read_text(encoding="utf-8")
+        self.assertIn("from persistence.core import PersistenceError, ValidationError, validate_tool_inputs", source)
+
     def test_generic_tool_route_passes_schema_validated_inputs_to_executor(self):
         source = Path("nexus.py").read_text(encoding="utf-8")
         self.assertIn("validate_tool_inputs(tool, inputs)", source)
