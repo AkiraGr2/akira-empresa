@@ -1,7 +1,7 @@
 import unittest
 
 from persistence.core import entity_spec
-from persistence.service import NotFoundError, PersistenceService
+from persistence.service import NotFoundError, PersistenceService, ValidationError
 
 
 class FakeTx:
@@ -15,8 +15,10 @@ class FakeTx:
         return False
 
     def create(self, entity, record):
-        self.repo.rows.setdefault(entity, []).append(dict(record))
-        return dict(record), True
+        stored = dict(record)
+        stored.setdefault("version", 1)
+        self.repo.rows.setdefault(entity, []).append(stored)
+        return dict(stored), True
 
     def update(self, entity, record_id, changes, expected_version):
         row = next(r for r in self.repo.rows.get(entity, []) if r["id"] == record_id)
@@ -125,6 +127,121 @@ class OwnershipServiceTests(unittest.TestCase):
         rows = self.service.list_cycles(owner_scope="scope:A", limit=50)
         self.assertEqual({r["id"] for r in rows}, {"cycle_a"})
 
+
+    def _seed_cycle(self, owner_scope="scope:A"):
+        cycle = self.service.start_cycle(
+            "test",
+            {"message": "cycle"},
+            actor="tester",
+            owner_scope=owner_scope,
+        )["record"]
+        return cycle
+
+    def _record_all_stages(self, cycle_id, owner_scope="scope:A"):
+        for stage in (
+            "observe", "interpret", "reason", "decide", "act",
+            "observe_result", "evaluate", "learn", "update_self_model",
+        ):
+            self.service.record_stage(
+                cycle_id,
+                stage,
+                data={"stage": stage},
+                actor="tester",
+                owner_scope=owner_scope,
+                idempotency_key=f"{cycle_id}:{stage}:v1",
+            )
+
+    def test_cognitive_stage_cannot_skip_a_stage(self):
+        cycle = self._seed_cycle()
+        with self.assertRaises(ValidationError):
+            self.service.record_stage(
+                cycle["id"], "reason", data={"x": 1},
+                actor="tester", owner_scope="scope:A",
+            )
+
+    def test_cognitive_stage_cannot_repeat_or_regress_without_idempotent_retry(self):
+        cycle = self._seed_cycle()
+        self.service.record_stage(
+            cycle["id"], "observe", data={"x": 1},
+            actor="tester", owner_scope="scope:A",
+        )
+        with self.assertRaises(Exception):
+            self.service.record_stage(
+                cycle["id"], "observe", data={"x": 2},
+                actor="tester", owner_scope="scope:A",
+            )
+        self.service.record_stage(
+            cycle["id"], "interpret", data={"x": 3},
+            actor="tester", owner_scope="scope:A",
+        )
+        with self.assertRaises(Exception):
+            self.service.record_stage(
+                cycle["id"], "observe", data={"x": 1},
+                actor="tester", owner_scope="scope:A",
+            )
+
+    def test_cognitive_stage_idempotent_retry_does_not_move_cursor_backward(self):
+        cycle = self._seed_cycle()
+        first = self.service.record_stage(
+            cycle["id"], "observe", data={"x": 1},
+            actor="tester", owner_scope="scope:A",
+            idempotency_key=f"{cycle['id']}:observe:v1",
+        )
+        self.service.record_stage(
+            cycle["id"], "interpret", data={"x": 2},
+            actor="tester", owner_scope="scope:A",
+            idempotency_key=f"{cycle['id']}:interpret:v1",
+        )
+        retry = self.service.record_stage(
+            cycle["id"], "observe", data={"x": 1},
+            actor="tester", owner_scope="scope:A",
+            idempotency_key=f"{cycle['id']}:observe:v1",
+        )
+        self.assertEqual(retry["event"]["id"], first["event"]["id"])
+        self.assertEqual(retry["cycle"]["current_stage"], "interpret")
+
+    def test_completed_cognitive_cycle_requires_all_successful_stages(self):
+        cycle = self._seed_cycle()
+        self.service.record_stage(
+            cycle["id"], "observe", data={"x": 1},
+            actor="tester", owner_scope="scope:A",
+        )
+        with self.assertRaises(Exception):
+            self.service.complete_cycle(
+                cycle["id"], "completed",
+                actor="tester", owner_scope="scope:A",
+            )
+
+        cycle2 = self._seed_cycle()
+        self._record_all_stages(cycle2["id"])
+        completed = self.service.complete_cycle(
+            cycle2["id"], "completed",
+            actor="tester", owner_scope="scope:A",
+        )
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(completed["current_stage"], "update_self_model")
+
+    def test_completed_cognitive_cycle_rejects_failed_stage(self):
+        cycle = self._seed_cycle()
+        self.service.record_stage(
+            cycle["id"], "observe", data={"ok": True},
+            actor="tester", owner_scope="scope:A",
+        )
+        self.service.record_stage(
+            cycle["id"], "interpret", data={"ok": False},
+            status="failure", error={"type": "SyntheticFailure"},
+            actor="tester", owner_scope="scope:A",
+        )
+        with self.assertRaises(ValidationError):
+            self.service.complete_cycle(
+                cycle["id"], "completed",
+                actor="tester", owner_scope="scope:A",
+            )
+        failed = self.service.complete_cycle(
+            cycle["id"], "failed",
+            actor="tester", owner_scope="scope:A",
+        )
+        self.assertEqual(failed["status"], "failed")
 
     def test_cleanup_cannot_touch_foreign_learning(self):
         with self.assertRaises(NotFoundError):

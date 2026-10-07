@@ -3982,9 +3982,12 @@ def _execute_cognitive_cycle(service, trigger, input_data, actor, owner_scope=No
     start_result = service.start_cycle(trigger, input_data, actor=actor, owner_scope=owner_scope)
     cycle_id = start_result["record"]["id"]
     events = []
+    stage_failures = []
     def record(stage, data, status="success", error=None):
         r = service.record_stage(cycle_id, stage, data=data, status=status, error=error, actor=actor, owner_scope=owner_scope)
         events.append(r["event"])
+        if status != "success":
+            stage_failures.append(stage)
 
     message = str((input_data or {}).get("message") or "")
     record("observe", {"trigger": trigger, "message_length": len(message), "has_message": bool(message),
@@ -4055,7 +4058,7 @@ def _execute_cognitive_cycle(service, trigger, input_data, actor, owner_scope=No
         record("update_self_model", {"error": "sm_update_failed", "message": str(e)[:200]},
                status="failure", error={"type": type(e).__name__})
 
-    final_status = "completed" if answer else "failed"
+    final_status = "completed" if answer and not stage_failures else "failed"
     final_cycle = service.complete_cycle(cycle_id, final_status, actor=actor, owner_scope=owner_scope)
     return {"cycle": final_cycle, "events": events, "answer": final_response, "learning_id": learning_id}
 @app.post("/api/v8/cognitive/cycle")
