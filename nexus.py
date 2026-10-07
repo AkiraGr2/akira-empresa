@@ -1389,6 +1389,49 @@ def _dependency_output_text(step, outputs_by_order, max_chars=3000):
         raw = str(output)
     return raw[:max_chars]
 
+def _mission_output_semantic_gate(tool_name, step, outputs, outputs_by_order):
+    """Valida condiciones objetivas de éxito para resultados de misión.
+
+    No intenta interpretar lenguaje natural. Solo aplica invariantes de herramientas
+    cuya semántica de éxito puede demostrarse de forma determinista.
+    """
+    if not isinstance(outputs, dict):
+        return False, "outputs_not_object"
+
+    if tool_name == "memory_save":
+        if outputs.get("stored") is not True or not str(outputs.get("id") or "").strip():
+            return False, "memory_save_not_persisted"
+    elif tool_name == "memory_search":
+        receives = step.get("receives_from")
+        if receives is not None:
+            try:
+                dep_order = int(receives)
+            except Exception:
+                dep_order = None
+            prior = outputs_by_order.get(dep_order) if dep_order is not None else None
+            if isinstance(prior, dict) and prior.get("stored") is True and prior.get("id"):
+                found = outputs.get("found")
+                results = outputs.get("results")
+                if not isinstance(found, int) or found < 1 or not isinstance(results, list) or not results:
+                    return False, "memory_search_did_not_recover_prior_memory"
+    elif tool_name == "self_model_read":
+        if not isinstance(outputs.get("self_model"), dict):
+            return False, "self_model_missing"
+    elif tool_name == "cognitive_cycle":
+        if not str(outputs.get("cycle_id") or "").strip():
+            return False, "cognitive_cycle_missing_id"
+        if not isinstance(outputs.get("events_count"), int) or outputs.get("events_count") < 1:
+            return False, "cognitive_cycle_no_events"
+    elif tool_name in {"graph_create_node", "graph_create_edge", "learning_save"}:
+        if not str(outputs.get("id") or "").strip():
+            return False, f"{tool_name}_missing_id"
+    elif tool_name == "python_test":
+        status = str(outputs.get("status") or "").strip().lower()
+        if status not in {"pass", "passed", "success", "ok"}:
+            return False, "python_test_not_successful"
+
+    return True, None
+
 def _build_tool_inputs(tool_name, step, outputs_by_order, mission_id):
     task = str(step.get("task") or "").strip()
     expected = str(step.get("expected_output") or "").strip()
@@ -1407,6 +1450,13 @@ def _build_tool_inputs(tool_name, step, outputs_by_order, mission_id):
         return {"query": with_dependency(200, task)}
     if tool_name == "memory_search":
         if not task: return None
+        if dependency:
+            try:
+                prior = json.loads(dependency)
+            except Exception:
+                prior = None
+            if isinstance(prior, dict) and prior.get("search_hint"):
+                return {"query": str(prior["search_hint"])[:200]}
         return {"query": with_dependency(200, task)}
     if tool_name == "memory_save":
         content = task
@@ -1951,6 +2001,62 @@ def _run_mission_sync(mission_id, actor, owner_scope=None):
                 owner_scope=owner_scope)
                 return
             total_db_ms += int((time.time() - db_t2) * 1000)
+
+            semantic_ok, semantic_reason = _mission_output_semantic_gate(
+                tool_name,
+                step,
+                outputs or {},
+                outputs_by_order,
+            )
+            if not semantic_ok:
+                semantic_error = {
+                    "type": "SemanticOutputError",
+                    "message": semantic_reason,
+                }
+                _set_mission_runtime(
+                    mission_id,
+                    "step_semantic_failed",
+                    step=order,
+                    task_id=task_id,
+                    tool=tool_name,
+                    reason=semantic_reason,
+                )
+                try:
+                    service.fail_task(
+                        task_id,
+                        semantic_error,
+                        duration_ms=duration_ms,
+                        actor="orchestrator",
+                        owner_scope=owner_scope,
+                    )
+                except Exception:
+                    pass
+                _fail_running_tasks_of_mission(
+                    service,
+                    mission_id,
+                    "prior_step_semantic_failed",
+                    owner_scope=owner_scope,
+                )
+                _fail_mission_with_autonomous_learning(
+                    service,
+                    mission_id,
+                    actor,
+                    {
+                        "type": "step_semantic_failed",
+                        "step": order,
+                        "agent": agent_name,
+                        "tool": tool_name,
+                        "error": semantic_error,
+                        "duration_ms": duration_ms,
+                        "completed_steps": step_reports,
+                        "step_output_excerpts": {
+                            str(k): _autonomous_learning_output_excerpt(v)
+                            for k, v in outputs_by_order.items()
+                        },
+                    },
+                    owner_scope=owner_scope,
+                )
+                return
 
             if order is not None:
                 outputs_by_order[order] = outputs or {}
@@ -5098,6 +5204,7 @@ def _invoke_tool(service, tool_name, inputs, actor, owner_scope=None):
             "stored": True,
             "id": r["record"]["id"],
             "outcome": r["outcome"],
+            "search_hint": content[:200],
             "semantic_indexed": bool(
                 service.get_memory_embedding(
                     r["record"]["id"],
