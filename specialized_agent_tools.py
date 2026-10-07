@@ -258,43 +258,28 @@ def _deterministic_modify_patch(path: str, source: str, find_text: str, replace_
 
 
 def _recover_modify_patch_from_diff(path: str, source: str, patch: str) -> str | None:
-    """Recover a valid modify diff when the model got hunk coordinates wrong.
-
-    The model is allowed to describe the intended replacement, but Python owns the
-    final location and diff syntax. We only recover when the deleted block occurs
-    exactly once in the observed source; otherwise we fail closed.
-    """
+    """Recover a modify diff from its content, never from its coordinates."""
     lines = patch.splitlines(keepends=True)
     hunk_indexes = [i for i, line in enumerate(lines) if line.startswith("@@")]
     if len(hunk_indexes) != 1:
         return None
+
     body = lines[hunk_indexes[0] + 1:]
-    removed = [line[1:] for line in body if line.startswith("-")]
-    added = [line[1:] for line in body if line.startswith("+")]
-    context = [line[1:] for line in body if line.startswith(" ")]
-    if not added or not all(line[:1] in {" ", "-", "+"} for line in body):
+    if not body or not all(line[:1] in {" ", "-", "+"} for line in body):
         return None
-    if context:
-        # For insertion-only diffs, use the unchanged context as an exact anchor.
-        # For replacement diffs, include the deleted block and surrounding context.
-        context_text = "".join(context)
-        if removed:
-            first_removed = next(i for i, line in enumerate(body) if line.startswith("-"))
-            before = [line[1:] for line in body[:first_removed] if line.startswith(" ")]
-            after = [line[1:] for line in body[first_removed + len(removed):] if line.startswith(" ")]
-            find_text = "".join(before + removed + after)
-            replace_text = "".join(before + added + after)
-        else:
-            find_text = context_text
-            replace_text = "".join(line[1:] for line in body)
-        if source.count(find_text) != 1:
-            return None
-    elif removed:
-        find_text = "".join(removed)
-        replace_text = "".join(added)
-    else:
+
+    # Reconstruct the old/new file fragments represented by this hunk.
+    # The hunk coordinates are deliberately ignored here: the observed source
+    # is authoritative and Python owns the final location and line numbering.
+    old_text = "".join(line[1:] for line in body if line.startswith((" ", "-")))
+    new_text = "".join(line[1:] for line in body if line.startswith((" ", "+")))
+    if not old_text or old_text == new_text:
         return None
-    return _deterministic_modify_patch(path, source, find_text, replace_text)
+
+    if source.count(old_text) != 1:
+        return None
+
+    return _deterministic_modify_patch(path, source, old_text, new_text)
 
 
 def _inspection_file_content(inspection: dict[str, Any], path: str) -> str | None:
