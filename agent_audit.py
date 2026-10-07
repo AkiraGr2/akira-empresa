@@ -159,6 +159,12 @@ def _audit_task(
             report["checks"]["task_completed_and_persisted"] = bool(
                 stored and stored.get("status") == "completed"
             )
+            current_agent = service.get_agent_by_name(agent_name)
+            report["checks"]["agent_returned_idle"] = bool(
+                current_agent
+                and current_agent.get("status") == "idle"
+                and current_agent.get("current_task_id") is None
+            )
         except Exception as exc:
             report["checks"]["task_completed_and_persisted"] = False
             report["error"] = {
