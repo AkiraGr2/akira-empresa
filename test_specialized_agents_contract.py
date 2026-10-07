@@ -66,6 +66,21 @@ class SpecializedAgentsContractTests(unittest.TestCase):
         modules = specialized_agent_tools._normalize_test_modules(["persistence.test_absorption"])
         self.assertEqual(modules, ["persistence.test_absorption"])
 
+    def test_tester_accepts_precise_allowlisted_unittest_selector(self):
+        targets = specialized_agent_tools._normalize_test_modules([
+            "test_tool_registry_contract.ToolRegistryContractTests.test_registered_inputs_are_schema_validated_before_dispatch"
+        ])
+        self.assertEqual(
+            targets,
+            ["test_tool_registry_contract.ToolRegistryContractTests.test_registered_inputs_are_schema_validated_before_dispatch"],
+        )
+
+    def test_tester_rejects_non_test_method_selector(self):
+        with self.assertRaises(specialized_agent_tools.SpecializedAgentError):
+            specialized_agent_tools._normalize_test_modules([
+                "test_tool_registry_contract.ToolRegistryContractTests.helper"
+            ])
+
     def test_runtime_selftest_always_cleans_up_test_agent(self):
         source = (ROOT / "persistence" / "runtime.py").read_text(encoding="utf-8")
         self.assertIn("finally:", source)
