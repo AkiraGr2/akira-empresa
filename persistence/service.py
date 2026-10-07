@@ -2341,17 +2341,29 @@ class PersistenceService:
         current_stage = cycle.get("current_stage") or COGNITIVE_STAGES[0]
         current_index = stage_index.get(current_stage, 0)
         requested_index = stage_index[stage]
+        existing_events = self.repo.search(
+            "cognitive_events",
+            {"cycle_id": cycle_id, "stage": stage},
+            limit=10,
+            offset=0,
+            order_by="created_at",
+            descending=True,
+        )
+        if existing_events:
+            existing = existing_events[0]
+            requested_key = str(idempotency_key).strip() if isinstance(idempotency_key, str) else ""
+            if requested_key and existing.get("idempotency_key") == requested_key:
+                return {"event": existing, "cycle": cycle}
+            raise ValidationError(f"etapa ya registrada para el ciclo: {stage}")
+
         if requested_index > current_index + 1:
             raise ValidationError(
                 f"transicion cognitiva invalida: {current_stage} -> {stage}"
             )
         if requested_index < current_index:
-            # Un retry de una etapa ya persistida es idempotente y no puede
-            # hacer retroceder el cursor del ciclo.
-            if idempotency_key is None:
-                raise ValidationError(
-                    f"retroceso de etapa no permitido: {current_stage} -> {stage}"
-                )
+            raise ValidationError(
+                f"retroceso de etapa no permitido: {current_stage} -> {stage}"
+            )
 
         event_data = {"cycle_id": cycle_id, "stage": stage, "status": status, "data": data or {}}
         if error is not None: event_data["error"] = error
