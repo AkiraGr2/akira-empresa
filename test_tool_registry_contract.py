@@ -77,6 +77,24 @@ class ToolRegistryContractTests(unittest.TestCase):
         self.assertIn('"results": results', source)
         self.assertNotIn('or "Busqueda"', source)
 
+    def test_every_registered_tool_has_a_runtime_dispatch_branch(self):
+        source = Path("nexus.py").read_text(encoding="utf-8")
+        expected = {
+            "web_search", "github_repo_read",
+            "memory_save", "memory_search",
+            "graph_create_node", "graph_create_edge", "graph_related",
+            "learning_save", "self_model_read", "extract_pdf",
+            "image_generate", "cognitive_cycle",
+            "developer_propose", "python_test", "code_review",
+            "controlled_autonomy_start",
+        }
+        for tool_name in expected:
+            self.assertRegex(
+                source,
+                rf'if tool_name == ["\\\']{tool_name}["\\\']',
+                msg=f"faltante branch de dispatcher: {tool_name}",
+            )
+
     def test_canonical_tool_registry_capability_exists(self):
         from persistence.capability_catalog import BASE_CAPABILITIES
         matches = [c for c in BASE_CAPABILITIES if c.get("name") == "tool_registry"]
