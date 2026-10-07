@@ -229,6 +229,36 @@ class CapabilityEngineContractTests(unittest.TestCase):
                 i += 1
             self.assertFalse(in_single_quote, "migration 047 deja una cadena SQL entre comillas sin cerrar")
 
+    def test_observed_availability_is_scoped_to_availability_checks(self):
+        base = {
+            "event_type": "verification",
+            "test_key": "availability_semantics",
+            "test_version": "v1",
+            "result": "pass",
+            "evidence": [{
+                "type": "ci",
+                "title": "availability semantics",
+                "reference": "ci:availability",
+                "summary": "semantica de disponibilidad",
+                "hash": "",
+            }],
+            "runtime_version": "ci",
+            "build_ref": "ci",
+            "actor": "ci",
+            "executor": "ci",
+            "evaluator": "ci",
+            "observed_availability_state": "available",
+        }
+        with self.assertRaises(CapabilityContractError):
+            validate_capability_verification(base)
+
+        valid = dict(base)
+        valid["event_type"] = "availability_check"
+        self.assertEqual(
+            validate_capability_verification(valid)["observed_availability_state"],
+            "available",
+        )
+
     def test_verification_timestamps_are_ordered(self):
         base = {
             "event_type": "verification",

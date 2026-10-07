@@ -419,6 +419,12 @@ def validate_capability_verification(data: Mapping[str, Any], partial: bool = Fa
         observed = _choice(
             "observed_availability_state", observed, CAPABILITY_AVAILABILITY_STATES
         )
+    if event_type == "availability_check" and observed is None:
+        raise CapabilityContractError("availability_check requiere observed_availability_state")
+    if event_type != "availability_check" and observed is not None:
+        raise CapabilityContractError(
+            "observed_availability_state solo aplica a availability_check"
+        )
     return {
         "event_type": event_type,
         "test_key": test_key,
