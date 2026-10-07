@@ -139,6 +139,43 @@ class SpecializedAgentsContractTests(unittest.TestCase):
         self.assertFalse(result["write_performed"])
         self.assertTrue(result["requires_human_approval"])
 
+    def test_modify_insertion_with_stale_hunk_coordinates_is_recovered(self):
+        inspection = {"files": [{
+            "path": "test_tool_registry_contract.py",
+            "status": "ok",
+            "content": "import ast\\nimport unittest\\nfrom pathlib import Path\\n\\n\\nclass Example:\\n    pass\\n",
+        }]}
+        model_patch = (
+            "--- a/test_tool_registry_contract.py\\n"
+            "+++ b/test_tool_registry_contract.py\\n"
+            "@@ -1,3 +1,4 @@\\n"
+            "+# This file contains the test contract for the tool registry\\n"
+            " import unittest\\n"
+            " from pathlib import Path\\n"
+        )
+        with patch.object(specialized_agent_tools, "_specialist_json_call", return_value={
+            "status": "proposal",
+            "summary": "document test contract",
+            "changes": [{
+                "path": "test_tool_registry_contract.py",
+                "operation": "modify",
+                "reason": "test",
+                "patch": model_patch,
+            }],
+            "tests": [], "risks": [],
+        }):
+            result = specialized_agent_tools.propose_code_change(
+                lambda *a, **k: inspection,
+                "AkiraGr2/akira-empresa",
+                ["test_tool_registry_contract.py"],
+                "documenta el archivo",
+            )
+        generated = result["changes"][0]["patch"]
+        from github_controlled import apply_unified_patch
+        applied = apply_unified_patch(inspection["files"][0]["content"], generated, "test_tool_registry_contract.py", "modify")
+        self.assertIn("# This file contains the test contract for the tool registry\\nimport unittest", applied)
+        self.assertRegex(generated, r"^--- a/test_tool_registry_contract\\.py\\n\\+\\+\\+ b/test_tool_registry_contract\\.py\\n@@ ")
+
     def test_reviewer_accepts_absent_create_target_evidence(self):
         calls = []
 
