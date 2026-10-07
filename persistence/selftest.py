@@ -31,6 +31,8 @@ from .capability import (
     validate_capability_transition,
 )
 
+from .build_identity import runtime_build_ref
+
 PROBE_KEY = "selftest:restart-probe:v1"
 PROBE_CONTENT = "AKIRA selftest restart probe v1: si puedes leer esto tras un reinicio, la persistencia funciona."
 
@@ -236,6 +238,7 @@ def run_logic_tests(service, fresh_service_factory=None):
     created_task_ids = []
     created_mission_ids = []
     results = []
+    build_ref = runtime_build_ref()
 
     # ---------- MEMORIA (Fase 4/5) ----------
     def t_memory_persistence():
@@ -635,7 +638,7 @@ def run_logic_tests(service, fresh_service_factory=None):
                     {"kind": "security", "id": "owner_scope", "version": "runtime"},
                 ],
                 "runtime_version": "selftest",
-                "build_ref": source_digest,
+                "build_ref": build_ref,
                 "actor": "selftest",
                 "executor": "selftest",
                 "evaluator": "system",
@@ -645,7 +648,7 @@ def run_logic_tests(service, fresh_service_factory=None):
                 capability["id"],
                 event,
                 actor="selftest",
-                idempotency_key="selftest:repair_engine_v1:v1:" + source_digest,
+                idempotency_key="selftest:repair_engine_v1:v1:" + source_digest + ":" + build_ref,
             )
             effective = verification.get("effective_state")
             verified = effective == "verified" if ok else effective in ("failed", "stale")
@@ -794,7 +797,7 @@ def run_logic_tests(service, fresh_service_factory=None):
                     {"kind": "approval", "id": "human_approval", "version": "runtime"},
                 ],
                 "runtime_version": "selftest",
-                "build_ref": source_digest,
+                "build_ref": build_ref,
                 "actor": "selftest",
                 "executor": "selftest",
                 "evaluator": "system",
@@ -802,7 +805,7 @@ def run_logic_tests(service, fresh_service_factory=None):
             }
             verification = service.record_capability_verification(
                 capability["id"], event, actor="selftest",
-                idempotency_key="selftest:evolution_engine_v1:" + source_digest,
+                idempotency_key="selftest:evolution_engine_v1:" + source_digest + ":" + build_ref,
             )
             verification_ok = (
                 verification.get("effective_state") == "verified" if ok
@@ -885,7 +888,7 @@ def run_logic_tests(service, fresh_service_factory=None):
                     {"kind": "registry", "id": "CapabilityEngine", "version": source_digest},
                 ],
                 "runtime_version": "selftest",
-                "build_ref": source_digest,
+                "build_ref": build_ref,
                 "actor": "selftest",
                 "executor": "selftest",
                 "evaluator": "system",
@@ -900,6 +903,8 @@ def run_logic_tests(service, fresh_service_factory=None):
                     + source_digest
                     + ":"
                     + str(capability.get("verification_state") or "unknown")
+                    + ":"
+                    + build_ref
                 ),
             )
             effective = verification.get("effective_state")
@@ -1075,7 +1080,7 @@ def run_logic_tests(service, fresh_service_factory=None):
                     {"kind": "security", "id": "owner_scope", "version": "runtime"},
                 ],
                 "runtime_version": "selftest",
-                "build_ref": source_digest,
+                "build_ref": build_ref,
                 "actor": "selftest",
                 "executor": "selftest",
                 "evaluator": "system",
@@ -1237,7 +1242,7 @@ def run_logic_tests(service, fresh_service_factory=None):
                     {"kind": "security", "id": "owner_scope", "version": "runtime"},
                 ],
                 "runtime_version": "selftest",
-                "build_ref": source_digest,
+                "build_ref": build_ref,
                 "actor": "selftest",
                 "executor": "selftest",
                 "evaluator": "system",
@@ -1623,7 +1628,7 @@ def run_logic_tests(service, fresh_service_factory=None):
                     {"kind": "security", "id": "owner_scope", "version": "runtime"},
                 ],
                 "runtime_version": "selftest",
-                "build_ref": source_digest,
+                "build_ref": build_ref,
                 "actor": "selftest",
                 "executor": "selftest",
                 "evaluator": "system",
@@ -1636,7 +1641,7 @@ def run_logic_tests(service, fresh_service_factory=None):
                 capability["id"],
                 verification_event,
                 actor="selftest",
-                idempotency_key="selftest:graph_persistent:verification:v1:" + source_digest,
+                idempotency_key="selftest:graph_persistent:verification:v1:" + source_digest + ":" + build_ref,
             )
             verification_ok = (
                 verification.get("effective_state") == "verified"
@@ -1833,7 +1838,7 @@ def run_logic_tests(service, fresh_service_factory=None):
                     },
                 ],
                 "runtime_version": "selftest",
-                "build_ref": source_digest,
+                "build_ref": build_ref,
                 "actor": "selftest",
                 "executor": "selftest",
                 "evaluator": "system",
@@ -1846,7 +1851,7 @@ def run_logic_tests(service, fresh_service_factory=None):
                 capability["id"],
                 verification_event,
                 actor="selftest",
-                idempotency_key="selftest:learning_persistent:verification:v1:" + source_digest,
+                idempotency_key="selftest:learning_persistent:verification:v1:" + source_digest + ":" + build_ref,
             )
             verification_ok = (
                 verification.get("effective_state") == "verified"
@@ -2099,7 +2104,7 @@ def run_logic_tests(service, fresh_service_factory=None):
                 },
             ],
             "runtime_version": "selftest",
-            "build_ref": source_digest,
+            "build_ref": build_ref,
             "actor": "selftest",
             "executor": "selftest",
             "evaluator": "system",
@@ -2318,7 +2323,7 @@ def run_logic_tests(service, fresh_service_factory=None):
                 },
             ],
             "runtime_version": "selftest",
-            "build_ref": source_digest,
+            "build_ref": build_ref,
             "actor": "selftest",
             "executor": "selftest",
             "evaluator": "system",
@@ -2329,7 +2334,7 @@ def run_logic_tests(service, fresh_service_factory=None):
                 capability["id"],
                 event,
                 actor="selftest",
-                idempotency_key="selftest:memory_recall:verification:v1:" + source_digest,
+                idempotency_key="selftest:memory_recall:verification:v1:" + source_digest + ":" + build_ref,
             )
         except Exception as exc:
             return _res(
@@ -2406,7 +2411,7 @@ def run_logic_tests(service, fresh_service_factory=None):
             "environment": {"runtime": "selftest", "secret_configured": configured},
             "dependency_snapshot": [{"kind": "module", "id": "akira_auth.py", "version": source_digest}],
             "runtime_version": "selftest",
-            "build_ref": source_digest,
+            "build_ref": build_ref,
             "actor": "selftest",
             "executor": "selftest",
             "evaluator": "system",
@@ -2456,10 +2461,11 @@ def run_logic_tests(service, fresh_service_factory=None):
             "executor": "selftest",
             "evaluator": "system",
         }
+        verification_key = "selftest:capability:verification:v1:" + build_ref
         try:
             vr = service.record_capability_verification(
                 cap["id"], event, actor="selftest",
-                idempotency_key="selftest:capability:verification:v1",
+                idempotency_key=verification_key,
             )
         except Exception as e:
             return _res(
@@ -2472,7 +2478,7 @@ def run_logic_tests(service, fresh_service_factory=None):
         try:
             repeat = service.record_capability_verification(
                 cap["id"], event, actor="selftest",
-                idempotency_key="selftest:capability:verification:v1",
+                idempotency_key=verification_key,
             )
         except Exception as e:
             return _res(name, False, f"reintento idempotente fallo: {type(e).__name__}: {str(e)[:300]}")

@@ -135,6 +135,24 @@ class CapabilityEngineContractTests(unittest.TestCase):
         core = Path("persistence/core.py").read_text(encoding="utf-8")
         self.assertIn('"primary_key": "key"', core)
 
+    def test_selftest_verification_keys_include_build_identity(self):
+        source = Path("persistence/selftest.py").read_text(encoding="utf-8")
+        self.assertIn("build_ref = runtime_build_ref()", source)
+        for prefix in (
+            "selftest:repair_engine_v1:v1:",
+            "selftest:evolution_engine_v1:",
+            "selftest:self_model_persistent:v1:",
+            "selftest:graph_persistent:verification:v1:",
+            "selftest:learning_persistent:verification:v1:",
+            "selftest:memory_recall:verification:v1:",
+            "selftest:capability:verification:v1:",
+        ):
+            idx = source.find(prefix)
+            self.assertGreaterEqual(idx, 0, f"missing build-scoped key: {prefix}")
+            block = source[idx:idx + 500]
+            self.assertIn("+ build_ref", block, f"build_ref missing from key block: {prefix}")
+        self.assertIn("from .build_identity import runtime_build_ref", source)
+
     def test_runtime_build_change_invalidates_verified_capability(self):
         repo = _CapabilityRepo()
         repo.rows["runtime_state"] = []
