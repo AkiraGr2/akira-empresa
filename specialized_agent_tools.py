@@ -478,6 +478,17 @@ def _normalize_test_modules(tests: Any) -> list[str]:
     return list(dict.fromkeys(out))
 
 
+def _allowlisted_module_prefix(target: str) -> str:
+    """Return the explicit allowlisted module prefix for a normalized selector."""
+    value = str(target or "").strip()
+    segments = value.split(".")
+    for idx in range(len(segments), 0, -1):
+        candidate = ".".join(segments[:idx])
+        if candidate in SAFE_TEST_MODULES:
+            return candidate
+    raise SpecializedAgentError("test_module_not_allowlisted")
+
+
 def _normalize_compile_paths(paths: Any) -> list[str]:
     if paths is None:
         return []
@@ -510,7 +521,8 @@ def run_python_tests(tests: Any = None, compile_paths: Any = None) -> dict[str, 
         commands.append([sys.executable, "-m", "py_compile", *resolved])
 
     if modules:
-        for module in modules:
+        for target in modules:
+            module = _allowlisted_module_prefix(target)
             file_path = root.joinpath(*module.split(".")).with_suffix(".py")
             if not file_path.is_file():
                 raise SpecializedAgentError(f"test_module_not_found:{module}")
@@ -644,7 +656,8 @@ def run_python_tests_in_workspace(workspace: str, tests: Any = None, compile_pat
     if resolved:
         commands.append([sys.executable, "-m", "py_compile", *resolved])
 
-    for module in modules:
+    for target in modules:
+        module = _allowlisted_module_prefix(target)
         file_path = root.joinpath(*module.split(".")).with_suffix(".py")
         try:
             file_path.resolve().relative_to(root)
