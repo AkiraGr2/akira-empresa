@@ -101,7 +101,12 @@ def validate_agent_result(
     outputs: Any,
     error: Any = None,
 ) -> tuple[bool, dict[str, Any]]:
-    """Validate the semantic envelope produced by an agent task."""
+    """Validate the semantic envelope produced by an agent task.
+
+    Shared capabilities have one shared semantic shape regardless of which
+    production agent is exercising them. Agent-specific tools add stricter
+    semantic requirements below.
+    """
     detail: dict[str, Any] = {}
     contract = AGENT_CONTRACTS.get(agent_name)
     if contract is None:
@@ -113,67 +118,97 @@ def validate_agent_result(
     if not isinstance(outputs, dict):
         return False, {"reason": "outputs_not_object"}
 
-    ok = True
-    if agent_name == "researcher":
+    if tool_name == "github_repo_read":
         result = outputs.get("result")
-        if not isinstance(result, dict):
-            ok = False
-            detail["result"] = "missing"
-        elif tool_name == "web_search":
-            ok = (
-                isinstance(result.get("results"), list)
-                and isinstance(result.get("query"), str)
-                and int(result.get("result_count") or 0) > 0
-                and int(result.get("result_count") or 0) == len(result.get("results") or [])
-                and all(
-                    isinstance(item, dict)
-                    and isinstance(item.get("reference"), str)
-                    and item.get("reference").startswith(("http://", "https://"))
-                    for item in (result.get("results") or [])
-                )
-            )
-            detail["result_count"] = int(result.get("result_count") or 0)
-            detail["has_reference"] = all(
-                isinstance(item, dict)
-                and isinstance(item.get("reference"), str)
-                and item.get("reference").startswith(("http://", "https://"))
-                for item in (result.get("results") or [])
-            )
-        elif tool_name == "github_repo_read":
-            ok = bool(result.get("ok")) and bool(result.get("files") or result.get("root"))
-        elif tool_name == "memory_search":
-            ok = isinstance(outputs.get("results"), list)
+        ok = (
+            isinstance(result, dict)
+            and result.get("ok") is True
+            and bool(result.get("files") or result.get("root"))
+            and isinstance(result.get("head_commit_sha"), str)
+            and len(result.get("head_commit_sha") or "") == 40
+        )
+        detail["head_commit_sha_present"] = bool(
+            isinstance(result, dict) and result.get("head_commit_sha")
+        )
         return ok, detail
 
-    if agent_name == "memorizer":
-        if tool_name == "memory_save":
-            ok = outputs.get("stored") is True and bool(outputs.get("id"))
-        else:
-            ok = isinstance(outputs.get("results"), list) or "found" in outputs
+    if tool_name == "memory_search":
+        ok = isinstance(outputs.get("results"), list) and isinstance(outputs.get("found"), int)
+        detail["result_count"] = len(outputs.get("results") or [])
+        detail["found"] = outputs.get("found")
         return ok, detail
 
-    if agent_name == "graph_builder":
-        if tool_name in {"graph_create_node", "graph_create_edge"}:
-            ok = bool(outputs.get("id"))
-        else:
-            ok = isinstance(outputs.get("edges"), list)
+    if tool_name == "memory_save":
+        ok = outputs.get("stored") is True and bool(outputs.get("id"))
+        detail["stored"] = outputs.get("stored")
+        detail["semantic_indexed"] = outputs.get("semantic_indexed")
         return ok, detail
 
-    if agent_name == "learner":
+    if tool_name in {"graph_create_node", "graph_create_edge"}:
         ok = bool(outputs.get("id"))
         return ok, detail
 
-    if agent_name == "internal":
-        if tool_name == "self_model_read":
-            model = outputs.get("self_model")
-            ok = isinstance(model, dict) and all(
-                key in model for key in ("identity", "capabilities", "tools", "models")
-            )
-        else:
-            ok = bool(outputs.get("cycle_id")) and int(outputs.get("events_count") or 0) == 9
+    if tool_name == "graph_related":
+        ok = isinstance(outputs.get("edges"), list) and isinstance(outputs.get("count"), int)
         return ok, detail
 
-    if agent_name == "developer":
+    if tool_name == "learning_save":
+        ok = bool(outputs.get("id")) and str(outputs.get("outcome") or "") in {"created", "existing"}
+        return ok, detail
+
+    if tool_name == "python_test":
+        tests = outputs.get("tests")
+        ok = (
+            str(outputs.get("status") or "").lower() in {"passed", "success"}
+            and isinstance(tests, list)
+        )
+        detail["test_count"] = len(tests) if isinstance(tests, list) else 0
+        return ok, detail
+
+    if tool_name == "web_search":
+        result = outputs.get("result")
+        if not isinstance(result, dict):
+            return False, {"reason": "result_missing"}
+        references = result.get("results") or []
+        ok = (
+            isinstance(references, list)
+            and isinstance(result.get("query"), str)
+            and int(result.get("result_count") or 0) > 0
+            and int(result.get("result_count") or 0) == len(references)
+            and all(
+                isinstance(item, dict)
+                and isinstance(item.get("reference"), str)
+                and item.get("reference").startswith(("http://", "https://"))
+                for item in references
+            )
+        )
+        detail["result_count"] = int(result.get("result_count") or 0)
+        detail["has_reference"] = all(
+            isinstance(item, dict)
+            and isinstance(item.get("reference"), str)
+            and item.get("reference").startswith(("http://", "https://"))
+            for item in references
+        )
+        return ok, detail
+
+    if tool_name == "self_model_read":
+        model = outputs.get("self_model")
+        ok = isinstance(model, dict) and all(
+            key in model for key in ("identity", "capabilities", "tools", "models")
+        )
+        return ok, detail
+
+    if tool_name == "cognitive_cycle":
+        ok = (
+            bool(outputs.get("cycle_id"))
+            and int(outputs.get("events_count") or 0) == 9
+            and not outputs.get("error")
+        )
+        detail["events_count"] = int(outputs.get("events_count") or 0)
+        detail["learning_id_present"] = bool(outputs.get("learning_id"))
+        return ok, detail
+
+    if tool_name == "developer_propose":
         proposal = outputs.get("proposal")
         ok = (
             isinstance(proposal, dict)
@@ -181,25 +216,20 @@ def validate_agent_result(
             and proposal.get("write_performed") is False
             and proposal.get("requires_human_approval") is True
         )
+        detail["change_count"] = len(proposal.get("changes") or []) if isinstance(proposal, dict) else 0
         return ok, detail
 
-    if agent_name == "tester":
-        tests = outputs.get("tests")
-        ok = (
-            str(outputs.get("status") or "").lower() in {"passed", "success"}
-            and isinstance(tests, list)
-        )
-        return ok, detail
-
-    if agent_name == "reviewer":
+    if tool_name == "code_review":
         review = outputs.get("review")
         ok = (
             isinstance(review, dict)
-            and str(review.get("verdict") or "").lower() in {"approve", "approved", "request_changes"}
+            and str(review.get("verdict") or "").lower() in {
+                "approve", "approved", "request_changes"
+            }
         )
         return ok, detail
 
-    if agent_name == "autonomy_orchestrator":
+    if tool_name == "controlled_autonomy_start":
         autonomy = outputs.get("autonomy")
         ok = (
             isinstance(autonomy, dict)
@@ -207,6 +237,8 @@ def validate_agent_result(
             and outputs.get("awaits_human_approval") is True
             and outputs.get("external_write_performed") is False
         )
+        detail["autonomy_id"] = autonomy.get("id") if isinstance(autonomy, dict) else None
         return ok, detail
 
     return False, {"reason": "no_semantic_contract"}
+
