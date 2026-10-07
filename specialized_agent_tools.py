@@ -54,6 +54,7 @@ SAFE_TEST_MODULES = frozenset({
     "test_specialized_agents_contract",
     "test_specialized_agent_mission_wiring",
     "test_multimedia_contract",
+    "test_tool_registry_contract",
 })
 
 
@@ -227,6 +228,13 @@ def _canonicalize_generated_patch(change: dict[str, Any]) -> dict[str, Any]:
     lines = patch.splitlines(keepends=True)
     old_headers = [line.rstrip("\n") for line in lines if line.startswith("--- ")]
     new_headers = [line.rstrip("\n") for line in lines if line.startswith("+++ ")]
+    # El contrato permite una descripción precisa en lugar de un diff. No
+    # rechazarla como si fuera un parche mal formado: el propuesta sigue siendo
+    # read-only y cualquier ejecución posterior debe exigir un patch canónico.
+    if not old_headers and not new_headers:
+        if patch.strip():
+            return change
+        raise SpecializedAgentError(f"proposal_patch_headers_invalid:{path}")
     if len(old_headers) != 1 or len(new_headers) != 1:
         raise SpecializedAgentError(f"proposal_patch_headers_invalid:{path}")
     expected_old = "/dev/null" if operation == "create" else f"a/{path}"
