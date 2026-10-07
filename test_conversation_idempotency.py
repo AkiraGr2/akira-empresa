@@ -117,6 +117,24 @@ class ConversationIdempotencyTests(unittest.TestCase):
                 idempotency_key="chat:exchange-2:user",
             )
 
+    def test_cross_owner_conversation_idempotency_is_rejected(self):
+        self.repo.rows["conversations"].append({
+            "id": "conv_2",
+            "title": "Other",
+            "created_by": "other@example.test",
+            "status": "active",
+            "message_count": 0,
+            "version": 1,
+            "idempotency_key": "chat:exchange-cross-owner:conversation",
+        })
+        from persistence.core import ConflictError
+        with self.assertRaises(ConflictError):
+            self.service.create_conversation(
+                {"title": "attempt"},
+                actor="owner@example.test",
+                idempotency_key="chat:exchange-cross-owner:conversation",
+            )
+
     def test_message_lookup_respects_conversation_owner(self):
         created = self.service.add_message(
             "conv_1",
