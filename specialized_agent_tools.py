@@ -336,8 +336,12 @@ def _canonicalize_generated_patch(
             raise SpecializedAgentError(f"proposal_invalid_create_patch:{path}")
         if not body or any(not line.startswith("+") for line in body):
             raise SpecializedAgentError(f"proposal_invalid_create_patch:{path}")
+        # The model's hunk coordinates are untrusted metadata. For create operations,
+        # the addition body is the authoritative payload, so normalize the count
+        # deterministically instead of rejecting an otherwise structurally valid proposal.
         if new_count != len(body):
-            raise SpecializedAgentError(f"proposal_hunk_count_invalid:{path}")
+            canonical = "".join(lines[:idx]) + f"@@ -0,0 +1,{len(body)} @@\n" + "".join(body)
+            return {**change, "patch": canonical}
         return change
 
     if hunk_header.strip() != "@@":
