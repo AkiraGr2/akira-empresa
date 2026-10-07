@@ -178,7 +178,8 @@ def validate_change(change: Mapping[str, Any]) -> dict[str, Any]:
         raise AutonomyContractError("patch_unified_required")
     reason = _text("reason", change.get("reason", ""), 1000)
     hunk_headers = [line for line in patch.splitlines() if line.startswith("@@")]
-    hunk_pattern = re.compile(r"^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@")
+    # A valid unified-diff hunk header may carry a trailing section/context.
+    hunk_pattern = re.compile(r"^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@(?: .*)?$")
     if not hunk_headers or any(not hunk_pattern.fullmatch(line) for line in hunk_headers):
         raise AutonomyContractError("patch_hunk_header_invalid")
     return {"path": path, "operation": operation, "reason": reason, "patch": patch}
