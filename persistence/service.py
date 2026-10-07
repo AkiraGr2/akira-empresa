@@ -212,6 +212,144 @@ class PersistenceService:
     def recent_audit(self, actor=None, action_prefix=None, limit=20):
         return self.repo.audit_search(actor=actor, action_prefix=action_prefix, limit=limit)
 
+    RUNTIME_BUILD_STATE_KEY = "backend_build"
+
+    def _record_capability_verification_tx(self, tx, capability, event, actor="system", idempotency_key=None):
+        before = capability_state_snapshot(capability)
+        after = apply_verification_result(capability, event)
+        record = dict(
+            event,
+            id=new_id("capver"),
+            capability_id=capability["id"],
+            state_before=before,
+            state_after=after,
+            schema_version=CAPABILITY_VERIFICATION_SCHEMA_VERSION,
+            version=1,
+        )
+        if idempotency_key is not None:
+            if not isinstance(idempotency_key, str) or not 0 < len(idempotency_key.strip()) <= 200:
+                raise ValidationError("idempotency_key debe ser texto de 1 a 200 caracteres")
+            record["idempotency_key"] = idempotency_key.strip()
+        stored, created = tx.create("capability_verifications", record)
+        if not created:
+            current = tx.get("capabilities", capability["id"])
+            if current is None:
+                raise VerificationError("capability no encontrada al sincronizar verification")
+            return {"outcome": "already_synced", "record": stored, "capability": current,
+                    "effective_state": derive_effective_state(current)}
+        changes = {
+            "verification_state": after["verification_state"],
+            "availability_state": after["availability_state"],
+            "last_verification_id": stored["id"],
+        }
+        if event["event_type"] in ("verification", "revalidation") and event["result"] == "pass":
+            changes["last_verified_at"] = _now_iso()
+        updated = tx.update("capabilities", capability["id"], changes, capability["version"])
+        tx.append_audit({
+            "actor": actor,
+            "action": (
+                "capability.verification"
+                if event["result"] == "pass"
+                else (
+                    "capability.verification.failed"
+                    if event["result"] == "fail"
+                    else "capability.verification.inconclusive"
+                )
+            ),
+            "resource": "capabilities",
+            "resource_id": capability["id"],
+            "status": "success" if event["result"] == "pass" else "failure",
+            "detail": {
+                "verification_id": stored["id"],
+                "event_type": event["event_type"],
+                "result": event["result"],
+                "effective_state": derive_effective_state(updated),
+            },
+        })
+        return {"outcome": "created", "record": stored, "capability": updated,
+                "effective_state": derive_effective_state(updated)}
+
+    def handle_runtime_build_change(self, build_ref, actor="system"):
+        build_ref = str(build_ref or "").strip()
+        if not build_ref or len(build_ref) > 160:
+            raise ValidationError("build_ref requerido y limitado a 160 caracteres")
+        try:
+            with self.repo.transaction() as tx:
+                if hasattr(tx, "advisory_xact_lock"):
+                    tx.advisory_xact_lock("runtime_state:backend_build")
+                state = tx.get("runtime_state", self.RUNTIME_BUILD_STATE_KEY)
+                previous = None
+                if state and isinstance(state.get("value"), dict):
+                    previous = str(state["value"].get("build_ref") or "").strip() or None
+                if previous == build_ref:
+                    return {"outcome": "unchanged", "build_ref": build_ref, "previous_build_ref": previous, "invalidated": []}
+
+                invalidated = []
+                if previous is not None:
+                    capabilities = tx.search("capabilities", {}, limit=200, order_by="name", descending=False)
+                    for capability in capabilities:
+                        if capability.get("verification_state") != "verified":
+                            continue
+                        spec = capability.get("verification_spec")
+                        policy = spec.get("freshness_policy") if isinstance(spec, dict) else None
+                        invalidate_on = policy.get("invalidate_on") if isinstance(policy, dict) else []
+                        if not isinstance(invalidate_on, list) or "build_change" not in invalidate_on:
+                            continue
+                        event = {
+                            "event_type": "invalidation",
+                            "test_key": "runtime_build_change",
+                            "test_version": "v1",
+                            "result": "fail",
+                            "evidence": [{
+                                "type": "runtime_observation",
+                                "title": "Runtime build change",
+                                "reference": f"runtime://build-change/{build_ref}",
+                                "summary": "La identidad de build del backend cambio; la verificacion anterior se marco stale.",
+                                "hash": build_ref,
+                            }],
+                            "environment": {"previous_build_ref": previous, "current_build_ref": build_ref},
+                            "dependency_snapshot": [{"kind": "runtime_build", "previous": previous, "current": build_ref}],
+                            "runtime_version": build_ref,
+                            "build_ref": build_ref,
+                            "actor": actor,
+                            "executor": "persistence.runtime",
+                            "evaluator": "system",
+                            "error": {"reason": "build_change", "previous_build_ref": previous, "current_build_ref": build_ref},
+                        }
+                        key = f"runtime:build_change:{build_ref}:{capability['id']}"[:200]
+                        result = self._record_capability_verification_tx(tx, capability, event, actor=actor, idempotency_key=key)
+                        invalidated.append({
+                            "id": capability["id"],
+                            "name": capability.get("name"),
+                            "outcome": result["outcome"],
+                            "effective_state": result["effective_state"],
+                        })
+
+                value = {"build_ref": build_ref, "previous_build_ref": previous, "observed_at": _now_iso()}
+                if state is None:
+                    tx.create("runtime_state", {"key": self.RUNTIME_BUILD_STATE_KEY, "value": value, "version": 1})
+                else:
+                    tx.update("runtime_state", self.RUNTIME_BUILD_STATE_KEY, {"value": value}, state["version"])
+                tx.append_audit({
+                    "actor": actor,
+                    "action": "runtime.build.observed",
+                    "resource": "runtime_state",
+                    "resource_id": self.RUNTIME_BUILD_STATE_KEY,
+                    "status": "success",
+                    "detail": {"build_ref": build_ref, "previous_build_ref": previous,
+                               "changed": previous is not None,
+                               "invalidated_capabilities": [x["name"] for x in invalidated]},
+                })
+                return {"outcome": "changed" if previous is not None else "initialized",
+                        "build_ref": build_ref, "previous_build_ref": previous,
+                        "invalidated": invalidated}
+        except (PersistenceError, ValidationError, VerificationError):
+            raise
+        except Exception as exc:
+            self._audit_failure_generic(actor, "runtime.build.observed", "runtime_state",
+                                        self.RUNTIME_BUILD_STATE_KEY, exc)
+            raise StorageError(type(exc).__name__) from exc
+
     def save_memory(self, data, actor="system", idempotency_key=None, owner_scope=None):
         fields = validate_memory(data)
         if owner_scope is not None:
@@ -1037,94 +1175,29 @@ class PersistenceService:
         except CapabilityContractError as exc:
             raise ValidationError(str(exc)) from exc
 
-        record = dict(
-            event,
-            id=new_id("capver"),
-            capability_id=capability_id,
-            state_before=before,
-            state_after=after,
-            schema_version=CAPABILITY_VERIFICATION_SCHEMA_VERSION,
-            version=1,
-        )
-        if idempotency_key is not None:
-            if not isinstance(idempotency_key, str) or not 0 < len(idempotency_key.strip()) <= 200:
-                raise ValidationError("idempotency_key debe ser texto de 1 a 200 caracteres")
-            record["idempotency_key"] = idempotency_key.strip()
-
         try:
             with self.repo.transaction() as tx:
-                stored, created = tx.create("capability_verifications", record)
-                if not created:
-                    current = tx.get("capabilities", capability_id)
-                    if current is None:
-                        raise VerificationError("capability no encontrada al sincronizar verification")
-                    return {
-                        "outcome": "already_synced",
-                        "record": stored,
-                        "capability": current,
-                        "effective_state": derive_effective_state(current),
-                    }
-                changes = {
-                    "verification_state": after["verification_state"],
-                    "availability_state": after["availability_state"],
-                    "last_verification_id": stored["id"],
-                }
-                if (
-                    event["event_type"] in ("verification", "revalidation")
-                    and event["result"] == "pass"
-                ):
-                    changes["last_verified_at"] = _now_iso()
-                updated = tx.update(
-                    "capabilities",
-                    capability_id,
-                    changes,
-                    capability["version"],
+                result = self._record_capability_verification_tx(
+                    tx, capability, event, actor=actor, idempotency_key=idempotency_key
                 )
-                tx.append_audit({
-                    "actor": actor,
-                    "action": (
-                        "capability.verification"
-                        if event["result"] == "pass"
-                        else (
-                            "capability.verification.failed"
-                            if event["result"] == "fail"
-                            else "capability.verification.inconclusive"
-                        )
-                    ),
-                    "resource": "capabilities",
-                    "resource_id": capability_id,
-                    "status": "success" if event["result"] == "pass" else "failure",
-                    "detail": {
-                        "verification_id": stored["id"],
-                        "event_type": event["event_type"],
-                        "result": event["result"],
-                        "effective_state": derive_effective_state(updated),
-                    },
-                })
         except PersistenceError:
             raise
         except Exception as exc:
-            self._audit_failure_generic(
-                actor,
-                "capability.verification",
-                "capabilities",
-                capability_id,
-                exc,
-            )
+            self._audit_failure_generic(actor, "capability.verification", "capabilities", capability_id, exc)
             raise StorageError(type(exc).__name__) from exc
 
         verified_capability = self.repo.get("capabilities", capability_id)
-        verified_event = self.repo.get("capability_verifications", stored["id"])
+        verified_event = self.repo.get("capability_verifications", result["record"]["id"])
         if verified_capability is None or verified_event is None:
             raise VerificationError("capability verification no confirmada")
-        if verified_capability.get("version") != capability["version"] + 1:
+        if result["outcome"] == "created" and verified_capability.get("version") != capability["version"] + 1:
             raise VerificationError("capability version no confirmada")
-        if capability_state_snapshot(verified_capability) != after:
+        if result["outcome"] == "created" and capability_state_snapshot(verified_capability) != after:
             raise VerificationError("estado de capability no coincide al releer")
-        if verified_event.get("state_after") != after:
+        if result["outcome"] == "created" and verified_event.get("state_after") != after:
             raise VerificationError("state_after no coincide al releer")
         return {
-            "outcome": "created",
+            "outcome": result["outcome"],
             "record": verified_event,
             "capability": verified_capability,
             "effective_state": derive_effective_state(verified_capability),
