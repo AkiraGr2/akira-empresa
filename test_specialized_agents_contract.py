@@ -208,9 +208,9 @@ class SpecializedAgentsContractTests(unittest.TestCase):
             }]},
         )
         self.assertNotEqual(canonical["patch"], stale_patch)
-        self.assertIn(
-            "@@ -2,2 +2,3 @@",
+        self.assertRegex(
             canonical["patch"],
+            r"^--- a/test_tool_registry_contract\\.py\\n\\+\\+\\+ b/test_tool_registry_contract\\.py\\n@@ ",
         )
         from github_controlled import apply_unified_patch
         applied = apply_unified_patch(
