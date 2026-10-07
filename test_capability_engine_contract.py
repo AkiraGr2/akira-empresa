@@ -617,5 +617,29 @@ class CapabilityEngineContractTests(unittest.TestCase):
             )
 
 
+    def test_f7_capability_contract_exact_sync_uses_canonical_limitations(self):
+        from persistence.capability_catalog import COGNITIVE_CYCLE_PERSISTENT_CAPABILITY
+        from persistence.migrations import MIGRATIONS
+
+        sql = next(
+            sql for version, sql in MIGRATIONS
+            if version == "053_cognitive_cycle_persistent_capability_contract_exact_sync"
+        )
+
+        self.assertIn("UPDATE public.capabilities", sql)
+        self.assertIn("WHERE name = 'cognitive_cycle_persistent'", sql)
+        self.assertIn("jsonb_build_array", sql)
+        self.assertIn("chr(59)", sql)
+
+        for limitation in COGNITIVE_CYCLE_PERSISTENT_CAPABILITY["limitations"]:
+            encoded = limitation.replace("'", "''").replace(";", "' || chr(59) || '")
+            self.assertIn(encoded, sql)
+
+        self.assertNotIn(
+            "La calidad de la inferencia depende de los proveedores externos disponibles. La persistencia",
+            sql,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
