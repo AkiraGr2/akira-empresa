@@ -1779,4 +1779,31 @@ MIGRATIONS = [
         );
         """
     ),
+    (
+        "050_runtime_build_state",
+        """
+        CREATE TABLE runtime_state (
+            key TEXT PRIMARY KEY,
+            value JSONB NOT NULL DEFAULT '{}'::jsonb,
+            version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        ALTER TABLE public.runtime_state ENABLE ROW LEVEL SECURITY;
+        REVOKE ALL ON TABLE public.runtime_state FROM anon, authenticated;
+        CREATE POLICY "akira_deny_anon_authenticated_select"
+            ON public.runtime_state AS RESTRICTIVE
+            FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert"
+            ON public.runtime_state AS RESTRICTIVE
+            FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update"
+            ON public.runtime_state AS RESTRICTIVE
+            FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete"
+            ON public.runtime_state AS RESTRICTIVE
+            FOR DELETE TO anon, authenticated USING (false);
+        """
+    ),
+
 ]

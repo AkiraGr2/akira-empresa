@@ -492,6 +492,16 @@ ENTITIES = {
         "orderable": ("created_at", "updated_at", "last_message_at"),
         "idempotent": True,
     },
+    "runtime_state": {
+        "table": "runtime_state",
+        "columns": ("key", "value", "version", "created_at", "updated_at"),
+        "json_columns": ("value",),
+        "mutable": ("value",),
+        "filterable": ("key",),
+        "in_filterable": (),
+        "orderable": ("created_at", "updated_at"),
+        "idempotent": False,
+    },
     "conversation_messages": {
         "table": "conversation_messages",
         "columns": (

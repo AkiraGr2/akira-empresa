@@ -143,6 +143,18 @@ class PostgresRepository(PersistenceRepository):
         spec = entity_spec(entity)
         cols = [c for c in spec["columns"] if c in record]
         vals = [Jsonb(record[c]) if c in spec["json_columns"] else record[c] for c in cols]
+        if spec.get("idempotent") is False:
+            sql = (
+                f"INSERT INTO {spec['table']} ({', '.join(cols)}) "
+                f"VALUES ({', '.join(['%s'] * len(cols))}) RETURNING *"
+            )
+            with self._cursor() as cur:
+                cur.execute(sql, vals)
+                row = cur.fetchone()
+            if row is None:
+                raise StorageError("insert sin resultado")
+            return _out(row), True
+
         if spec.get("conflict_strategy") == "advisory_precheck":
             if self._conn is None:
                 raise StorageError("advisory_precheck_requires_transaction")

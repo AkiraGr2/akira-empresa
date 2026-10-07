@@ -5,6 +5,7 @@ al endpoint solo sale el tipo de excepcion (sin host, usuario ni claves).
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import threading
 import time
@@ -61,6 +62,25 @@ def _default_backend():
 
 _EXTRA_POOLS = []
 
+def _runtime_build_ref():
+    """Huella determinista del backend desplegado, sin depender de secretos ni de Git en runtime."""
+    root = __import__("pathlib").Path(__file__).resolve().parent.parent
+    digest = hashlib.sha256()
+    paths = sorted(
+        p for p in root.rglob("*")
+        if p.is_file()
+        and ".git" not in p.parts
+        and "__pycache__" not in p.parts
+        and (p.suffix == ".py" or p.name == "requirements.txt")
+    )
+    for path in paths:
+        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return "sha256:" + digest.hexdigest()[:48]
+
+
 
 def make_pool_open(url):
     """Pool nuevo para el 'reinicio suave' del selftest. Se cierra al terminar las pruebas."""
@@ -96,6 +116,20 @@ def boot(backend_factory=None, attempts=3, wait_seconds=(5, 10), sleep=time.slee
             service = PersistenceService(repo)
             service.health()
             _seed_capabilities(service)
+            build_ref = _runtime_build_ref()
+            try:
+                build_event = service.handle_runtime_build_change(build_ref)
+                print(
+                    f"[capability] runtime build={build_event.get('outcome')} "
+                    f"invalidated={len(build_event.get('invalidated') or [])}",
+                    flush=True,
+                )
+            except Exception as exc:
+                print(
+                    f"[capability] runtime build invalidation fallo: "
+                    f"{type(exc).__name__}: {str(exc)[:240]}",
+                    flush=True,
+                )
             STATE.update(service=service, connected=True, state="ok", error_type=None)
             break
         except Exception as e:  # PostgreSQL gestionado puede tardar en aceptar conexiones: se reintenta
