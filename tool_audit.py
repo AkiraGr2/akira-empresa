@@ -371,7 +371,7 @@ def _run_one(
         inputs["node_id"] = fixture.get("graph_node_a_id") or ""
 
     idem = f"f8-audit:{run_id}:{tool_name}"
-    outputs, error = invoke(
+    invocation = invoke(
         service,
         tool_name,
         inputs,
@@ -379,7 +379,15 @@ def _run_one(
         owner_scope,
         idempotency_key=idem,
     )
+    outputs = invocation.get("outputs") if isinstance(invocation, dict) else None
+    error = invocation.get("error") if isinstance(invocation, dict) else {
+        "type": "ToolAuditInvocationContractError",
+        "message": "dispatcher auditor no devolvio un envelope valido",
+    }
     report["checks"]["execution"] = error is None
+    report["checks"]["not_replayed_on_first_run"] = bool(
+        isinstance(invocation, dict) and invocation.get("replayed") is False
+    )
     report["evidence"]["invocation_idempotency_key"] = idem
     report["evidence"]["execution_error"] = error
 
@@ -435,11 +443,32 @@ def _run_one(
     elif tool_name == "memory_search":
         semantic_ok = int(outputs.get("found") or 0) >= 1
     elif tool_name == "graph_create_node":
-        semantic_ok = bool(outputs.get("id"))
-        if not fixture.get("graph_node_a_id"):
-            fixture["graph_node_a_id"] = outputs.get("id")
-        else:
-            fixture["graph_node_b_id"] = outputs.get("id")
+        first_id = outputs.get("id")
+        semantic_ok = bool(first_id)
+        fixture["graph_node_a_id"] = first_id
+        if semantic_ok:
+            second_idem = f"f8-audit:{run_id}:graph_create_node:second"
+            second = invoke(
+                service,
+                tool_name,
+                {"node_type": "solution", "label": f"AKIRA F8 TOOL AUDIT B {run_id}"},
+                actor,
+                owner_scope,
+                idempotency_key=second_idem,
+            )
+            second_outputs = second.get("outputs") if isinstance(second, dict) else {}
+            second_error = second.get("error") if isinstance(second, dict) else {
+                "type": "ToolAuditInvocationContractError",
+                "message": "second graph_create_node invocation envelope invalid",
+            }
+            fixture["graph_node_b_id"] = second_outputs.get("id") if second_outputs else None
+            report["evidence"]["second_node_invocation"] = {
+                "idempotency_key": second_idem,
+                "ok": second_error is None,
+                "error": second_error,
+                "invocation_id": second.get("invocation_id") if isinstance(second, dict) else None,
+            }
+            semantic_ok = semantic_ok and second_error is None and bool(fixture["graph_node_b_id"])
     elif tool_name == "graph_create_edge":
         semantic_ok = bool(outputs.get("id"))
         fixture["graph_edge_id"] = outputs.get("id")
