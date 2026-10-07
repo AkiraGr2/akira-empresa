@@ -182,6 +182,32 @@ def _audit_task(
 
     if agent_name in {"memorizer", "learner"} and tool_name == "memory_save" and outputs.get("id"):
         fixture.setdefault("memory_ids", []).append(outputs.get("id"))
+        try:
+            memory_record = service.get_memory(outputs.get("id"), owner_scope=owner_scope)
+            report["checks"]["memory_persisted_in_owner_scope"] = bool(
+                memory_record
+                and memory_record.get("status") == "active"
+                and memory_record.get("privacy_level") == "PRIVATE"
+                and memory_record.get("owner_scope") == owner_scope
+            )
+            if not report["checks"]["memory_persisted_in_owner_scope"]:
+                report["verdict"] = "FAILED"
+        except Exception as exc:
+            report["checks"]["memory_persisted_in_owner_scope"] = False
+            report["error"] = {"type": type(exc).__name__, "message": "memory persistence verification failed"}
+    if agent_name == "learner" and tool_name == "learning_save" and outputs.get("id"):
+        try:
+            learning_record = service.get_learning(outputs.get("id"), owner_scope=owner_scope)
+            report["checks"]["learning_stays_candidate"] = bool(
+                learning_record
+                and learning_record.get("status") == "candidate"
+                and not learning_record.get("verified_at")
+            )
+            if not report["checks"]["learning_stays_candidate"]:
+                report["verdict"] = "FAILED"
+        except Exception as exc:
+            report["checks"]["learning_stays_candidate"] = False
+            report["error"] = {"type": type(exc).__name__, "message": "learning persistence verification failed"}
     if agent_name == "graph_builder" and tool_name == "graph_create_node" and outputs.get("id"):
         fixture.setdefault("graph_node_ids", []).append(outputs.get("id"))
     if agent_name == "graph_builder" and tool_name == "graph_create_edge" and outputs.get("id"):
@@ -508,8 +534,12 @@ def run_agent_audit(
         verdict = report.get("verdict", "FAILED")
         counts[verdict] = counts.get(verdict, 0) + 1
     final_ok = (
-        len(reports) == len(PRODUCTION_AGENT_ORDER) + (1 if missing else 0)
+        len(reports) == 15
         and not missing
+        and not unexpected
+        and not unavailable_tools
+        and {report.get("agent") for report in reports if report.get("agent") in PRODUCTION_AGENT_ORDER}
+            == set(PRODUCTION_AGENT_ORDER)
         and counts.get("FAILED", 0) == 0
         and cleanup.get("ok") is True
     )
