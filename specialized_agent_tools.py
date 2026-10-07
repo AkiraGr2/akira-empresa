@@ -257,6 +257,44 @@ def _deterministic_modify_patch(path: str, source: str, find_text: str, replace_
     return diff
 
 
+def _recover_modify_patch_from_diff(path: str, source: str, patch: str) -> str | None:
+    """Recover a valid modify diff when the model got hunk coordinates wrong.
+
+    The model is allowed to describe the intended replacement, but Python owns the
+    final location and diff syntax. We only recover when the deleted block occurs
+    exactly once in the observed source; otherwise we fail closed.
+    """
+    lines = patch.splitlines(keepends=True)
+    hunk_indexes = [i for i, line in enumerate(lines) if line.startswith("@@")]
+    if len(hunk_indexes) != 1:
+        return None
+    body = lines[hunk_indexes[0] + 1:]
+    removed = [line[1:] for line in body if line.startswith("-")]
+    added = [line[1:] for line in body if line.startswith("+")]
+    context = [line[1:] for line in body if line.startswith(" ")]
+    if not removed or not added or not all(line[:1] in {" ", "-", "+"} for line in body):
+        return None
+    if context:
+        # Preserve safety: if the patch has context, require that the complete
+        # context+deleted sequence exists exactly once before recovering.
+        target = context[:]
+        try:
+            first_removed = body.index(next(line for line in body if line.startswith("-")))
+        except StopIteration:
+            return None
+        before = [line[1:] for line in body[:first_removed] if line.startswith(" ")]
+        after = [line[1:] for line in body[first_removed + len(removed):] if line.startswith(" ")]
+        target = before + removed + after
+        if source.count("".join(target)) != 1:
+            return None
+        find_text = "".join(target)
+        replace_text = "".join(before + added + after)
+    else:
+        find_text = "".join(removed)
+        replace_text = "".join(added)
+    return _deterministic_modify_patch(path, source, find_text, replace_text)
+
+
 def _inspection_file_content(inspection: dict[str, Any], path: str) -> str | None:
     for item in inspection.get("files") or []:
         if not isinstance(item, dict):
@@ -309,8 +347,15 @@ def _canonicalize_generated_patch(
         ):
             return change
 
-        # A malformed diff is not repaired by guessing its hunk numbers. If the
-        # model supplied a structured edit, the branch above would have materialized it.
+        # If the model returned a syntactically valid diff with stale/wrong hunk
+        # coordinates, recover only from exact source text. Never guess a location.
+        source = _inspection_file_content(inspection or {}, path)
+        if source is not None:
+            recovered = _recover_modify_patch_from_diff(path, source, patch)
+            if recovered:
+                return {**change, "patch": recovered}
+
+        # No exact, unique recovery is possible: fail closed.
         raise SpecializedAgentError(f"proposal_invalid_patch_hunk:{path}")
 
     if not old_headers and not new_headers:
