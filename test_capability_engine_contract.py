@@ -80,12 +80,6 @@ class _CapabilityRepo:
         rows = [dict(row) for row in self.rows.get(entity, [])]
         for key, value in (filters or {}).items():
             rows = [row for row in rows if row.get(key) == value]
-        return rows[offset:offset + limit]
-
-    def search(self, entity, filters=None, limit=50, offset=0, order_by="created_at", descending=True):
-        rows = [dict(row) for row in self.rows.get(entity, [])]
-        for key, value in (filters or {}).items():
-            rows = [row for row in rows if row.get(key) == value]
         rows.sort(key=lambda row: row.get(order_by) or "", reverse=descending)
         return rows[offset:offset + limit]
 
