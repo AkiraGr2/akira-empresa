@@ -3948,11 +3948,9 @@ class PersistenceService:
     def add_message(self, conversation_id, role, content, model=None,
                     memories_used=None, duration_ms=0, error=None, actor="system",
                     idempotency_key=None, owner=None):
-        """Añade un mensaje a una conversacion. En la MISMA transaccion:
-        - crea el mensaje (append-only)
-        - actualiza conversations.message_count +1
-        - actualiza conversations.last_message_at al ahora
-        Devuelve {"record": mensaje, "conversation": conversacion_actualizada}."""
+        """Añade un mensaje de forma atómica e idempotente.
+        Si el mismo idempotency_key ya existe para el mismo mensaje, no vuelve
+        a incrementar message_count ni crea un duplicado."""
         current_conv = self.get_conversation(conversation_id, owner=owner)
         if current_conv is None:
             raise NotFoundError(f"conversacion no existe: {conversation_id}")
@@ -3977,25 +3975,87 @@ class PersistenceService:
         try:
             with self.repo.transaction() as tx:
                 stored_msg, created = tx.create("conversation_messages", record)
-                updated_conv = tx.update("conversations", conversation_id,
-                                         {"message_count": new_count, "last_message_at": now_iso},
-                                         current_conv["version"])
-                tx.append_audit({"actor": actor,
+
+                if not created:
+                    if (
+                        stored_msg.get("conversation_id") != conversation_id
+                        or stored_msg.get("role") != role
+                    ):
+                        raise ConflictError(
+                            "idempotency_key ya pertenece a otro mensaje o conversacion"
+                        )
+                    # Reintento del mismo mensaje: la conversacion ya fue
+                    # actualizada por la primera escritura. NO incrementar
+                    # message_count otra vez.
+                    updated_conv = current_conv
+                else:
+                    updated_conv = tx.update(
+                        "conversations",
+                        conversation_id,
+                        {"message_count": new_count, "last_message_at": now_iso},
+                        current_conv["version"],
+                    )
+
+                tx.append_audit({
+                    "actor": actor,
                     "action": "conversation.message.create" if created else "conversation.message.create.already_synced",
-                    "resource": "conversation_messages", "resource_id": stored_msg["id"],
+                    "resource": "conversation_messages",
+                    "resource_id": stored_msg["id"],
                     "status": "success",
-                    "detail": {"conversation_id": conversation_id, "role": role,
-                               "duration_ms": int(duration_ms),
-                               "has_error": error is not None}})
+                    "detail": {
+                        "conversation_id": conversation_id,
+                        "role": role,
+                        "duration_ms": int(duration_ms),
+                        "has_error": error is not None,
+                    },
+                })
         except PersistenceError as e:
-            self._audit_failure_generic(actor, "conversation.message.create", "conversation_messages", None, e); raise
+            self._audit_failure_generic(actor, "conversation.message.create", "conversation_messages", None, e)
+            raise
         except Exception as e:
             self._audit_failure_generic(actor, "conversation.message.create", "conversation_messages", None, e)
             raise StorageError(type(e).__name__) from e
 
         verified_msg = self.repo.get("conversation_messages", stored_msg["id"])
-        if verified_msg is None: raise VerificationError("mensaje no confirmado")
-        return {"record": verified_msg, "conversation": updated_conv}
+        if verified_msg is None:
+            raise VerificationError("mensaje no confirmado")
+
+        verified_conv = self.get_conversation(conversation_id, owner=owner)
+        if verified_conv is None:
+            raise VerificationError("conversacion no confirmada")
+
+        if created and verified_conv.get("message_count") != new_count:
+            raise VerificationError("contador de mensajes no confirmado")
+
+        return {
+            "outcome": "created" if created else "already_synced",
+            "record": verified_msg,
+            "conversation": verified_conv,
+        }
+
+    def get_message_by_idempotency_key(self, idempotency_key, owner=None):
+        """Recupera un mensaje idempotente y aplica ownership sobre su conversacion."""
+        if not isinstance(idempotency_key, str) or not 0 < len(idempotency_key.strip()) <= 200:
+            raise ValidationError("idempotency_key debe ser texto de 1 a 200 caracteres")
+        rows = self.repo.search(
+            "conversation_messages",
+            {"idempotency_key": idempotency_key.strip()},
+            limit=2,
+            offset=0,
+            order_by="created_at",
+            descending=False,
+        )
+        if not rows:
+            return None
+        message = rows[0]
+        if owner is not None:
+            conversation = self.get_conversation(
+                message.get("conversation_id"),
+                owner=owner,
+            )
+            if conversation is None:
+                return None
+        return message
 
     def list_messages(self, conversation_id, limit=200, offset=0, owner=None):
         """Mensajes de una conversación, opcionalmente acotados a su propietario."""
