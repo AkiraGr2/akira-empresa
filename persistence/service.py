@@ -2336,6 +2336,23 @@ class PersistenceService:
         if cycle is None: raise NotFoundError(f"ciclo no existe: {cycle_id}")
         if cycle.get("status") in ("completed", "failed", "aborted"):
             raise ValidationError(f"el ciclo ya esta {cycle['status']}")
+
+        stage_index = {name: idx for idx, name in enumerate(COGNITIVE_STAGES)}
+        current_stage = cycle.get("current_stage") or COGNITIVE_STAGES[0]
+        current_index = stage_index.get(current_stage, 0)
+        requested_index = stage_index[stage]
+        if requested_index > current_index + 1:
+            raise ValidationError(
+                f"transicion cognitiva invalida: {current_stage} -> {stage}"
+            )
+        if requested_index < current_index:
+            # Un retry de una etapa ya persistida es idempotente y no puede
+            # hacer retroceder el cursor del ciclo.
+            if idempotency_key is None:
+                raise ValidationError(
+                    f"retroceso de etapa no permitido: {current_stage} -> {stage}"
+                )
+
         event_data = {"cycle_id": cycle_id, "stage": stage, "status": status, "data": data or {}}
         if error is not None: event_data["error"] = error
         clean_event = validate_cognitive_event(event_data)
@@ -2347,8 +2364,14 @@ class PersistenceService:
         try:
             with self.repo.transaction() as tx:
                 stored_event, created = tx.create("cognitive_events", event_record)
-                updated_cycle = tx.update("cognitive_cycles", cycle_id,
-                                          {"current_stage": stage}, cycle["version"])
+                updated_cycle = cycle
+                if created and requested_index >= current_index:
+                    updated_cycle = tx.update(
+                        "cognitive_cycles",
+                        cycle_id,
+                        {"current_stage": stage},
+                        cycle["version"],
+                    )
                 tx.append_audit({"actor": actor,
                     "action": "cognitive.stage.record" if created else "cognitive.stage.already_synced",
                     "resource": "cognitive_events", "resource_id": stored_event["id"], "status": "success",
@@ -2368,6 +2391,29 @@ class PersistenceService:
         cycle = self.get_cycle(cycle_id, owner_scope=owner_scope)
         if cycle is None: raise NotFoundError(cycle_id)
         if cycle.get("status") != "in_progress": raise ValidationError(f"el ciclo ya esta {cycle['status']}")
+
+        if final_status == "completed":
+            events = self.list_cycle_events(cycle_id, owner_scope=owner_scope)
+            stages = {str(e.get("stage")): e for e in events}
+            missing = [stage for stage in COGNITIVE_STAGES if stage not in stages]
+            failed = [
+                stage for stage, event in stages.items()
+                if stage in COGNITIVE_STAGES and event.get("status") != "success"
+            ]
+            last_stage = COGNITIVE_STAGES[-1]
+            if missing:
+                raise ValidationError(
+                    f"ciclo no puede completarse: faltan etapas {missing}"
+                )
+            if failed:
+                raise ValidationError(
+                    f"ciclo no puede completarse: etapas fallidas {failed}"
+                )
+            if cycle.get("current_stage") != last_stage:
+                raise ValidationError(
+                    f"ciclo no puede completarse desde etapa {cycle.get('current_stage')}"
+                )
+
         changes = {"status": final_status, "completed_at": _now_iso()}
         try:
             with self.repo.transaction() as tx:
@@ -2378,6 +2424,7 @@ class PersistenceService:
         except PersistenceError: raise
         except Exception as e: raise StorageError(type(e).__name__) from e
         return updated
+
     def get_cycle(self, cycle_id, owner_scope=None):
         cycle = self.repo.get("cognitive_cycles", cycle_id)
         if cycle is None or owner_scope is None:
