@@ -97,8 +97,7 @@ class ToolRegistryContractTests(unittest.TestCase):
 
     def test_tool_auditor_has_uuid_dependency_for_run_ids(self):
         source = Path("nexus.py").read_text(encoding="utf-8")
-        import_line = source.splitlines()[24]
-        self.assertIn("uuid", import_line)
+        self.assertRegex(source, r"^import .*\\buuid\\b", msg="uuid debe importarse a nivel de módulo")
         self.assertIn('uuid.uuid4()', source)
 
     def test_individual_tool_auditor_covers_exact_registry_set(self):
