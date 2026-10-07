@@ -51,6 +51,20 @@ class AgentContractTests(unittest.TestCase):
         )
         self.assertTrue(ok)
 
+    def test_researcher_web_search_rejects_incoherent_result_count(self):
+        ok, _ = validate_agent_result(
+            "researcher",
+            "web_search",
+            {
+                "result": {
+                    "query": "FastAPI",
+                    "result_count": 2,
+                    "results": [{"reference": "https://fastapi.tiangolo.com/", "title": "FastAPI"}],
+                }
+            },
+        )
+        self.assertFalse(ok)
+
     def test_semantic_contract_rejects_apparent_success(self):
         ok, _ = validate_agent_result(
             "developer",
