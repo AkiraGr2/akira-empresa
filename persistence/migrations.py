@@ -1868,5 +1868,34 @@ MIGRATIONS = [
             ELSE 0
         END
         """
-    )
+    ),
+    (
+        "053_cognitive_cycle_persistent_capability_contract_exact_sync",
+        """
+        UPDATE public.capabilities
+        SET
+            limitations = jsonb_build_array(
+                'La verificación de la capacidad requiere una ejecución E2E real del ciclo: la existencia del código no constituye evidencia suficiente.',
+                'La calidad de la inferencia depende de los proveedores externos disponibles' || chr(59) || ' la persistencia y la máquina de estados son independientes de ellos.',
+                'Los ciclos legacy con owner_scope=''owner'' se conservan como compatibilidad histórica.'
+            ),
+            updated_at = now()
+        WHERE name = 'cognitive_cycle_persistent';
+
+        SELECT 1 / CASE
+            WHEN EXISTS (
+                SELECT 1
+                FROM public.capabilities
+                WHERE name = 'cognitive_cycle_persistent'
+                  AND limitations = jsonb_build_array(
+                      'La verificación de la capacidad requiere una ejecución E2E real del ciclo: la existencia del código no constituye evidencia suficiente.',
+                      'La calidad de la inferencia depende de los proveedores externos disponibles' || chr(59) || ' la persistencia y la máquina de estados son independientes de ellos.',
+                      'Los ciclos legacy con owner_scope=''owner'' se conservan como compatibilidad histórica.'
+                  )
+            )
+            THEN 1
+            ELSE 0
+        END
+        """
+    ),
 ]
