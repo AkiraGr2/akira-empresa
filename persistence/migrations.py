@@ -1897,5 +1897,17 @@ MIGRATIONS = [
             ELSE 0
         END
         """
+    ),,
+    (
+        "054_tool_invocation_owner_scope_and_idempotency",
+        """
+        ALTER TABLE public.tool_invocations
+            ADD COLUMN owner_scope TEXT NOT NULL DEFAULT 'owner';
+        DROP INDEX IF EXISTS public.tool_invocations_idempotency_key_uq;
+        CREATE UNIQUE INDEX tool_invocations_owner_tool_idempotency_key_uq
+            ON public.tool_invocations (owner_scope, tool_name, idempotency_key);
+        CREATE INDEX tool_invocations_owner_scope_idx
+            ON public.tool_invocations (owner_scope, created_at DESC)
+        """
     ),
 ]
