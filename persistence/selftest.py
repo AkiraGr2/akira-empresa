@@ -2563,9 +2563,9 @@ def run_logic_tests(service, fresh_service_factory=None):
         ("TEST_LEARNING_PERSISTENT_CAPABILITY", t_learning_persistent_capability),
         ("TEST_GRAPH_PERSISTENT_CAPABILITY", t_graph_persistent_capability),
         ("TEST_KNOWLEDGE_PERSISTENT_CAPABILITY", t_knowledge_persistent_capability),
+        ("TEST_CAPABILITY_PERSISTENCE", t_capability_persistence),
         ("TEST_SELF_KNOWLEDGE_SNAPSHOT", t_self_knowledge_snapshot),
         ("TEST_SELF_KNOWLEDGE_RUNTIME_CAPABILITY", t_self_knowledge_runtime_capability),
-        ("TEST_CAPABILITY_PERSISTENCE", t_capability_persistence),
         ("TEST_CAPABILITY_VERIFICATION_APPEND_ONLY", t_capability_verification_append_only),
     ):
         results.append(_guard(name, fn, service, created_ids))
