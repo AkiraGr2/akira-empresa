@@ -46,6 +46,35 @@ class ControlledGitHubError(RuntimeError):
 
 
 
+def deterministic_modify_patch(path: str, source: str, find_text: str, replace_text: str) -> str:
+    """Generate a canonical unified diff from one exact source replacement."""
+    path = validate_path(path)
+    if not isinstance(source, str):
+        raise ControlledGitHubError(f"patch_source_unavailable:{path}")
+    find_text = str(find_text or "")
+    replace_text = str(replace_text if replace_text is not None else "")
+    if not find_text:
+        raise ControlledGitHubError(f"patch_find_empty:{path}")
+    occurrences = source.count(find_text)
+    if occurrences == 0:
+        raise ControlledGitHubError(f"patch_anchor_not_found:{path}")
+    if occurrences != 1:
+        raise ControlledGitHubError(f"patch_anchor_not_unique:{path}")
+    updated = source.replace(find_text, replace_text, 1)
+    if updated == source:
+        raise ControlledGitHubError(f"patch_noop:{path}")
+    diff = "".join(difflib.unified_diff(
+        source.splitlines(keepends=True),
+        updated.splitlines(keepends=True),
+        fromfile=f"a/{path}",
+        tofile=f"b/{path}",
+        lineterm="\n",
+    ))
+    if not diff.startswith(f"--- a/{path}\n+++ b/{path}\n@@ "):
+        raise ControlledGitHubError(f"patch_canonicalization_failed:{path}")
+    return diff
+
+
 def canonicalize_modify_patch(path: str, source: str, patch: str) -> str:
     """Canonicalize a modify patch against the exact authoritative source.
 
@@ -82,22 +111,7 @@ def canonicalize_modify_patch(path: str, source: str, patch: str) -> str:
     if source.count(old_text) != 1:
         raise ControlledGitHubError(f"patch_anchor_not_unique:{path}")
 
-    updated = source.replace(old_text, new_text, 1)
-    if updated == source:
-        raise ControlledGitHubError(f"patch_noop:{path}")
-
-    diff = "".join(
-        difflib.unified_diff(
-            source.splitlines(keepends=True),
-            updated.splitlines(keepends=True),
-            fromfile=f"a/{path}",
-            tofile=f"b/{path}",
-            lineterm="\n",
-        )
-    )
-    if not diff.startswith(f"--- a/{path}\n+++ b/{path}\n@@ "):
-        raise ControlledGitHubError(f"patch_canonicalization_failed:{path}")
-    return diff
+    return deterministic_modify_patch(path, source, old_text, new_text)
 
 def _token() -> str:
     token = os.getenv("GITHUB_TOKEN", "").strip()
