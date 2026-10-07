@@ -21,7 +21,14 @@ from persistence.autonomy import (
     AutonomyService,
     validate_proposal,
 )
-from github_controlled import ControlledGitHubError, branch_head, controlled_apply, sandbox_changes
+from github_controlled import (
+    ControlledGitHubError,
+    branch_head,
+    canonicalize_modify_patch,
+    controlled_apply,
+    fetch_text_file,
+    sandbox_changes,
+)
 from persistence.core import ValidationError
 
 
@@ -38,6 +45,34 @@ def _advance(a: AutonomyService, run_id: str, status: str, actor: str, owner_sco
         return a.advance(run_id, status, actor, owner_scope, changes)
     except Exception as exc:
         raise ControlledAutonomyError(f"transition_failed:{type(exc).__name__}") from exc
+
+
+def _canonicalize_proposal_against_base(
+    proposal: dict[str, Any],
+    repository: str,
+    base_sha: str,
+) -> dict[str, Any]:
+    """Bind proposal patches to the exact base source before persistence."""
+    canonical_changes = []
+    for change in proposal.get("changes") or []:
+        item = dict(change)
+        if item.get("operation") == "modify":
+            path = str(item.get("path") or "").strip()
+            if not path:
+                raise ControlledAutonomyError("proposal_path_required")
+            try:
+                source_record = fetch_text_file(repository, path, base_sha)
+                item["patch"] = canonicalize_modify_patch(
+                    path,
+                    source_record["content"],
+                    item.get("patch"),
+                )
+            except ControlledGitHubError as exc:
+                raise ControlledAutonomyError(
+                    f"proposal_base_source_validation_failed:{path}:{str(exc)[:180]}"
+                ) from exc
+        canonical_changes.append(item)
+    return {**proposal, "changes": canonical_changes}
 
 
 def start_controlled_autonomy(service, request: dict[str, Any], actor: str, owner_scope: str) -> dict[str, Any]:
@@ -87,6 +122,11 @@ def start_controlled_autonomy(service, request: dict[str, Any], actor: str, owne
             run.get("queries") or [],
         )
         proposal = validate_proposal(proposal)
+        proposal = _canonicalize_proposal_against_base(
+            proposal,
+            run["repository"],
+            base_sha,
+        )
         requested_paths = set(run.get("paths") or [])
         proposed_paths = {item["path"] for item in proposal.get("changes") or []}
         if not proposed_paths.issubset(requested_paths):
