@@ -252,8 +252,12 @@ class PostgresRepository(PersistenceRepository):
 
     def get(self, entity, record_id):
         spec = entity_spec(entity)
+        primary_key = spec.get("primary_key", "id")
         with self._cursor() as cur:
-            cur.execute(f"SELECT * FROM {spec['table']} WHERE id = %s", (record_id,))
+            cur.execute(
+                f"SELECT * FROM {spec['table']} WHERE {primary_key} = %s",
+                (record_id,),
+            )
             return _out(cur.fetchone())
 
     def update(self, entity, record_id, changes, expected_version):
@@ -263,13 +267,18 @@ class PostgresRepository(PersistenceRepository):
             raise ValidationError(f"cambios no permitidos o vacios: {bad}")
         sets = [f"{c} = %s" for c in changes]
         vals = [Jsonb(v) if c in spec["json_columns"] else v for c, v in changes.items()]
+        primary_key = spec.get("primary_key", "id")
         sql = (f"UPDATE {spec['table']} SET {', '.join(sets)}, version = version + 1, updated_at = now() "
-               "WHERE id = %s AND version = %s RETURNING *")
+               f"WHERE {primary_key} = %s AND version = %s RETURNING *")
         with self._cursor() as cur:
             cur.execute(sql, vals + [record_id, expected_version])
             row = cur.fetchone()
             if row is None:
-                cur.execute(f"SELECT version FROM {spec['table']} WHERE id = %s", (record_id,))
+                primary_key = spec.get("primary_key", "id")
+                cur.execute(
+                    f"SELECT version FROM {spec['table']} WHERE {primary_key} = %s",
+                    (record_id,),
+                )
                 cur_row = cur.fetchone()
                 if cur_row is None:
                     raise NotFoundError(record_id)
@@ -278,14 +287,22 @@ class PostgresRepository(PersistenceRepository):
 
     def delete(self, entity, record_id):
         spec = entity_spec(entity)
+        primary_key = spec.get("primary_key", "id")
         with self._cursor() as cur:
-            cur.execute(f"DELETE FROM {spec['table']} WHERE id = %s", (record_id,))
+            cur.execute(
+                f"DELETE FROM {spec['table']} WHERE {primary_key} = %s",
+                (record_id,),
+            )
             return cur.rowcount > 0
 
     def exists(self, entity, record_id):
         spec = entity_spec(entity)
+        primary_key = spec.get("primary_key", "id")
         with self._cursor() as cur:
-            cur.execute(f"SELECT 1 AS x FROM {spec['table']} WHERE id = %s", (record_id,))
+            cur.execute(
+                f"SELECT 1 AS x FROM {spec['table']} WHERE {primary_key} = %s",
+                (record_id,),
+            )
             return cur.fetchone() is not None
 
     def search(self, entity, filters=None, limit=50, offset=0, order_by="created_at", descending=True):

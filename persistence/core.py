@@ -501,6 +501,7 @@ ENTITIES = {
         "in_filterable": (),
         "orderable": ("created_at", "updated_at"),
         "idempotent": False,
+        "primary_key": "key",
     },
     "conversation_messages": {
         "table": "conversation_messages",

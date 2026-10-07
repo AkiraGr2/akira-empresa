@@ -129,6 +129,12 @@ class CapabilityEngineContractTests(unittest.TestCase):
         self.assertNotIn("register_tool(", block)
 
 
+    def test_runtime_state_uses_non_id_primary_key(self):
+        source = Path("persistence/postgres.py").read_text(encoding="utf-8")
+        self.assertIn('primary_key = spec.get("primary_key", "id")', source)
+        core = Path("persistence/core.py").read_text(encoding="utf-8")
+        self.assertIn('"primary_key": "key"', core)
+
     def test_runtime_build_change_invalidates_verified_capability(self):
         repo = _CapabilityRepo()
         repo.rows["runtime_state"] = []
