@@ -4635,7 +4635,16 @@ def v8_tools_audit_get(request: Request, run_id: str):
     for report in reports:
         verdict = report.get("verdict", "FAILED")
         summary[verdict] = summary.get(verdict, 0) + 1
-    ok = bool(completed and completed.get("status") == "success")
+    covered_pairs = {
+        (report.get("agent"), report.get("tool"))
+        for report in reports
+        if report.get("agent") in PRODUCTION_AGENT_ORDER
+    }
+    ok = (
+        bool(completed and completed.get("status") == "success")
+        and len(reports) >= len(EXPECTED_AGENT_CAPABILITY_CASES)
+        and covered_pairs == EXPECTED_AGENT_CAPABILITY_CASES
+    )
     return {
         "ok": True,
         "run_id": run_id,
@@ -4788,7 +4797,7 @@ def v8_agents_audit_get(request: Request, run_id: str):
             "agent_count": len(PRODUCTION_AGENT_ORDER),
             "case_count": len(reports),
             "summary": summary,
-            "ok": ok and len(reports) == len(EXPECTED_AGENT_CAPABILITY_CASES),
+            "ok": ok,
             "reports": reports,
         },
     }

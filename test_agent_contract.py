@@ -65,6 +65,52 @@ class AgentContractTests(unittest.TestCase):
         )
         self.assertFalse(ok)
 
+    def test_shared_capabilities_are_verified_for_every_allowed_agent(self):
+        github_output = {
+            "result": {
+                "ok": True,
+                "files": [{"path": "test_agent_contract.py"}],
+                "root": [],
+                "head_commit_sha": "a" * 40,
+            }
+        }
+        for agent_name in ("researcher", "developer", "tester", "reviewer"):
+            self.assertTrue(
+                validate_agent_result(agent_name, "github_repo_read", github_output)[0],
+                agent_name,
+            )
+
+        python_output = {"status": "passed", "tests": [{"name": "example", "status": "passed"}]}
+        for agent_name in ("tester", "reviewer"):
+            self.assertTrue(
+                validate_agent_result(agent_name, "python_test", python_output)[0],
+                agent_name,
+            )
+
+        memory_output = {"results": [{"id": "mem_1", "content": "audit"}], "found": 1}
+        for agent_name in ("researcher", "memorizer"):
+            self.assertTrue(
+                validate_agent_result(agent_name, "memory_search", memory_output)[0],
+                agent_name,
+            )
+
+    def test_autonomy_fail_closed_is_a_verified_safety_outcome(self):
+        ok, detail = validate_agent_result(
+            "autonomy_orchestrator",
+            "controlled_autonomy_start",
+            {
+                "autonomy": {
+                    "status": "failed",
+                    "failure_reason": "proposal_path_outside_requested_scope",
+                    "id": "autonomy_test",
+                },
+                "awaits_human_approval": False,
+                "external_write_performed": False,
+            },
+        )
+        self.assertTrue(ok)
+        self.assertEqual(detail["verification_mode"], "fail_closed")
+
     def test_semantic_contract_rejects_apparent_success(self):
         ok, _ = validate_agent_result(
             "developer",
