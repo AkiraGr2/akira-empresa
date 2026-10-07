@@ -513,4 +513,54 @@ KNOWLEDGE_PERSISTENT_CAPABILITY = {
     },
 }
 
-BASE_CAPABILITIES = (SESSION_AUTH_CAPABILITY, SELF_MODEL_PERSISTENT_CAPABILITY, PERSISTENT_MEMORY_CAPABILITY, MEMORY_RECALL_CAPABILITY, LEARNING_PERSISTENT_CAPABILITY, GRAPH_PERSISTENT_CAPABILITY, KNOWLEDGE_PERSISTENT_CAPABILITY, COGNITIVE_CYCLE_PERSISTENT_CAPABILITY, EVOLUTION_ENGINE_CAPABILITY, CONTROLLED_AUTONOMY_CAPABILITY)
+TOOL_REGISTRY_CAPABILITY = {
+    "name": "tool_registry",
+    "description": "Registro y gateway de herramientas de Akira con permisos, schemas de entrada, disponibilidad, persistencia de invocaciones, ownership e idempotencia.",
+    "category": "tooling",
+    "kind": "composite",
+    "implementation_state": "implemented",
+    "verification_state": "unverified",
+    "availability_state": "available",
+    "maturity": "experimental",
+    "cost_compatibility": "conditional",
+    "dependencies": [
+        {"kind": "service", "id": "PersistenceService.register_tool", "required": True},
+        {"kind": "service", "id": "PersistenceService.log_invocation", "required": True},
+        {"kind": "gateway", "id": "nexus._invoke_tool", "required": True},
+        {"kind": "storage", "id": "PostgreSQL.tools", "required": True},
+        {"kind": "storage", "id": "PostgreSQL.tool_invocations", "required": True},
+        {"kind": "security", "id": "owner_scope", "required": True},
+    ],
+    "limitations": [
+        "Los schemas de inputs usan una semántica simple de nombres y tipos; las reglas semánticas particulares permanecen en cada implementación.",
+        "La verificación de esta capability valida el contrato del registry y la trazabilidad de invocaciones, no la corrección semántica de cada tool externa.",
+        "Las herramientas experimentales o desactivadas no deben presentarse como disponibles aunque permanezcan registradas para conservar trazabilidad."
+    ],
+    "verification_spec": {
+        "method": "selftest",
+        "test_key": "tool_registry_contract",
+        "freshness_policy": {
+            "mode": "on_change",
+            "max_age_seconds": None,
+            "invalidate_on": [
+                "build_change",
+                "tool_registry_change",
+                "tool_schema_change",
+                "ownership_change"
+            ]
+        }
+    },
+    "provenance": {
+        "source": "architecture_rebaseline_f8",
+        "created_by": "system",
+        "basis": [
+            "persistence/core.py",
+            "persistence/service.py",
+            "persistence/selftest.py",
+            "nexus.py",
+            "test_tool_registry_contract.py"
+        ]
+    }
+}
+
+BASE_CAPABILITIES = (TOOL_REGISTRY_CAPABILITY, SESSION_AUTH_CAPABILITY, SELF_MODEL_PERSISTENT_CAPABILITY, PERSISTENT_MEMORY_CAPABILITY, MEMORY_RECALL_CAPABILITY, LEARNING_PERSISTENT_CAPABILITY, GRAPH_PERSISTENT_CAPABILITY, KNOWLEDGE_PERSISTENT_CAPABILITY, COGNITIVE_CYCLE_PERSISTENT_CAPABILITY, EVOLUTION_ENGINE_CAPABILITY, CONTROLLED_AUTONOMY_CAPABILITY)
