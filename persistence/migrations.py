@@ -1875,7 +1875,7 @@ MIGRATIONS = [
         UPDATE public.capabilities
         SET
             limitations = jsonb_build_array(
-                'La verificación de la capacidad requiere una ejecución E2E real del ciclo: la existencia del código no constituye evidencia suficiente.',
+                'La verificación de la capacidad requiere una ejecución E2E real del ciclo' || chr(59) || ' la existencia del código no constituye evidencia suficiente.',
                 'La calidad de la inferencia depende de los proveedores externos disponibles' || chr(59) || ' la persistencia y la máquina de estados son independientes de ellos.',
                 'Los ciclos legacy con owner_scope=''owner'' se conservan como compatibilidad histórica.'
             ),
@@ -1888,7 +1888,7 @@ MIGRATIONS = [
                 FROM public.capabilities
                 WHERE name = 'cognitive_cycle_persistent'
                   AND limitations = jsonb_build_array(
-                      'La verificación de la capacidad requiere una ejecución E2E real del ciclo: la existencia del código no constituye evidencia suficiente.',
+                      'La verificación de la capacidad requiere una ejecución E2E real del ciclo' || chr(59) || ' la existencia del código no constituye evidencia suficiente.',
                       'La calidad de la inferencia depende de los proveedores externos disponibles' || chr(59) || ' la persistencia y la máquina de estados son independientes de ellos.',
                       'Los ciclos legacy con owner_scope=''owner'' se conservan como compatibilidad histórica.'
                   )
