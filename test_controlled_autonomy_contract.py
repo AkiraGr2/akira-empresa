@@ -13,9 +13,11 @@ from persistence.autonomy import (
     validate_request,
     validate_transition,
 )
-from github_controlled import ControlledGitHubError, apply_unified_patch
+import github_controlled
+from github_controlled import ControlledGitHubError, apply_unified_patch, sandbox_changes
 from specialized_agent_tools import run_python_tests_in_workspace, propose_code_change
 from autonomy_engine import (
+    _canonicalize_proposal_against_base,
     ControlledAutonomyError,
     _build_f14_learning_event,
     _record_controlled_autonomy_verification,
@@ -379,6 +381,81 @@ class ControlledAutonomyContractTests(unittest.TestCase):
                     ["README.md"],
                     "Modifica el archivo solicitado.",
                 )
+
+    def test_autonomy_proposal_is_canonicalized_against_exact_base_source(self):
+        source = "import ast\nimport unittest\nfrom pathlib import Path\n"
+        stale_patch = (
+            "--- a/test_tool_registry_contract.py\n"
+            "+++ b/test_tool_registry_contract.py\n"
+            "@@ -1,3 +1,4 @@\n"
+            "+# contract comment\n"
+            " import unittest\n"
+            " from pathlib import Path\n"
+        )
+        proposal = {
+            "status": "proposal",
+            "summary": "test",
+            "changes": [{
+                "path": "test_tool_registry_contract.py",
+                "operation": "modify",
+                "reason": "test",
+                "patch": stale_patch,
+            }],
+            "tests": [],
+            "risks": [],
+            "requires_human_approval": True,
+            "write_performed": False,
+        }
+        with patch(
+            "autonomy_engine.fetch_text_file",
+            return_value={"content": source, "sha": "source-sha", "path": "test_tool_registry_contract.py"},
+        ):
+            canonical = _canonicalize_proposal_against_base(
+                proposal,
+                "AkiraGr2/akira-empresa",
+                "a" * 40,
+            )
+        generated = canonical["changes"][0]["patch"]
+        self.assertNotEqual(generated, stale_patch)
+        self.assertIn(
+            "# contract comment\nimport unittest",
+            apply_unified_patch(source, generated, "test_tool_registry_contract.py", "modify"),
+        )
+
+    def test_sandbox_canonicalizes_stale_hunk_before_apply(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = "import unittest\nfrom pathlib import Path\n"
+            target = root / "test_tool_registry_contract.py"
+            target.write_text(source, encoding="utf-8")
+            stale_patch = (
+                "--- a/test_tool_registry_contract.py\n"
+                "+++ b/test_tool_registry_contract.py\n"
+                "@@ -1,3 +1,4 @@\n"
+                "+# sandbox contract comment\n"
+                " import unittest\n"
+                " from pathlib import Path\n"
+            )
+            with patch.object(
+                github_controlled, "_download_archive", return_value="ignored"
+            ), patch.object(
+                github_controlled, "_safe_extract", return_value=root
+            ):
+                result = sandbox_changes(
+                    "AkiraGr2/akira-empresa",
+                    "b" * 40,
+                    [{
+                        "path": "test_tool_registry_contract.py",
+                        "operation": "modify",
+                        "reason": "test",
+                        "patch": stale_patch,
+                    }],
+                )
+            self.assertEqual(result["base_sha"], "b" * 40)
+            self.assertIn(
+                "# sandbox contract comment\nimport unittest",
+                target.read_text(encoding="utf-8"),
+            )
 
     def test_workspace_testing_uses_non_shell_commands(self):
         with tempfile.TemporaryDirectory() as temp:
