@@ -272,26 +272,28 @@ def _recover_modify_patch_from_diff(path: str, source: str, patch: str) -> str |
     removed = [line[1:] for line in body if line.startswith("-")]
     added = [line[1:] for line in body if line.startswith("+")]
     context = [line[1:] for line in body if line.startswith(" ")]
-    if not removed or not added or not all(line[:1] in {" ", "-", "+"} for line in body):
+    if not added or not all(line[:1] in {" ", "-", "+"} for line in body):
         return None
     if context:
-        # Preserve safety: if the patch has context, require that the complete
-        # context+deleted sequence exists exactly once before recovering.
-        target = context[:]
-        try:
-            first_removed = body.index(next(line for line in body if line.startswith("-")))
-        except StopIteration:
+        # For insertion-only diffs, use the unchanged context as an exact anchor.
+        # For replacement diffs, include the deleted block and surrounding context.
+        context_text = "".join(context)
+        if removed:
+            first_removed = next(i for i, line in enumerate(body) if line.startswith("-"))
+            before = [line[1:] for line in body[:first_removed] if line.startswith(" ")]
+            after = [line[1:] for line in body[first_removed + len(removed):] if line.startswith(" ")]
+            find_text = "".join(before + removed + after)
+            replace_text = "".join(before + added + after)
+        else:
+            find_text = context_text
+            replace_text = "".join(line[1:] for line in body)
+        if source.count(find_text) != 1:
             return None
-        before = [line[1:] for line in body[:first_removed] if line.startswith(" ")]
-        after = [line[1:] for line in body[first_removed + len(removed):] if line.startswith(" ")]
-        target = before + removed + after
-        if source.count("".join(target)) != 1:
-            return None
-        find_text = "".join(target)
-        replace_text = "".join(before + added + after)
-    else:
+    elif removed:
         find_text = "".join(removed)
         replace_text = "".join(added)
+    else:
+        return None
     return _deterministic_modify_patch(path, source, find_text, replace_text)
 
 
