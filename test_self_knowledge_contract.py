@@ -281,6 +281,10 @@ class SelfKnowledgeSnapshotTests(unittest.TestCase):
         source = __import__("pathlib").Path("persistence/selftest.py").read_text(encoding="utf-8")
         self.assertLess(
             source.index('(\"TEST_KNOWLEDGE_PERSISTENT_CAPABILITY\", t_knowledge_persistent_capability)'),
+            source.index('(\"TEST_CAPABILITY_PERSISTENCE\", t_capability_persistence)'),
+        )
+        self.assertLess(
+            source.index('(\"TEST_CAPABILITY_PERSISTENCE\", t_capability_persistence)'),
             source.index('(\"TEST_SELF_KNOWLEDGE_SNAPSHOT\", t_self_knowledge_snapshot)'),
         )
         self.assertLess(
