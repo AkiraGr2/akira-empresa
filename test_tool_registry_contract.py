@@ -73,7 +73,7 @@ class ToolRegistryContractTests(unittest.TestCase):
 
     def test_web_search_returns_structured_results_not_fake_fallback(self):
         source = Path("nexus.py").read_text(encoding="utf-8")
-        self.assertIn('def search_web(q, max_results=3):', source)
+        self.assertIn("def search_web(q, max_results=3):", source)
         self.assertIn('"result_count": len(results)', source)
         self.assertIn('"results": results', source)
         self.assertNotIn('or "Busqueda"', source)
@@ -92,7 +92,7 @@ class ToolRegistryContractTests(unittest.TestCase):
         for tool_name in expected:
             self.assertRegex(
                 source,
-                rf'if tool_name == ["\\\']{tool_name}["\\\']',
+                rf'if tool_name == ["\']{tool_name}["\']',
                 msg=f"faltante branch de dispatcher: {tool_name}",
             )
 
@@ -102,14 +102,14 @@ class ToolRegistryContractTests(unittest.TestCase):
             "import os, json, datetime, threading, time, hashlib, base64, math, asyncio, random, re, uuid",
             source,
         )
-        self.assertIn('uuid.uuid4()', source)
+        self.assertIn("uuid.uuid4()", source)
 
     def test_individual_tool_auditor_covers_exact_registry_set(self):
         audit = Path("tool_audit.py").read_text(encoding="utf-8")
         expected = {
             "web_search", "github_repo_read",
-            "memory_save", "memory_search",
-            "graph_create_node", "graph_create_edge", "graph_related",
+            "memory_save", "graph_create_node",
+            "graph_create_edge", "graph_related", "memory_search",
             "learning_save", "self_model_read", "extract_pdf",
             "image_generate", "cognitive_cycle",
             "developer_propose", "python_test", "code_review",
@@ -130,12 +130,12 @@ class ToolRegistryContractTests(unittest.TestCase):
         source = Path("nexus.py").read_text(encoding="utf-8")
         audit = Path("tool_audit.py").read_text(encoding="utf-8")
         self.assertIn("from tool_audit import TOOL_ORDER, run_tool_audit", source)
-        self.assertIn('def _invoke_registered_tool(', source)
-        self.assertIn('run_tool_audit(', source)
-        self.assertIn('service.record_audit(', audit)
-        self.assertIn('service.get_invocation_by_idempotency_key(', audit)
-        self.assertIn('AutonomyService(service)', audit)
-        self.assertIn('F7 E2E verification; no duplicate cognitive cycle', audit)
+        self.assertIn("def _invoke_registered_tool(", source)
+        self.assertIn("run_tool_audit(", source)
+        self.assertIn("service.record_audit(", audit)
+        self.assertIn("service.get_invocation_by_idempotency_key(", audit)
+        self.assertIn("AutonomyService(service)", audit)
+        self.assertIn("F7 E2E verification; no duplicate cognitive cycle", audit)
 
     def test_canonical_tool_registry_capability_exists(self):
         from persistence.capability_catalog import BASE_CAPABILITIES
@@ -150,7 +150,6 @@ class ToolRegistryContractTests(unittest.TestCase):
         self.assertIn('name": "tool_registry"', source)
         self.assertIn('test_key": "tool_registry_contract"', source)
         self.assertIn("service.record_capability_verification(", source)
-
 
 
 if __name__ == "__main__":
