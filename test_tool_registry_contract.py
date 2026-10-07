@@ -57,6 +57,13 @@ class ToolRegistryContractTests(unittest.TestCase):
         self.assertIn('owner_scope = s.get("owner_scope") if s.get("is_owner") else None', source)
         self.assertIn("owner_scope=owner_scope", source)
 
+    def test_web_search_returns_structured_results_not_fake_fallback(self):
+        source = Path("nexus.py").read_text(encoding="utf-8")
+        self.assertIn('def search_web(q, max_results=3):', source)
+        self.assertIn('"result_count": len(results)', source)
+        self.assertIn('"results": results', source)
+        self.assertNotIn('or "Busqueda"', source)
+
     def test_canonical_tool_registry_capability_exists(self):
         from persistence.capability_catalog import BASE_CAPABILITIES
         matches = [c for c in BASE_CAPABILITIES if c.get("name") == "tool_registry"]
