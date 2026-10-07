@@ -116,6 +116,11 @@ jobs:
         run: |
           python -m unittest test_mission_task_ownership -v
 
+      - name: Test F10 mission hardening contract
+        run: |
+          python -m unittest test_f10_mission_hardening_contract -v
+          python -m unittest test_conversation_idempotency -v
+
       - name: Test repair engine contract
         run: |
           python -m unittest test_repair_engine_contract -v
