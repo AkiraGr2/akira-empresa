@@ -320,6 +320,44 @@ class ControlledAutonomyContractTests(unittest.TestCase):
             "hola\nmundo\n",
         )
 
+    def test_generated_modify_structured_edit_materializes_deterministic_patch(self):
+        def inspector(repo, paths=None, max_files=8, queries=None):
+            return {
+                "files": [{
+                    "path": "README.md",
+                    "status": "ok",
+                    "content": "uno\ndos\ntres\n",
+                }]
+            }
+
+        with patch("specialized_agent_tools._specialist_json_call", return_value={
+            "status": "proposal",
+            "summary": "structured modify",
+            "changes": [{
+                "path": "README.md",
+                "operation": "modify",
+                "reason": "test",
+                "edit": {
+                    "find": "dos\n",
+                    "replace": "DOS\n",
+                },
+            }],
+            "tests": [], "risks": [],
+        }):
+            result = propose_code_change(
+                inspector,
+                "AkiraGr2/akira-empresa",
+                ["README.md"],
+                "Modifica una linea.",
+            )
+
+        generated = result["changes"][0]["patch"]
+        self.assertEqual(
+            apply_unified_patch("uno\ndos\ntres\n", generated, "README.md", "modify"),
+            "uno\nDOS\ntres\n",
+        )
+        self.assertRegex(generated, r"^--- a/README\.md\n\+\+\+ b/README\.md\n@@ ")
+
     def test_generated_modify_patch_with_malformed_hunk_fails_closed(self):
         def inspector(repo, paths=None, max_files=8, queries=None):
             return {"files": [{"path": "README.md", "status": "ok", "content": "hello\n"}]}
