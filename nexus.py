@@ -434,6 +434,56 @@ def search_web_sources(q, max_results=5):
         # Fall back to DuckDuckGo's HTML results page before reporting zero evidence.
         if len(deduped) < limit:
             try:
+                # Fallback adicional para entornos donde DuckDuckGo no responde.
+                from html.parser import HTMLParser
+                from urllib.parse import parse_qs, unquote, urlparse
+                class _BingResultParser(HTMLParser):
+                    def __init__(self):
+                        super().__init__(convert_charrefs=True)
+                        self._href = None
+                        self._text = []
+                        self.results = []
+                    def handle_starttag(self, tag, attrs):
+                        if tag != "a":
+                            return
+                        attrs_map = dict(attrs)
+                        href = str(attrs_map.get("href") or "").strip()
+                        if href and attrs_map.get("class") == "tilk":
+                            self._href = href
+                            self._text = []
+                    def handle_data(self, data):
+                        if self._href is not None:
+                            self._text.append(data)
+                    def handle_endtag(self, tag):
+                        if tag != "a" or self._href is None:
+                            return
+                        title = " ".join("".join(self._text).split())
+                        href = self._href
+                        self._href = None
+                        self._text = []
+                        if title and href:
+                            self.results.append((title, href))
+                bing_url = "https://www.bing.com/search?q=" + urllib.parse.quote_plus(query)
+                bing_response = requests.get(bing_url, timeout=8, headers=headers)
+                bing_response.raise_for_status()
+                parser = _BingResultParser()
+                parser.feed(bing_response.text or "")
+                for title, reference in parser.results:
+                    if len(deduped) >= limit:
+                        break
+                    if reference and reference not in seen:
+                        seen.add(reference)
+                        deduped.append({
+                            "title": title[:200],
+                            "reference": reference[:500],
+                            "snippet": title[:1000],
+                            "type": "web_search",
+                        })
+            except Exception as e:
+                print(f"[web_verify] bing_fallback fallo: {type(e).__name__}", flush=True)
+
+        if len(deduped) < limit:
+            try:
                 from html.parser import HTMLParser
                 from urllib.parse import parse_qs, unquote, urlparse
 
