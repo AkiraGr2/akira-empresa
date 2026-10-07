@@ -146,6 +146,34 @@ class CapabilityEngineContractTests(unittest.TestCase):
                 i += 1
             self.assertFalse(in_single_quote, "migration 047 deja una cadena SQL entre comillas sin cerrar")
 
+    def test_verification_timestamps_are_ordered(self):
+        base = {
+            "event_type": "verification",
+            "test_key": "timestamp_contract",
+            "test_version": "v1",
+            "result": "pass",
+            "evidence": [{
+                "type": "ci",
+                "title": "timestamp contract",
+                "reference": "ci:timestamps",
+                "summary": "orden temporal",
+                "hash": "",
+            }],
+            "runtime_version": "ci",
+            "build_ref": "ci",
+            "actor": "ci",
+            "executor": "ci",
+            "evaluator": "ci",
+            "started_at": "2026-10-07T01:00:00+00:00",
+            "finished_at": "2026-10-06T23:59:59+00:00",
+        }
+        with self.assertRaises(CapabilityContractError):
+            validate_capability_verification(base)
+
+        valid = dict(base)
+        valid["finished_at"] = "2026-10-07T01:00:01+00:00"
+        self.assertEqual(validate_capability_verification(valid)["finished_at"], valid["finished_at"])
+
     def test_invalid_verification_spec_is_rejected(self):
         base = {
             "name": "invalid_spec",
