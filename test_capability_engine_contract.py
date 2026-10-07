@@ -146,6 +146,35 @@ class CapabilityEngineContractTests(unittest.TestCase):
                 i += 1
             self.assertFalse(in_single_quote, "migration 047 deja una cadena SQL entre comillas sin cerrar")
 
+    def test_invalid_verification_spec_is_rejected(self):
+        base = {
+            "name": "invalid_spec",
+            "description": "Capability con contrato incompleto.",
+            "category": "general",
+            "kind": "intrinsic",
+            **state(),
+            "dependencies": [],
+            "limitations": [],
+            "provenance": {"source": "ci", "created_by": "ci"},
+        }
+        missing_test_key = dict(base)
+        missing_test_key["verification_spec"] = {
+            "method": "selftest",
+            "freshness_policy": {"mode": "on_change", "max_age_seconds": None, "invalidate_on": []},
+        }
+        with self.assertRaises(CapabilityContractError):
+            validate_capability(missing_test_key)
+
+        extra_field = dict(base)
+        extra_field["verification_spec"] = {
+            "method": "selftest",
+            "test_key": "invalid_spec_contract",
+            "freshness_policy": {"mode": "on_change", "max_age_seconds": None, "invalidate_on": []},
+            "untrusted_runtime_claim": True,
+        }
+        with self.assertRaises(CapabilityContractError):
+            validate_capability(extra_field)
+
     def test_valid_capability_and_effective_state(self):
         record = validate_capability({
             "name": "ci_capability_contract",
