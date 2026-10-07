@@ -1805,5 +1805,47 @@ MIGRATIONS = [
             FOR DELETE TO anon, authenticated USING (false);
         """
     ),
-
+    (
+        "051_cognitive_cycle_persistent_capability",
+        """
+        INSERT INTO public.capabilities (
+            id, name, description, category, kind,
+            implementation_state, verification_state, availability_state,
+            maturity, cost_compatibility, dependencies, limitations,
+            verification_spec, provenance, schema_version, idempotency_key
+        )
+        VALUES (
+            'cap_cognitive_cycle_persistent',
+            'cognitive_cycle_persistent',
+            'Runtime cognitivo persistente de nueve etapas que observa, interpreta, razona, decide, actúa, observa el resultado, evalúa, aprende y actualiza el Self-Model con evidencia persistida e aislamiento por owner_scope.',
+            'cognitive',
+            'composite',
+            'implemented',
+            'unverified',
+            'available',
+            'experimental',
+            'conditional',
+            '[{"kind":"service","id":"PersistenceService.start_cycle","required":true},{"kind":"service","id":"PersistenceService.record_stage","required":true},{"kind":"service","id":"PersistenceService.complete_cycle","required":true},{"kind":"storage","id":"PostgreSQL.cognitive_cycles","required":true},{"kind":"storage","id":"PostgreSQL.cognitive_events","required":true},{"kind":"security","id":"owner_scope","required":true},{"kind":"state_machine","id":"COGNITIVE_STAGES","required":true}]'::jsonb,
+            '["La verificación de la capacidad requiere una ejecución E2E real del ciclo; la existencia del código no constituye evidencia suficiente.","La calidad de la inferencia depende de los proveedores externos disponibles; la persistencia y la máquina de estados son independientes de ellos.","Los ciclos legacy con owner_scope=''owner'' se conservan como compatibilidad histórica."]'::jsonb,
+            '{"method":"e2e_test","test_key":"cognitive_cycle_persistent_e2e","freshness_policy":{"mode":"on_change","max_age_seconds":null,"invalidate_on":["build_change","cognitive_runtime_change","cognitive_schema_change","ownership_change"]}}'::jsonb,
+            '{"source":"architecture_rebaseline_f7","created_by":"system","basis":["persistence/core.py","persistence/service.py","nexus.py","test_cognitive_runtime_execution.py"]}'::jsonb,
+            'capability.v1',
+            'bootstrap:capability:cognitive_cycle_persistent:v1'
+        )
+        ON CONFLICT (name) DO UPDATE SET
+            description = EXCLUDED.description,
+            category = EXCLUDED.category,
+            kind = EXCLUDED.kind,
+            implementation_state = EXCLUDED.implementation_state,
+            availability_state = EXCLUDED.availability_state,
+            maturity = EXCLUDED.maturity,
+            cost_compatibility = EXCLUDED.cost_compatibility,
+            dependencies = EXCLUDED.dependencies,
+            limitations = EXCLUDED.limitations,
+            verification_spec = EXCLUDED.verification_spec,
+            provenance = EXCLUDED.provenance,
+            schema_version = EXCLUDED.schema_version,
+            updated_at = now()
+        """
+    )
 ]

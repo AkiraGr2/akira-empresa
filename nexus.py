@@ -3978,6 +3978,81 @@ def _run_reason_stage(message, memories):
             pass
     return answer, model_used
 
+def _record_cognitive_capability_verification(service, cycle, actor):
+    """Registra evidencia E2E solo cuando un ciclo real de nueve etapas terminó correctamente."""
+    try:
+        if not isinstance(cycle, dict) or cycle.get("status") != "completed":
+            return None
+        rows = service.list_capabilities(filters={"name": "cognitive_cycle_persistent"}, limit=1)
+        capability = rows[0] if rows else None
+        if capability is None or capability.get("verification_state") == "verified":
+            return None
+
+        cycle_id = str(cycle.get("id") or "").strip()
+        if not cycle_id:
+            return None
+        events = service.list_cycle_events(cycle_id, owner_scope=cycle.get("owner_scope"))
+        expected_stages = (
+            "observe", "interpret", "reason", "decide", "act",
+            "observe_result", "evaluate", "learn", "update_self_model",
+        )
+        observed = [str(event.get("stage") or "") for event in events]
+        if observed != list(expected_stages):
+            return None
+        if any(event.get("status") != "success" for event in events):
+            return None
+
+        from persistence.build_identity import runtime_build_ref
+        build_ref = runtime_build_ref()
+        key = f"cognitive_cycle_e2e:{cycle_id}:{build_ref}"
+        result = service.record_capability_verification(
+            capability["id"],
+            {
+                "event_type": "verification",
+                "test_key": "cognitive_cycle_persistent_e2e",
+                "test_version": "v1",
+                "result": "pass",
+                "evidence": [{
+                    "type": "e2e_test",
+                    "title": "F7 cognitive runtime production E2E",
+                    "reference": f"cognitive_cycle:{cycle_id}",
+                    "summary": "Ciclo productivo completado con las nueve etapas persistidas en orden y todas en success.",
+                    "hash": "",
+                }],
+                "environment": {
+                    "trigger": str(cycle.get("trigger") or "")[:64],
+                    "owner_scope": str(cycle.get("owner_scope") or "")[:128],
+                    "events_count": len(events),
+                },
+                "dependency_snapshot": [
+                    {"id": "COGNITIVE_STAGES", "value": list(expected_stages)},
+                    {"id": "cycle_status", "value": cycle.get("status")},
+                ],
+                "runtime_version": VERSION,
+                "build_ref": build_ref,
+                "actor": actor,
+                "executor": "cognitive_runtime",
+                "evaluator": "cognitive_runtime",
+                "started_at": str(cycle.get("created_at") or datetime.datetime.now(datetime.timezone.utc).isoformat()),
+                "finished_at": str(cycle.get("completed_at") or datetime.datetime.now(datetime.timezone.utc).isoformat()),
+            },
+            actor=actor,
+            idempotency_key=key,
+        )
+        return {
+            "verification_id": result["record"]["id"],
+            "effective_state": result["effective_state"],
+            "build_ref": build_ref,
+        }
+    except Exception as exc:
+        print(
+            f"[capability] cognitive_cycle verification skipped: "
+            f"{type(exc).__name__}: {str(exc)[:200]}",
+            flush=True,
+        )
+        return None
+
+
 def _execute_cognitive_cycle(service, trigger, input_data, actor, owner_scope=None):
     recovery_context = {}
     try:
@@ -4096,7 +4171,9 @@ def _execute_cognitive_cycle_core(service, trigger, input_data, actor, owner_sco
 
     final_status = "completed" if answer and not stage_failures else "failed"
     final_cycle = service.complete_cycle(cycle_id, final_status, actor=actor, owner_scope=owner_scope)
-    return {"cycle": final_cycle, "events": events, "answer": final_response, "learning_id": learning_id}
+    capability_verification = _record_cognitive_capability_verification(service, final_cycle, actor)
+    return {"cycle": final_cycle, "events": events, "answer": final_response, "learning_id": learning_id,
+            "capability_verification": capability_verification}
 @app.post("/api/v8/cognitive/cycle")
 def v8_cognitive_cycle(request: Request, payload: dict):
     s, _owner_error = _require_owner(request)
@@ -4114,7 +4191,8 @@ def v8_cognitive_cycle(request: Request, payload: dict):
                              "detail": str(e)[:200]}, status_code=500)
     return {"ok": True, "cycle_id": result["cycle"]["id"], "cycle": result["cycle"],
             "events": result["events"], "events_count": len(result["events"]),
-            "answer": result["answer"], "learning_id": result.get("learning_id")}
+            "answer": result["answer"], "learning_id": result.get("learning_id"),
+            "capability_verification": result.get("capability_verification")}
 
 @app.get("/api/v8/cognitive/cycle/{cycle_id}")
 def v8_cognitive_cycle_get(request: Request, cycle_id: str):

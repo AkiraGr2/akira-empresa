@@ -215,6 +215,18 @@ class CapabilityEngineContractTests(unittest.TestCase):
         self.assertIn("def _guard(name, fn, service, created_ids):", source)
         self.assertIn("results.append(_guard(name, fn, service, created_ids))", source)
 
+    def test_cognitive_cycle_capability_is_in_canonical_catalog(self):
+        from persistence.capability_catalog import BASE_CAPABILITIES
+
+        cognitive = [c for c in BASE_CAPABILITIES if c.get("name") == "cognitive_cycle_persistent"]
+        self.assertEqual(len(cognitive), 1)
+        self.assertEqual(cognitive[0]["category"], "cognitive")
+        self.assertEqual(cognitive[0]["verification_state"], "unverified")
+        self.assertEqual(
+            cognitive[0]["verification_spec"]["test_key"],
+            "cognitive_cycle_persistent_e2e",
+        )
+
     def test_canonical_capability_catalog_uses_valid_categories(self):
         from persistence.capability_catalog import BASE_CAPABILITIES
         for capability in BASE_CAPABILITIES:

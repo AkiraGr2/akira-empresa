@@ -307,6 +307,57 @@ GRAPH_PERSISTENT_CAPABILITY = {
 
 
 
+
+COGNITIVE_CYCLE_PERSISTENT_CAPABILITY = {
+    "name": "cognitive_cycle_persistent",
+    "description": "Runtime cognitivo persistente de nueve etapas que observa, interpreta, razona, decide, actúa, observa el resultado, evalúa, aprende y actualiza el Self-Model con evidencia persistida e aislamiento por owner_scope.",
+    "category": "cognitive",
+    "kind": "composite",
+    "implementation_state": "implemented",
+    "verification_state": "unverified",
+    "availability_state": "available",
+    "maturity": "experimental",
+    "cost_compatibility": "conditional",
+    "dependencies": [
+        {"kind": "service", "id": "PersistenceService.start_cycle", "required": True},
+        {"kind": "service", "id": "PersistenceService.record_stage", "required": True},
+        {"kind": "service", "id": "PersistenceService.complete_cycle", "required": True},
+        {"kind": "storage", "id": "PostgreSQL.cognitive_cycles", "required": True},
+        {"kind": "storage", "id": "PostgreSQL.cognitive_events", "required": True},
+        {"kind": "security", "id": "owner_scope", "required": True},
+        {"kind": "state_machine", "id": "COGNITIVE_STAGES", "required": True},
+    ],
+    "limitations": [
+        "La verificación de la capacidad requiere una ejecución E2E real del ciclo; la existencia del código no constituye evidencia suficiente.",
+        "La calidad de la inferencia depende de los proveedores externos disponibles; la persistencia y la máquina de estados son independientes de ellos.",
+        "Los ciclos legacy con owner_scope='owner' se conservan como compatibilidad histórica.",
+    ],
+    "verification_spec": {
+        "method": "e2e_test",
+        "test_key": "cognitive_cycle_persistent_e2e",
+        "freshness_policy": {
+            "mode": "on_change",
+            "max_age_seconds": None,
+            "invalidate_on": [
+                "build_change",
+                "cognitive_runtime_change",
+                "cognitive_schema_change",
+                "ownership_change",
+            ],
+        },
+    },
+    "provenance": {
+        "source": "architecture_rebaseline_f7",
+        "created_by": "system",
+        "basis": [
+            "persistence/core.py",
+            "persistence/service.py",
+            "nexus.py",
+            "test_cognitive_runtime_execution.py",
+        ],
+    },
+}
+
 EVOLUTION_ENGINE_CAPABILITY = {
     "name": "evolution_engine_v1",
     "description": "Motor de evolución controlada y auditable: registra necesidad, investigación, diseño, prototipo, pruebas, evaluación, aprobación humana y referencia de cambio sin autoescritura de código.",
@@ -462,4 +513,4 @@ KNOWLEDGE_PERSISTENT_CAPABILITY = {
     },
 }
 
-BASE_CAPABILITIES = (SESSION_AUTH_CAPABILITY, SELF_MODEL_PERSISTENT_CAPABILITY, PERSISTENT_MEMORY_CAPABILITY, MEMORY_RECALL_CAPABILITY, LEARNING_PERSISTENT_CAPABILITY, GRAPH_PERSISTENT_CAPABILITY, KNOWLEDGE_PERSISTENT_CAPABILITY, EVOLUTION_ENGINE_CAPABILITY, CONTROLLED_AUTONOMY_CAPABILITY)
+BASE_CAPABILITIES = (SESSION_AUTH_CAPABILITY, SELF_MODEL_PERSISTENT_CAPABILITY, PERSISTENT_MEMORY_CAPABILITY, MEMORY_RECALL_CAPABILITY, LEARNING_PERSISTENT_CAPABILITY, GRAPH_PERSISTENT_CAPABILITY, KNOWLEDGE_PERSISTENT_CAPABILITY, COGNITIVE_CYCLE_PERSISTENT_CAPABILITY, EVOLUTION_ENGINE_CAPABILITY, CONTROLLED_AUTONOMY_CAPABILITY)
