@@ -3985,91 +3985,84 @@ def _execute_cognitive_cycle(service, trigger, input_data, actor, owner_scope=No
     try:
         start_result = service.start_cycle(trigger, input_data, actor=actor, owner_scope=owner_scope)
         cycle_id = start_result["record"]["id"]
-            def record(stage, data, status="success", error=None):
-                r = service.record_stage(cycle_id, stage, data=data, status=status, error=error, actor=actor, owner_scope=owner_scope)
-                events.append(r["event"])
-                if status != "success":
-                    stage_failures.append(stage)
+        def record(stage, data, status="success", error=None):
+            r = service.record_stage(cycle_id, stage, data=data, status=status, error=error, actor=actor, owner_scope=owner_scope)
+            events.append(r["event"])
+            if status != "success":
+                stage_failures.append(stage)
 
-            message = str((input_data or {}).get("message") or "")
-            record("observe", {"trigger": trigger, "message_length": len(message), "has_message": bool(message),
-                               "received_at": datetime.datetime.now(datetime.timezone.utc).isoformat()})
+        message = str((input_data or {}).get("message") or "")
+        record("observe", {"trigger": trigger, "message_length": len(message), "has_message": bool(message),
+                           "received_at": datetime.datetime.now(datetime.timezone.utc).isoformat()})
 
-            keywords = _extract_keywords(message) if message else []
-            interpretation = "user_message" if message else "empty_input"
-            if any(w in message.lower() for w in ["recuerda", "memoria", "recuerdo"]):
-                interpretation = "memory_query"
-            elif any(w in message.lower() for w in ["aprende", "leccion", "lección"]):
-                interpretation = "learning_query"
-            record("interpret", {"interpretation": interpretation, "keywords": keywords, "message_length": len(message)})
+        keywords = _extract_keywords(message) if message else []
+        interpretation = "user_message" if message else "empty_input"
+        if any(w in message.lower() for w in ["recuerda", "memoria", "recuerdo"]):
+            interpretation = "memory_query"
+        elif any(w in message.lower() for w in ["aprende", "leccion", "lección"]):
+            interpretation = "learning_query"
+        record("interpret", {"interpretation": interpretation, "keywords": keywords, "message_length": len(message)})
 
-            memories = _recall_memories(service, message, limit=5, owner_scope=owner_scope) if message else []
-            answer = None; model_used = "none"
-            if message:
-                try:
-                    answer, model_used = _run_reason_stage(message, memories)
-                except Exception as e:
-                    record("reason", {"error": "reason_failed", "message": str(e)[:200]}, status="failure",
-                           error={"type": type(e).__name__})
-                    service.complete_cycle(cycle_id, "failed", actor=actor, owner_scope=owner_scope)
-                    return {"cycle": service.get_cycle(cycle_id, owner_scope=owner_scope), "events": events, "answer": None, "learning_id": None}
-            record("reason", {"model_used": model_used, "memories_considered": len(memories),
-                              "answer_generated": bool(answer), "answer_length": len(answer or "")})
-
-            decision = "deliver_answer" if answer else "no_answer"
-            record("decide", {"decision": decision, "rationale": "LLM produjo respuesta" if answer else "LLM no disponible"})
-
-            final_response = answer or "No se pudo generar respuesta en este ciclo."
-            final_response = enforce_akira_identity_global(final_response)
-            record("act", {"action": "return_response", "response_length": len(final_response)})
-
-            record("observe_result", {"response_preview": final_response[:200], "response_full_length": len(final_response)})
-
-            low = final_response.lower()
-            identity_preserved = not any(b in low for b in _IDENTITY_BANNED_PHRASES)
-            record("evaluate", {"has_answer": bool(answer), "identity_preserved": identity_preserved,
-                                "memories_used": len(memories), "keywords_extracted": len(keywords), "model_used": model_used})
-
-            lesson = (f"Ciclo '{trigger}' ejecutado. Modelo: {model_used}. Memorias: {len(memories)}. "
-                      f"Keywords: {len(keywords)}. Identidad {'preservada' if identity_preserved else 'rota'}.")
-            learning_id = None
+        memories = _recall_memories(service, message, limit=5, owner_scope=owner_scope) if message else []
+        answer = None; model_used = "none"
+        if message:
             try:
-                lr = service.save_learning({"source": "cognitive_cycle", "event": f"ciclo cognitivo {cycle_id}",
-                                             "lesson": lesson, "knowledge_nodes": [], "relationships": [],
-                                             "confidence": 0.8 if answer else 0.3,
-                                             "outcome": "success" if answer else "failure"},
-                                            actor=actor, idempotency_key=f"cycle_learn_{cycle_id}", owner_scope=owner_scope)
-                learning_id = lr["record"]["id"]
-                record("learn", {"learning_id": learning_id, "lesson": lesson})
+                answer, model_used = _run_reason_stage(message, memories)
             except Exception as e:
-                record("learn", {"error": "learning_save_failed", "message": str(e)[:200]}, status="failure",
+                record("reason", {"error": "reason_failed", "message": str(e)[:200]}, status="failure",
                        error={"type": type(e).__name__})
+                service.complete_cycle(cycle_id, "failed", actor=actor, owner_scope=owner_scope)
+                return {"cycle": service.get_cycle(cycle_id, owner_scope=owner_scope), "events": events, "answer": None, "learning_id": None}
+        record("reason", {"model_used": model_used, "memories_considered": len(memories),
+                          "answer_generated": bool(answer), "answer_length": len(answer or "")})
 
-            try:
-                current_sm = service.get_self_model()
-                cs = dict(current_sm.get("current_state") or {})
-                cs["last_cycle_id"] = cycle_id
-                cs["last_cycle_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-                cs["last_cycle_trigger"] = trigger
-                cs["last_cycle_model"] = model_used
-                cs["last_observed_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-                cs["cycles_completed"] = int(cs.get("cycles_completed") or 0) + 1
-                service.update_self_model({"current_state": cs}, current_sm["version"], actor=actor)
-                record("update_self_model", {"self_model_updated": True, "cycles_completed": cs["cycles_completed"]})
-            except Exception as e:
-                record("update_self_model", {"error": "sm_update_failed", "message": str(e)[:200]},
-                       status="failure", error={"type": type(e).__name__})
+        decision = "deliver_answer" if answer else "no_answer"
+        record("decide", {"decision": decision, "rationale": "LLM produjo respuesta" if answer else "LLM no disponible"})
 
-            final_status = "completed" if answer and not stage_failures else "failed"
-            final_cycle = service.complete_cycle(cycle_id, final_status, actor=actor, owner_scope=owner_scope)
-            return {"cycle": final_cycle, "events": events, "answer": final_response, "learning_id": learning_id}
-        @app.post("/api/v8/cognitive/cycle")
-        def v8_cognitive_cycle(request: Request, payload: dict):
-            s, _owner_error = _require_owner(request)
-            if _owner_error is not None: return _owner_error
-            service = _persistence_service()
-            if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
-            if not isinstance(payload, dict): return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
+        final_response = answer or "No se pudo generar respuesta en este ciclo."
+        final_response = enforce_akira_identity_global(final_response)
+        record("act", {"action": "return_response", "response_length": len(final_response)})
+
+        record("observe_result", {"response_preview": final_response[:200], "response_full_length": len(final_response)})
+
+        low = final_response.lower()
+        identity_preserved = not any(b in low for b in _IDENTITY_BANNED_PHRASES)
+        record("evaluate", {"has_answer": bool(answer), "identity_preserved": identity_preserved,
+                            "memories_used": len(memories), "keywords_extracted": len(keywords), "model_used": model_used})
+
+        lesson = (f"Ciclo '{trigger}' ejecutado. Modelo: {model_used}. Memorias: {len(memories)}. "
+                  f"Keywords: {len(keywords)}. Identidad {'preservada' if identity_preserved else 'rota'}.")
+        learning_id = None
+        try:
+            lr = service.save_learning({"source": "cognitive_cycle", "event": f"ciclo cognitivo {cycle_id}",
+                                         "lesson": lesson, "knowledge_nodes": [], "relationships": [],
+                                         "confidence": 0.8 if answer else 0.3,
+                                         "outcome": "success" if answer else "failure"},
+                                        actor=actor, idempotency_key=f"cycle_learn_{cycle_id}", owner_scope=owner_scope)
+            learning_id = lr["record"]["id"]
+            record("learn", {"learning_id": learning_id, "lesson": lesson})
+        except Exception as e:
+            record("learn", {"error": "learning_save_failed", "message": str(e)[:200]}, status="failure",
+                   error={"type": type(e).__name__})
+
+        try:
+            current_sm = service.get_self_model()
+            cs = dict(current_sm.get("current_state") or {})
+            cs["last_cycle_id"] = cycle_id
+            cs["last_cycle_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            cs["last_cycle_trigger"] = trigger
+            cs["last_cycle_model"] = model_used
+            cs["last_observed_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            cs["cycles_completed"] = int(cs.get("cycles_completed") or 0) + 1
+            service.update_self_model({"current_state": cs}, current_sm["version"], actor=actor)
+            record("update_self_model", {"self_model_updated": True, "cycles_completed": cs["cycles_completed"]})
+        except Exception as e:
+            record("update_self_model", {"error": "sm_update_failed", "message": str(e)[:200]},
+                   status="failure", error={"type": type(e).__name__})
+
+        final_status = "completed" if answer and not stage_failures else "failed"
+        final_cycle = service.complete_cycle(cycle_id, final_status, actor=actor, owner_scope=owner_scope)
+        return {"cycle": final_cycle, "events": events, "answer": final_response, "learning_id": learning_id}
     except Exception as exc:
         if cycle_id is None:
             raise
