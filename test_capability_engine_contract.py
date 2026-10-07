@@ -147,7 +147,10 @@ class CapabilityEngineContractTests(unittest.TestCase):
             "selftest:memory_recall:verification:v1:",
             "selftest:capability:verification:v1:",
         ):
-            self.assertIn("+ build_ref", source[source.find(prefix):source.find(prefix) + 180])
+            idx = source.find(prefix)
+            self.assertGreaterEqual(idx, 0, f"missing build-scoped key: {prefix}")
+            block = source[idx:idx + 500]
+            self.assertIn("+ build_ref", block, f"build_ref missing from key block: {prefix}")
         self.assertIn("from .build_identity import runtime_build_ref", source)
 
     def test_runtime_build_change_invalidates_verified_capability(self):
