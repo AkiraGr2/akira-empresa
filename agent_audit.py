@@ -249,7 +249,10 @@ def _audit_task(
     if agent_name == "graph_builder" and tool_name == "graph_create_edge" and outputs.get("id"):
         fixture["graph_edge_id"] = outputs.get("id")
     if agent_name == "learner" and tool_name == "learning_save" and outputs.get("id"):
+        fixture.setdefault("learning_ids", []).append(outputs.get("id"))
         fixture["learning_id"] = outputs.get("id")
+    if agent_name == "internal" and tool_name == "cognitive_cycle" and outputs.get("learning_id"):
+        fixture.setdefault("learning_ids", []).append(outputs.get("learning_id"))
     if agent_name == "autonomy_orchestrator" and isinstance(outputs.get("autonomy"), dict):
         fixture["autonomy_run_id"] = outputs["autonomy"].get("id")
 
@@ -322,16 +325,13 @@ def _cleanup_fixture(service, fixture: dict[str, Any], actor: str, owner_scope: 
                 "error_type": type(exc).__name__,
             })
 
-    for entity, record_id in (
-        ("learning_events", fixture.get("learning_id")),
-    ):
-        if not record_id:
-            continue
+    learning_ids = list(dict.fromkeys(fixture.get("learning_ids") or []))
+    for record_id in learning_ids:
         try:
-            deleted = service.repo.delete(entity, record_id)
-            absent = service.repo.get(entity, record_id) is None
+            deleted = service.repo.delete("learning_events", record_id)
+            absent = service.repo.get("learning_events", record_id) is None
             cleanup["actions"].append({
-                "entity": entity,
+                "entity": "learning_events",
                 "id": record_id,
                 "deleted": bool(deleted),
                 "confirmed_absent": absent,
@@ -340,8 +340,43 @@ def _cleanup_fixture(service, fixture: dict[str, Any], actor: str, owner_scope: 
         except Exception as exc:
             cleanup["ok"] = False
             cleanup["actions"].append({
-                "entity": entity,
+                "entity": "learning_events",
                 "id": record_id,
+                "error_type": type(exc).__name__,
+            })
+
+    snapshot = fixture.get("initial_self_model_current_state")
+    if isinstance(snapshot, dict):
+        try:
+            current_self_model = service.get_self_model()
+            if isinstance(current_self_model, dict) and current_self_model.get("current_state") != snapshot:
+                restored = service.update_self_model(
+                    {"current_state": snapshot},
+                    current_self_model["version"],
+                    actor=actor,
+                )
+                verified = service.get_self_model()
+                restored_ok = bool(verified and verified.get("current_state") == snapshot)
+                cleanup["actions"].append({
+                    "entity": "self_model",
+                    "restored": restored is not None,
+                    "confirmed": restored_ok,
+                    "version_after": verified.get("version") if verified else None,
+                })
+                cleanup["ok"] &= restored_ok
+            else:
+                cleanup["actions"].append({
+                    "entity": "self_model",
+                    "restored": False,
+                    "confirmed": True,
+                    "unchanged": True,
+                })
+        except Exception as exc:
+            cleanup["ok"] = False
+            cleanup["actions"].append({
+                "entity": "self_model",
+                "restored": False,
+                "confirmed": False,
                 "error_type": type(exc).__name__,
             })
 
@@ -410,10 +445,20 @@ def run_agent_audit(
     repo_name: str = "AkiraGr2/akira-empresa",
 ) -> dict[str, Any]:
     """Run the complete F9 audit over every active production agent."""
-    fixture: dict[str, Any] = {"memory_ids": []}
+    fixture: dict[str, Any] = {"memory_ids": [], "learning_ids": []}
     developer_output: dict[str, Any] = {}
     tester_output: dict[str, Any] = {}
     reports: list[dict[str, Any]] = []
+
+    try:
+        initial_self_model = service.get_self_model()
+        current_state = initial_self_model.get("current_state") if isinstance(initial_self_model, dict) else None
+        fixture["initial_self_model_current_state"] = (
+            json.loads(json.dumps(current_state, ensure_ascii=False))
+            if isinstance(current_state, dict) else None
+        )
+    except Exception:
+        fixture["initial_self_model_current_state"] = None
 
     service.record_audit(
         "agent_audit",
