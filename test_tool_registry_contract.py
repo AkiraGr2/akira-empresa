@@ -59,10 +59,11 @@ class ToolRegistryContractTests(unittest.TestCase):
 
     def test_lifespan_waits_for_persistence_before_tool_seed(self):
         source = Path("nexus.py").read_text(encoding="utf-8")
-        self.assertIn("for attempt in range(15):", source)
-        self.assertIn("if _persistence_service() is not None:", source)
-        self.assertIn("_seed_tools_and_agents()", source)
-        self.assertNotIn("await asyncio.sleep(3)\n    try:\n        print(f"[providers]", source)
+        wait_pos = source.index("for attempt in range(15):")
+        seed_pos = source.index("_seed_tools_and_agents()", wait_pos)
+        ready_pos = source.index("if _persistence_service() is not None:", wait_pos)
+        self.assertLess(wait_pos, ready_pos)
+        self.assertLess(ready_pos, seed_pos)
 
     def test_web_search_registry_schema_matches_structured_runtime_output(self):
         source = Path("nexus.py").read_text(encoding="utf-8")
