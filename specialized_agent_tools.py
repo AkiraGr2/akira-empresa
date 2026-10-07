@@ -27,7 +27,7 @@ MAX_REVIEW_CHARS = 16000
 MAX_TEST_MODULES = 6
 MAX_COMPILE_PATHS = 8
 TEST_TIMEOUT_S = 45
-SAFE_TEST_RE = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*\.)*test_[A-Za-z0-9_]+(?:\.py)?$")
+SAFE_TEST_RE = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*\.)*test_[A-Za-z0-9_]+(?:\.[A-Za-z_][A-Za-z0-9_]*){0,2}(?:\.py)?$")
 SAFE_PATH_RE = re.compile(r"^[A-Za-z0-9_./-]+$")
 SAFE_TEST_MODULES = frozenset({
     "persistence.test_absorption",
@@ -428,6 +428,16 @@ EVIDENCIA:
 
 
 def _normalize_test_modules(tests: Any) -> list[str]:
+    """Normalize allowlisted unittest modules or precise test selectors.
+
+    Accepted selectors are:
+    - allowlisted_module
+    - allowlisted_module.ClassName
+    - allowlisted_module.ClassName.test_method
+
+    The module prefix must be explicitly allowlisted; arbitrary files/classes cannot
+    be smuggled into the tester command.
+    """
     if tests is None:
         return []
     if not isinstance(tests, list):
@@ -435,12 +445,36 @@ def _normalize_test_modules(tests: Any) -> list[str]:
     out = []
     for raw in tests[:MAX_TEST_MODULES]:
         value = str(raw or "").strip()
+        if value.endswith(".py"):
+            value = value[:-3]
         if not SAFE_TEST_RE.fullmatch(value):
             raise SpecializedAgentError("unsafe_test_module")
-        module = value[:-3] if value.endswith(".py") else value
-        if module not in SAFE_TEST_MODULES:
+
+        segments = value.split(".")
+        module = None
+        remainder: list[str] = []
+        # Prefer the longest allowlisted module prefix so package tests remain
+        # unambiguous (e.g. persistence.test_absorption).
+        for idx in range(len(segments), 0, -1):
+            candidate = ".".join(segments[:idx])
+            if candidate in SAFE_TEST_MODULES:
+                module = candidate
+                remainder = segments[idx:]
+                break
+        if module is None:
             raise SpecializedAgentError("test_module_not_allowlisted")
-        out.append(module)
+        if len(remainder) > 2:
+            raise SpecializedAgentError("unsafe_test_selector")
+        if remainder:
+            if len(remainder) == 1:
+                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", remainder[0]):
+                    raise SpecializedAgentError("unsafe_test_selector")
+            else:
+                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", remainder[0]):
+                    raise SpecializedAgentError("unsafe_test_selector")
+                if not re.fullmatch(r"test_[A-Za-z0-9_]+", remainder[1]):
+                    raise SpecializedAgentError("unsafe_test_selector")
+        out.append(".".join([module, *remainder]))
     return list(dict.fromkeys(out))
 
 
