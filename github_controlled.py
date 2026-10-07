@@ -12,6 +12,7 @@ This module is the only F14 component allowed to mutate GitHub. It enforces:
 from __future__ import annotations
 
 import base64
+import difflib
 import hashlib
 import os
 import re
@@ -43,6 +44,60 @@ BRANCH_PREFIX = "akira/autonomy/"
 class ControlledGitHubError(RuntimeError):
     """Controlled GitHub gateway failure."""
 
+
+
+def canonicalize_modify_patch(path: str, source: str, patch: str) -> str:
+    """Canonicalize a modify patch against the exact authoritative source.
+
+    Hunk coordinates are treated as untrusted metadata. The source text is
+    authoritative; recovery is allowed only when the hunk body identifies one
+    exact, unique old fragment. Final line numbers and diff syntax are generated
+    deterministically by Python.
+    """
+    path = validate_path(path)
+    patch = str(patch or "")
+    lines = patch.splitlines(keepends=True)
+    old_headers = [line.rstrip("\n") for line in lines if line.startswith("--- ")]
+    new_headers = [line.rstrip("\n") for line in lines if line.startswith("+++ ")]
+    hunk_indexes = [i for i, line in enumerate(lines) if line.startswith("@@")]
+    hunk_pattern = re.compile(r"^@@ -(\\d+)(?:,(\\d+))? \\+(\\d+)(?:,(\\d+))? @@(?: .*)?$")
+    if (
+        len(old_headers) != 1
+        or len(new_headers) != 1
+        or old_headers[0].strip() != f"--- a/{path}"
+        or new_headers[0].strip() != f"+++ b/{path}"
+        or len(hunk_indexes) != 1
+        or not hunk_pattern.fullmatch(lines[hunk_indexes[0]].rstrip("\n"))
+    ):
+        raise ControlledGitHubError(f"patch_invalid_hunk:{path}")
+
+    body = lines[hunk_indexes[0] + 1:]
+    if not body or any(not line.startswith((" ", "-", "+")) for line in body):
+        raise ControlledGitHubError(f"patch_invalid_body:{path}")
+
+    old_text = "".join(line[1:] for line in body if line.startswith((" ", "-")))
+    new_text = "".join(line[1:] for line in body if line.startswith((" ", "+")))
+    if not old_text or old_text == new_text:
+        raise ControlledGitHubError(f"patch_not_recoverable:{path}")
+    if source.count(old_text) != 1:
+        raise ControlledGitHubError(f"patch_anchor_not_unique:{path}")
+
+    updated = source.replace(old_text, new_text, 1)
+    if updated == source:
+        raise ControlledGitHubError(f"patch_noop:{path}")
+
+    diff = "".join(
+        difflib.unified_diff(
+            source.splitlines(keepends=True),
+            updated.splitlines(keepends=True),
+            fromfile=f"a/{path}",
+            tofile=f"b/{path}",
+            lineterm="\n",
+        )
+    )
+    if not diff.startswith(f"--- a/{path}\n+++ b/{path}\n@@ "):
+        raise ControlledGitHubError(f"patch_canonicalization_failed:{path}")
+    return diff
 
 def _token() -> str:
     token = os.getenv("GITHUB_TOKEN", "").strip()
@@ -335,6 +390,13 @@ def sandbox_changes(
                 source = data.decode("utf-8", errors="strict")
             elif existed:
                 raise ControlledGitHubError(f"create_target_exists:{path}")
+
+            if change["operation"] == "modify":
+                try:
+                    canonical_patch = canonicalize_modify_patch(path, source, change["patch"])
+                except ControlledGitHubError:
+                    raise
+                change = {**change, "patch": canonical_patch}
 
             result_text = apply_unified_patch(source, change["patch"], path, change["operation"])
             file_path.parent.mkdir(parents=True, exist_ok=True)
