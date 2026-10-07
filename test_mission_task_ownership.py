@@ -100,7 +100,8 @@ class MissionTaskOwnershipTests(unittest.TestCase):
 
     def test_mission_approval_persists_authorized_by(self):
         source = Path("persistence/service.py").read_text(encoding="utf-8")
-        self.assertIn('changes["authorized_by"] = owner or actor', source)
+        self.assertIn('changes["authorized_by"] = authorized_by', source)
+        self.assertIn('approval_result["approval"] = {', source)
 
     def test_mission_cancel_route_uses_cascade_service(self):
         source = Path("nexus.py").read_text(encoding="utf-8")
