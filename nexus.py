@@ -4004,7 +4004,7 @@ def _execute_cognitive_cycle(service, trigger, input_data, actor, owner_scope=No
                 failed_cycle = service.get_cycle(cycle_id, owner_scope=owner_scope)
         return {
             "cycle": failed_cycle,
-            "events": [],
+            "events": recovery_context.get("events", []),
             "answer": None,
             "learning_id": None,
             "error": {"type": type(exc).__name__, "message": str(exc)[:200]},
@@ -4016,6 +4016,8 @@ def _execute_cognitive_cycle_core(service, trigger, input_data, actor, owner_sco
     if isinstance(recovery_context, dict):
         recovery_context["cycle_id"] = cycle_id
     events = []
+    if isinstance(recovery_context, dict):
+        recovery_context["events"] = events
     stage_failures = []
     def record(stage, data, status="success", error=None):
         r = service.record_stage(cycle_id, stage, data=data, status=status, error=error, actor=actor, owner_scope=owner_scope)
