@@ -15,8 +15,10 @@ class FakeTx:
         return False
 
     def create(self, entity, record):
-        self.repo.rows.setdefault(entity, []).append(dict(record))
-        return dict(record), True
+        stored = dict(record)
+        stored.setdefault("version", 1)
+        self.repo.rows.setdefault(entity, []).append(stored)
+        return dict(stored), True
 
     def update(self, entity, record_id, changes, expected_version):
         row = next(r for r in self.repo.rows.get(entity, []) if r["id"] == record_id)
