@@ -143,15 +143,15 @@ class SpecializedAgentsContractTests(unittest.TestCase):
         inspection = {"files": [{
             "path": "test_tool_registry_contract.py",
             "status": "ok",
-            "content": "import ast\\nimport unittest\\nfrom pathlib import Path\\n\\n\\nclass Example:\\n    pass\\n",
+            "content": "import ast\nimport unittest\nfrom pathlib import Path\n\n\nclass Example:\n    pass\n",
         }]}
         model_patch = (
-            "--- a/test_tool_registry_contract.py\\n"
-            "+++ b/test_tool_registry_contract.py\\n"
-            "@@ -1,3 +1,4 @@\\n"
-            "+# This file contains the test contract for the tool registry\\n"
-            " import unittest\\n"
-            " from pathlib import Path\\n"
+            "--- a/test_tool_registry_contract.py\n"
+            "+++ b/test_tool_registry_contract.py\n"
+            "@@ -1,3 +1,4 @@\n"
+            "+# This file contains the test contract for the tool registry\n"
+            " import unittest\n"
+            " from pathlib import Path\n"
         )
         with patch.object(specialized_agent_tools, "_specialist_json_call", return_value={
             "status": "proposal",
@@ -173,8 +173,53 @@ class SpecializedAgentsContractTests(unittest.TestCase):
         generated = result["changes"][0]["patch"]
         from github_controlled import apply_unified_patch
         applied = apply_unified_patch(inspection["files"][0]["content"], generated, "test_tool_registry_contract.py", "modify")
-        self.assertIn("# This file contains the test contract for the tool registry\\nimport unittest", applied)
-        self.assertRegex(generated, r"^--- a/test_tool_registry_contract\\.py\\n\\+\\+\\+ b/test_tool_registry_contract\\.py\\n@@ ")
+        self.assertIn("# This file contains the test contract for the tool registry\nimport unittest", applied)
+        self.assertTrue(generated.startswith("--- a/test_tool_registry_contract.py\n+++ b/test_tool_registry_contract.py\n@@ "))
+
+    def test_valid_unified_diff_with_stale_hunk_coordinates_is_recovered_before_acceptance(self):
+        source = (
+            "import ast\n"
+            "import unittest\n"
+            "from pathlib import Path\n"
+            "\n"
+            "class Example:\n"
+            "    pass\n"
+        )
+        stale_patch = (
+            "--- a/test_tool_registry_contract.py\n"
+            "+++ b/test_tool_registry_contract.py\n"
+            "@@ -1,3 +1,4 @@\n"
+            "+# This file contains the test contract for the tool registry\n"
+            " import unittest\n"
+            " from pathlib import Path\n"
+        )
+        change = {
+            "path": "test_tool_registry_contract.py",
+            "operation": "modify",
+            "reason": "regression",
+            "patch": stale_patch,
+        }
+        canonical = specialized_agent_tools._canonicalize_generated_patch(
+            change,
+            {"files": [{
+                "path": "test_tool_registry_contract.py",
+                "status": "ok",
+                "content": source,
+            }]},
+        )
+        self.assertNotEqual(canonical["patch"], stale_patch)
+        self.assertTrue(canonical["patch"].startswith("--- a/test_tool_registry_contract.py\n+++ b/test_tool_registry_contract.py\n@@ "))
+        from github_controlled import apply_unified_patch
+        applied = apply_unified_patch(
+            source,
+            canonical["patch"],
+            "test_tool_registry_contract.py",
+            "modify",
+        )
+        self.assertIn(
+            "# This file contains the test contract for the tool registry\nimport unittest",
+            applied,
+        )
 
     def test_reviewer_accepts_absent_create_target_evidence(self):
         calls = []
