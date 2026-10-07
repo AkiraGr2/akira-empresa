@@ -396,105 +396,105 @@ def run_logic_tests(service, fresh_service_factory=None):
         )
 
 
-def t_tool_registry_contract():
-    name = "TEST_TOOL_REGISTRY_CONTRACT"
-    expected = {
-        "web_search", "github_repo_read",
-        "memory_save", "memory_search",
-        "graph_create_node", "graph_create_edge", "graph_related",
-        "learning_save", "self_model_read", "extract_pdf",
-        "image_generate", "cognitive_cycle",
-        "developer_propose", "python_test", "code_review",
-        "controlled_autonomy_start",
-    }
-    rows = service.list_tools(limit=200)
-    names = [str(row.get("name") or "") for row in rows]
-    duplicate_names = len(names) != len(set(names))
-    by_name = {row.get("name"): row for row in rows}
-
-    checks = {
-        "exact_registry_names": set(names) == expected,
-        "no_duplicate_names": not duplicate_names,
-        "all_status_valid": all(row.get("status") in {"available", "disabled", "deprecated"} for row in rows),
-        "all_permissions_valid": all(
-            bool({str(p).strip().lower() for p in (row.get("permissions") or [])}.intersection({"auth", "owner"}))
-            for row in rows
-        ),
-        "schemas_are_objects": all(
-            isinstance(row.get("inputs_schema"), dict)
-            and isinstance(row.get("outputs_schema"), dict)
-            and isinstance(row.get("limits_json"), dict)
-            for row in rows
-        ),
-        "risks_are_lists": all(isinstance(row.get("risks"), list) for row in rows),
-        "disabled_image_is_fail_closed": by_name.get("image_generate", {}).get("status") == "disabled",
-        "autonomy_owner_only": by_name.get("controlled_autonomy_start", {}).get("permissions") == ["owner"],
-    }
-
-    snapshot = [
-        {
-            "name": row.get("name"),
-            "category": row.get("category"),
-            "status": row.get("status"),
-            "permissions": row.get("permissions") or [],
-            "inputs_schema": row.get("inputs_schema") or {},
-            "outputs_schema": row.get("outputs_schema") or {},
-            "limits_json": row.get("limits_json") or {},
+    def t_tool_registry_contract():
+        name = "TEST_TOOL_REGISTRY_CONTRACT"
+        expected = {
+            "web_search", "github_repo_read",
+            "memory_save", "memory_search",
+            "graph_create_node", "graph_create_edge", "graph_related",
+            "learning_save", "self_model_read", "extract_pdf",
+            "image_generate", "cognitive_cycle",
+            "developer_propose", "python_test", "code_review",
+            "controlled_autonomy_start",
         }
-        for row in sorted(rows, key=lambda item: str(item.get("name") or ""))
-    ]
-    digest = hashlib.sha256(
-        json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
-    ).hexdigest()[:16]
+        rows = service.list_tools(limit=200)
+        names = [str(row.get("name") or "") for row in rows]
+        duplicate_names = len(names) != len(set(names))
+        by_name = {row.get("name"): row for row in rows}
 
-    capability_rows = service.list_capabilities(filters={"name": "tool_registry"}, limit=1)
-    if not capability_rows:
-        return _res(name, False, "capability tool_registry no existe en el registry canonico")
-    capability = capability_rows[0]
-    ok = all(checks.values())
+        checks = {
+            "exact_registry_names": set(names) == expected,
+            "no_duplicate_names": not duplicate_names,
+            "all_status_valid": all(row.get("status") in {"available", "disabled", "deprecated"} for row in rows),
+            "all_permissions_valid": all(
+                bool({str(p).strip().lower() for p in (row.get("permissions") or [])}.intersection({"auth", "owner"}))
+                for row in rows
+            ),
+            "schemas_are_objects": all(
+                isinstance(row.get("inputs_schema"), dict)
+                and isinstance(row.get("outputs_schema"), dict)
+                and isinstance(row.get("limits_json"), dict)
+                for row in rows
+            ),
+            "risks_are_lists": all(isinstance(row.get("risks"), list) for row in rows),
+            "disabled_image_is_fail_closed": by_name.get("image_generate", {}).get("status") == "disabled",
+            "autonomy_owner_only": by_name.get("controlled_autonomy_start", {}).get("permissions") == ["owner"],
+        }
 
-    event = {
-        "event_type": "verification",
-        "test_key": "tool_registry_contract",
-        "test_version": "v1",
-        "result": "pass" if ok else "fail",
-        "evidence": [{
-            "type": "selftest",
-            "title": "Tool registry contract",
-            "reference": "selftest:tool-registry/v1",
-            "summary": "Registry completo, schemas estructurales validos, permisos disponibles y estado disabled fail-closed.",
-            "hash": digest,
-        }],
-        "environment": {"runtime": "selftest", "tool_count": len(rows)},
-        "dependency_snapshot": [
-            {"kind": "storage", "id": "PostgreSQL.tools", "version": "runtime"},
-            {"kind": "storage", "id": "PostgreSQL.tool_invocations", "version": "runtime"},
-            {"kind": "security", "id": "owner_scope", "version": "runtime"},
-        ],
-        "runtime_version": "selftest",
-        "build_ref": build_ref,
-        "actor": "selftest",
-        "executor": "selftest",
-        "evaluator": "system",
-        "error": None if ok else {"checks": checks},
-    }
-    idem = "selftest:tool_registry_contract:v1:" + digest + ":" + build_ref
-    try:
-        verification = service.record_capability_verification(
-            capability["id"],
-            event,
-            actor="selftest",
-            idempotency_key=idem,
+        snapshot = [
+            {
+                "name": row.get("name"),
+                "category": row.get("category"),
+                "status": row.get("status"),
+                "permissions": row.get("permissions") or [],
+                "inputs_schema": row.get("inputs_schema") or {},
+                "outputs_schema": row.get("outputs_schema") or {},
+                "limits_json": row.get("limits_json") or {},
+            }
+            for row in sorted(rows, key=lambda item: str(item.get("name") or ""))
+        ]
+        digest = hashlib.sha256(
+            json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        ).hexdigest()[:16]
+
+        capability_rows = service.list_capabilities(filters={"name": "tool_registry"}, limit=1)
+        if not capability_rows:
+            return _res(name, False, "capability tool_registry no existe en el registry canonico")
+        capability = capability_rows[0]
+        ok = all(checks.values())
+
+        event = {
+            "event_type": "verification",
+            "test_key": "tool_registry_contract",
+            "test_version": "v1",
+            "result": "pass" if ok else "fail",
+            "evidence": [{
+                "type": "selftest",
+                "title": "Tool registry contract",
+                "reference": "selftest:tool-registry/v1",
+                "summary": "Registry completo, schemas estructurales validos, permisos disponibles y estado disabled fail-closed.",
+                "hash": digest,
+            }],
+            "environment": {"runtime": "selftest", "tool_count": len(rows)},
+            "dependency_snapshot": [
+                {"kind": "storage", "id": "PostgreSQL.tools", "version": "runtime"},
+                {"kind": "storage", "id": "PostgreSQL.tool_invocations", "version": "runtime"},
+                {"kind": "security", "id": "owner_scope", "version": "runtime"},
+            ],
+            "runtime_version": "selftest",
+            "build_ref": build_ref,
+            "actor": "selftest",
+            "executor": "selftest",
+            "evaluator": "system",
+            "error": None if ok else {"checks": checks},
+        }
+        idem = "selftest:tool_registry_contract:v1:" + digest + ":" + build_ref
+        try:
+            verification = service.record_capability_verification(
+                capability["id"],
+                event,
+                actor="selftest",
+                idempotency_key=idem,
+            )
+        except Exception as exc:
+            return _res(name, False, f"verification persistence fallo: {type(exc).__name__}: {str(exc)[:200]}")
+        effective = verification.get("effective_state")
+        verified = effective == "verified" if ok else effective in ("failed", "stale")
+        return _res(
+            name,
+            bool(ok and verified),
+            f"resultado={verification.get('outcome')}; effective_state={effective}; checks={checks}; digest={digest}",
         )
-    except Exception as exc:
-        return _res(name, False, f"verification persistence fallo: {type(exc).__name__}: {str(exc)[:200]}")
-    effective = verification.get("effective_state")
-    verified = effective == "verified" if ok else effective in ("failed", "stale")
-    return _res(
-        name,
-        bool(ok and verified),
-        f"resultado={verification.get('outcome')}; effective_state={effective}; checks={checks}; digest={digest}",
-    )
 
     def t_identity_root_contract():
         name = "TEST_IDENTITY_ROOT_CONTRACT"
