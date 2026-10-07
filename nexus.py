@@ -367,13 +367,26 @@ def apply_autonomous_patch_github():
     return {"applied": False, "token_present": True, "repo": repo}
 
 def search_web_sources(q, max_results=5):
+    """Collect real web-search evidence without converting empty results into fake success text."""
     try:
         import requests, urllib.parse
-        q_enc = urllib.parse.quote_plus(str(q or "")[:180])
-        url = f"https://api.duckduckgo.com/?q={q_enc}&format=json&pretty=1&no_html=1"
-        r = requests.get(url, timeout=8, headers={"User-Agent": "AKIRA V7.3"})
-        r.raise_for_status()
-        data = r.json() or {}
+        query = str(q or "")[:180]
+        limit = max(1, min(int(max_results), 10))
+        headers = {"User-Agent": "AKIRA V7.3 web-search/1.0"}
+
+        api_url = (
+            "https://api.duckduckgo.com/?q="
+            + urllib.parse.quote_plus(query)
+            + "&format=json&pretty=1&no_html=1"
+        )
+        data = {}
+        try:
+            response = requests.get(api_url, timeout=8, headers=headers)
+            response.raise_for_status()
+            data = response.json() or {}
+        except Exception as e:
+            print(f"[web_verify] instant_api fallo: {type(e).__name__}")
+
         results = []
         abstract = str(data.get("AbstractText") or "").strip()
         abstract_url = str(data.get("AbstractURL") or "").strip()
@@ -381,29 +394,32 @@ def search_web_sources(q, max_results=5):
         if abstract and abstract_url:
             results.append({
                 "title": heading or "DuckDuckGo abstract",
-                "reference": abstract_url,
+                "reference": abstract_url[:500],
                 "snippet": abstract[:1000],
-                "type": "web_search"
+                "type": "web_search",
             })
 
         def walk(items):
             if not isinstance(items, list):
                 return
             for item in items:
-                if len(results) >= max_results:
+                if len(results) >= limit:
                     return
                 if not isinstance(item, dict):
                     continue
-                if item.get("FirstURL") and item.get("Text"):
+                first_url = str(item.get("FirstURL") or "").strip()
+                text_value = str(item.get("Text") or "").strip()
+                if first_url and text_value:
                     results.append({
-                        "title": str(item.get("Text") or "")[:200],
-                        "reference": str(item.get("FirstURL") or "")[:500],
-                        "snippet": str(item.get("Text") or "")[:1000],
-                        "type": "web_search"
+                        "title": text_value[:200],
+                        "reference": first_url[:500],
+                        "snippet": text_value[:1000],
+                        "type": "web_search",
                     })
                 walk(item.get("Topics"))
 
         walk(data.get("RelatedTopics"))
+
         deduped = []
         seen = set()
         for item in results:
@@ -412,7 +428,81 @@ def search_web_sources(q, max_results=5):
                 continue
             seen.add(ref)
             deduped.append(item)
-        return deduped[:max(1, min(int(max_results), 10))]
+
+        # Instant Answer is intentionally incomplete for many technical queries.
+        # Fall back to DuckDuckGo's HTML results page before reporting zero evidence.
+        if len(deduped) < limit:
+            try:
+                from html.parser import HTMLParser
+                from urllib.parse import parse_qs, unquote, urlparse
+
+                class _DDGResultParser(HTMLParser):
+                    def __init__(self):
+                        super().__init__(convert_charrefs=True)
+                        self._href = None
+                        self._text = []
+                        self.results = []
+
+                    def handle_starttag(self, tag, attrs):
+                        if tag != "a":
+                            return
+                        attrs_map = dict(attrs)
+                        classes = str(attrs_map.get("class") or "")
+                        href = str(attrs_map.get("href") or "").strip()
+                        if not href:
+                            return
+                        if "result__a" in classes or "result-link" in classes:
+                            self._href = href
+                            self._text = []
+
+                    def handle_data(self, data):
+                        if self._href is not None:
+                            self._text.append(data)
+
+                    def handle_endtag(self, tag):
+                        if tag != "a" or self._href is None:
+                            return
+                        title = " ".join("".join(self._text).split())
+                        href = self._href
+                        self._href = None
+                        self._text = []
+                        if not title or not href:
+                            return
+                        if href.startswith("//"):
+                            href = "https:" + href
+                        try:
+                            parsed = urlparse(href)
+                            target = parse_qs(parsed.query).get("uddg", [None])[0]
+                            if target:
+                                href = unquote(target)
+                        except Exception:
+                            pass
+                        self.results.append((title, href))
+
+                html_url = (
+                    "https://html.duckduckgo.com/html/?q="
+                    + urllib.parse.quote_plus(query)
+                )
+                html_response = requests.get(html_url, timeout=8, headers=headers)
+                html_response.raise_for_status()
+                parser = _DDGResultParser()
+                parser.feed(html_response.text or "")
+                for title, reference in parser.results:
+                    if len(deduped) >= limit:
+                        break
+                    if not reference or reference in seen:
+                        continue
+                    seen.add(reference)
+                    deduped.append({
+                        "title": title[:200],
+                        "reference": reference[:500],
+                        "snippet": title[:1000],
+                        "type": "web_search",
+                    })
+            except Exception as e:
+                print(f"[web_verify] html_fallback fallo: {type(e).__name__}")
+
+        return deduped[:limit]
     except Exception as e:
         print(f"[web_verify] fallo: {type(e).__name__}")
         return []
