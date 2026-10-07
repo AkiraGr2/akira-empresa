@@ -24,6 +24,33 @@ class AgentContractTests(unittest.TestCase):
         })
         self.assertEqual(record["role"], "autonomy_orchestrator")
 
+    def test_researcher_web_search_requires_real_references(self):
+        ok, _ = validate_agent_result(
+            "researcher",
+            "web_search",
+            {
+                "result": {
+                    "query": "FastAPI",
+                    "result_count": 0,
+                    "results": [],
+                }
+            },
+        )
+        self.assertFalse(ok)
+
+        ok, _ = validate_agent_result(
+            "researcher",
+            "web_search",
+            {
+                "result": {
+                    "query": "FastAPI",
+                    "result_count": 1,
+                    "results": [{"reference": "https://fastapi.tiangolo.com/", "title": "FastAPI"}],
+                }
+            },
+        )
+        self.assertTrue(ok)
+
     def test_semantic_contract_rejects_apparent_success(self):
         ok, _ = validate_agent_result(
             "developer",

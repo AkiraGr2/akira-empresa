@@ -120,10 +120,22 @@ def validate_agent_result(
             ok = False
             detail["result"] = "missing"
         elif tool_name == "web_search":
-            ok = isinstance(result.get("results"), list) and isinstance(result.get("query"), str)
+            ok = (
+                isinstance(result.get("results"), list)
+                and isinstance(result.get("query"), str)
+                and int(result.get("result_count") or 0) > 0
+                and all(
+                    isinstance(item, dict)
+                    and isinstance(item.get("reference"), str)
+                    and item.get("reference").startswith(("http://", "https://"))
+                    for item in (result.get("results") or [])
+                )
+            )
             detail["result_count"] = int(result.get("result_count") or 0)
-            detail["has_reference"] = any(
-                isinstance(item, dict) and item.get("reference")
+            detail["has_reference"] = all(
+                isinstance(item, dict)
+                and isinstance(item.get("reference"), str)
+                and item.get("reference").startswith(("http://", "https://"))
                 for item in (result.get("results") or [])
             )
         elif tool_name == "github_repo_read":

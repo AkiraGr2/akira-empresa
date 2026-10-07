@@ -20,6 +20,12 @@ from agent_contracts import (
 from persistence.autonomy import AutonomyService
 from persistence.core import ValidationError, validate_tool_inputs
 
+EXPECTED_AGENT_CAPABILITY_CASES = {
+    (agent_name, tool_name)
+    for agent_name in PRODUCTION_AGENT_ORDER
+    for tool_name in AGENT_CONTRACTS[agent_name]["allowed_tools"]
+}
+
 
 def _matches_type(value: Any, expected: str) -> bool:
     expected = str(expected or "").strip().lower()
@@ -464,16 +470,38 @@ def run_agent_audit(
                 "event": f"f9_agent_audit_{run_id}",
                 "lesson": "Auditoría E2E controlada de agente learner.",
             }),
+            ("learner", "memory_save", {
+                "content": f"AKIRA F9 LEARNER MEMORY AUDIT {run_id}", "memory_type": "episodic",
+            }),
             ("internal", "self_model_read", {}),
+            ("internal", "cognitive_cycle", {
+                "message": f"F9 agent audit cognitive cycle {run_id}",
+            }),
+            ("developer", "github_repo_read", {
+                "repo": repo_name, "path": "", "paths": ["test_specialized_agents_contract.py"],
+                "queries": ["SpecializedAgentsContractTests"], "max_files": 2,
+            }),
             ("developer", "developer_propose", {
                 "repo": repo_name,
                 "paths": ["test_specialized_agents_contract.py"],
                 "queries": ["valid_unified_diff_with_stale_hunk_coordinates_is_recovered_before_acceptance"],
                 "instruction": "Revisa el contrato de agentes y propone como máximo una mejora de prueba. No escribas ni apliques cambios.",
             }),
+            ("tester", "github_repo_read", {
+                "repo": repo_name, "path": "", "paths": ["test_specialized_agents_contract.py"],
+                "queries": ["SpecializedAgentsContractTests"], "max_files": 2,
+            }),
             ("tester", "python_test", {
                 "tests": ["test_specialized_agents_contract.SpecializedAgentsContractTests.test_developer_proposal_is_explicitly_non_mutating"],
                 "compile_paths": ["nexus.py"],
+            }),
+            ("reviewer", "github_repo_read", {
+                "repo": repo_name, "path": "", "paths": ["test_specialized_agents_contract.py"],
+                "queries": ["SpecializedAgentsContractTests"], "max_files": 2,
+            }),
+            ("reviewer", "python_test", {
+                "tests": ["test_specialized_agents_contract.SpecializedAgentsContractTests.test_developer_proposal_is_explicitly_non_mutating"],
+                "compile_paths": [],
             }),
             ("reviewer", "code_review", {
                 "repo": repo_name,
@@ -549,7 +577,7 @@ def run_agent_audit(
         verdict = report.get("verdict", "FAILED")
         counts[verdict] = counts.get(verdict, 0) + 1
     final_ok = (
-        len(reports) == 15
+        len(reports) == len(EXPECTED_AGENT_CAPABILITY_CASES)
         and not missing
         and not unexpected
         and not unavailable_tools
@@ -560,6 +588,15 @@ def run_agent_audit(
         } == set(PRODUCTION_AGENT_ORDER)
         and counts.get("FAILED", 0) == 0
         and cleanup.get("ok") is True
+        and {
+            (report.get("agent"), report.get("tool"))
+            for report in reports
+            if report.get("agent") in PRODUCTION_AGENT_ORDER
+        } == {
+            (agent_name, tool_name)
+            for agent_name in PRODUCTION_AGENT_ORDER
+            for tool_name in AGENT_CONTRACTS[agent_name]["allowed_tools"]
+        }
     )
     result = {
         "run_id": run_id,
