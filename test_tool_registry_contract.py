@@ -52,6 +52,21 @@ class ToolRegistryContractTests(unittest.TestCase):
         self.assertIn("validate_tool_inputs(tool, inputs)", source)
         self.assertIn('owner_scope=s["owner_scope"] if s.get("is_owner") else None', source)
 
+    def test_canonical_tool_registry_capability_exists(self):
+        from persistence.capability_catalog import BASE_CAPABILITIES
+        matches = [c for c in BASE_CAPABILITIES if c.get("name") == "tool_registry"]
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0]["category"], "tooling")
+        self.assertEqual(matches[0]["verification_spec"]["test_key"], "tool_registry_contract")
+
+    def test_selftest_verifies_the_canonical_tool_registry_capability(self):
+        source = Path("persistence/selftest.py").read_text(encoding="utf-8")
+        self.assertIn('name = "TEST_TOOL_REGISTRY_CONTRACT"', source)
+        self.assertIn('name": "tool_registry"', source)
+        self.assertIn('test_key": "tool_registry_contract"', source)
+        self.assertIn("service.record_capability_verification(", source)
+
+
 
 if __name__ == "__main__":
     unittest.main()
