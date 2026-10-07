@@ -2552,17 +2552,23 @@ class PersistenceService:
         who = str(actor or "").strip()
         if not key or not scope or not tool or not who:
             return None
+        # Read by the stable, already-indexed tool/actor dimensions and verify
+        # scope + idempotency in Python. This avoids coupling the runtime proof
+        # to a composite SQL filter whose schema may differ across old deployments.
         rows = self.repo.search(
             "tool_invocations",
-            {
-                "tool_name": tool,
-                "actor": who,
-                "owner_scope": scope,
-                "idempotency_key": key,
-            },
-            limit=1,
+            {"tool_name": tool, "actor": who},
+            limit=50,
+            order_by="created_at",
+            descending=True,
         )
-        return rows[0] if rows else None
+        for row in rows:
+            if (
+                str(row.get("owner_scope") or "").strip() == scope
+                and str(row.get("idempotency_key") or "").strip() == key
+            ):
+                return row
+        return None
 
     def log_invocation(self, tool_name, inputs, outputs, status, actor, duration_ms,
                        error=None, idempotency_key=None, owner_scope=None):
