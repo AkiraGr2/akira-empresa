@@ -13,6 +13,7 @@ from persistence.capability import (
     validate_capability,
     validate_capability_state,
     validate_capability_transition,
+    validate_capability_verification,
 )
 
 
