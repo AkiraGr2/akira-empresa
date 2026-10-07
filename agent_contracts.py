@@ -231,14 +231,48 @@ def validate_agent_result(
 
     if tool_name == "controlled_autonomy_start":
         autonomy = outputs.get("autonomy")
-        ok = (
-            isinstance(autonomy, dict)
-            and autonomy.get("status") == "awaiting_approval"
-            and outputs.get("awaits_human_approval") is True
-            and outputs.get("external_write_performed") is False
-        )
-        detail["autonomy_id"] = autonomy.get("id") if isinstance(autonomy, dict) else None
-        return ok, detail
+        if not isinstance(autonomy, dict):
+            return False, {"reason": "autonomy_missing"}
+        awaits_approval = outputs.get("awaits_human_approval") is True
+        external_write = outputs.get("external_write_performed") is True
+        status = str(autonomy.get("status") or "")
+        if (
+            status == "awaiting_approval"
+            and awaits_approval
+            and not external_write
+        ):
+            detail["autonomy_id"] = autonomy.get("id")
+            detail["verification_mode"] = "awaiting_human_approval"
+            return True, detail
+
+        safe_fail_closed_reasons = {
+            "proposal_path_outside_requested_scope",
+            "proposal_safety_contract_failed",
+            "protected_path",
+            "credential_like_path",
+            "sandbox_tests_failed",
+            "review_not_approved",
+            "proposal_base_source_validation_failed",
+        }
+        reason = str(autonomy.get("failure_reason") or "")
+        if (
+            status == "failed"
+            and reason in safe_fail_closed_reasons
+            and not awaits_approval
+            and not external_write
+        ):
+            detail["autonomy_id"] = autonomy.get("id")
+            detail["verification_mode"] = "fail_closed"
+            detail["failure_reason"] = reason
+            return True, detail
+
+        return False, {
+            "reason": "autonomy_safety_contract_failed",
+            "status": status,
+            "failure_reason": reason,
+            "awaits_human_approval": awaits_approval,
+            "external_write_performed": external_write,
+        }
 
     return False, {"reason": "no_semantic_contract"}
 
