@@ -94,6 +94,23 @@ class AgentContractTests(unittest.TestCase):
                 agent_name,
             )
 
+    def test_autonomy_fail_closed_is_a_verified_safety_outcome(self):
+        ok, detail = validate_agent_result(
+            "autonomy_orchestrator",
+            "controlled_autonomy_start",
+            {
+                "autonomy": {
+                    "status": "failed",
+                    "failure_reason": "proposal_path_outside_requested_scope",
+                    "id": "autonomy_test",
+                },
+                "awaits_human_approval": False,
+                "external_write_performed": False,
+            },
+        )
+        self.assertTrue(ok)
+        self.assertEqual(detail["verification_mode"], "fail_closed")
+
     def test_semantic_contract_rejects_apparent_success(self):
         ok, _ = validate_agent_result(
             "developer",
