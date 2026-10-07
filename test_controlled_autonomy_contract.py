@@ -149,6 +149,19 @@ class ControlledAutonomyContractTests(unittest.TestCase):
                 }],
             })
 
+    def test_proposal_accepts_standard_unified_hunk_context(self):
+        result = validate_proposal({
+            "status": "proposal",
+            "summary": "valid context",
+            "changes": [{
+                "path": "README.md",
+                "operation": "modify",
+                "reason": "x",
+                "patch": "--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@ README\n-old\n+new\n",
+            }],
+        })
+        self.assertEqual(result["changes"][0]["path"], "README.md")
+
     def test_patch_engine_applies_modify_and_create(self):
         source = "uno\ndos\ntres\n"
         patch = (
