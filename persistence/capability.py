@@ -219,6 +219,23 @@ def validate_freshness_policy(policy: Any) -> dict:
     return {"mode": mode, "max_age_seconds": max_age, "invalidate_on": invalidate_on}
 
 
+def validate_verification_spec(spec: Any) -> dict:
+    """Valida el contrato mínimo que explica cómo una capability puede demostrarse."""
+    if not isinstance(spec, Mapping):
+        raise CapabilityContractError("verification_spec debe ser un objeto")
+    allowed = {"method", "test_key", "freshness_policy"}
+    extra = sorted(set(spec) - allowed)
+    if extra:
+        raise CapabilityContractError(f"verification_spec contiene campos no permitidos: {extra}")
+    method = _text("verification_spec.method", spec.get("method", ""), 96)
+    test_key = _text("verification_spec.test_key", spec.get("test_key", ""), 128)
+    freshness = spec.get("freshness_policy")
+    if freshness is None:
+        raise CapabilityContractError("verification_spec.freshness_policy es obligatorio")
+    normalized = validate_freshness_policy(freshness)
+    return {"method": method, "test_key": test_key, "freshness_policy": normalized}
+
+
 def capability_state_snapshot(record: Mapping[str, Any]) -> dict:
     return {
         "implementation_state": record.get("implementation_state"),
@@ -334,16 +351,7 @@ def validate_capability(data: Mapping[str, Any], partial: bool = False) -> dict:
         )
         if not isinstance(out["verification_spec"], Mapping):
             raise CapabilityContractError("verification_spec debe ser un objeto")
-        spec = dict(out["verification_spec"])
-        if "freshness_policy" in spec:
-            spec["freshness_policy"] = validate_freshness_policy(spec["freshness_policy"])
-        else:
-            spec["freshness_policy"] = {
-                "mode": "on_change",
-                "max_age_seconds": None,
-                "invalidate_on": [],
-            }
-        out["verification_spec"] = spec
+        out["verification_spec"] = validate_verification_spec(out["verification_spec"])
     if "provenance" in data or not partial:
         out["provenance"] = _json_safe(
             "provenance", data.get("provenance", {"source": "system", "created_by": "system"})
