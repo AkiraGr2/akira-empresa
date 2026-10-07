@@ -49,6 +49,24 @@ class _CapabilityTx:
         self.repo.rows.setdefault(entity, []).append(dict(record))
         return dict(record), True
 
+    def update(self, entity, record_id, changes, expected_version):
+        rows = self.repo.rows.get(entity, [])
+        for row in rows:
+            if row.get("id", row.get("key")) == record_id and row.get("version") == expected_version:
+                row.update(changes)
+                row["version"] = expected_version + 1
+                return dict(row)
+        raise ConflictError("version conflict")
+
+    def get(self, entity, record_id):
+        return self.repo.get(entity, record_id)
+
+    def search(self, entity, filters=None, limit=50, offset=0, order_by="created_at", descending=True):
+        return self.repo.search(entity, filters, limit, offset, order_by, descending)
+
+    def advisory_xact_lock(self, key):
+        return None
+
     def append_audit(self, payload):
         return None
 
@@ -56,6 +74,7 @@ class _CapabilityTx:
 class _CapabilityRepo:
     def __init__(self):
         self.rows = {"capabilities": []}
+        self.audit = []
 
     def search(self, entity, filters=None, limit=50, offset=0, order_by="created_at", descending=True):
         rows = [dict(row) for row in self.rows.get(entity, [])]
@@ -63,12 +82,30 @@ class _CapabilityRepo:
             rows = [row for row in rows if row.get(key) == value]
         return rows[offset:offset + limit]
 
+    def search(self, entity, filters=None, limit=50, offset=0, order_by="created_at", descending=True):
+        rows = [dict(row) for row in self.rows.get(entity, [])]
+        for key, value in (filters or {}).items():
+            rows = [row for row in rows if row.get(key) == value]
+        rows.sort(key=lambda row: row.get(order_by) or "", reverse=descending)
+        return rows[offset:offset + limit]
+
+    def append_audit(self, payload):
+        self.audit.append(dict(payload))
+
+    def audit_search(self, actor=None, action_prefix=None, limit=20):
+        rows = list(reversed(self.audit))
+        if actor is not None:
+            rows = [r for r in rows if r.get("actor") == actor]
+        if action_prefix is not None:
+            rows = [r for r in rows if str(r.get("action", "")).startswith(action_prefix)]
+        return rows[:limit]
+
     def transaction(self):
         return _CapabilityTx(self)
 
     def get(self, entity, record_id):
         for row in self.rows.get(entity, []):
-            if row.get("id") == record_id:
+            if row.get("id", row.get("key")) == record_id:
                 return dict(row)
         return None
 
@@ -97,6 +134,51 @@ class CapabilityEngineContractTests(unittest.TestCase):
         self.assertIn('permissions != {"owner"}', block)
         self.assertNotIn("register_tool(", block)
 
+
+    def test_runtime_build_change_invalidates_verified_capability(self):
+        repo = _CapabilityRepo()
+        repo.rows["runtime_state"] = []
+        repo.rows["capability_verifications"] = []
+        repo.rows["capabilities"].append({
+            "id": "cap_runtime_test",
+            "name": "runtime_test_capability",
+            "description": "Capability para probar invalidacion por build.",
+            "category": "general",
+            "kind": "intrinsic",
+            "implementation_state": "implemented",
+            "verification_state": "verified",
+            "availability_state": "available",
+            "maturity": "experimental",
+            "cost_compatibility": "unknown",
+            "dependencies": [],
+            "limitations": [],
+            "verification_spec": {
+                "method": "selftest",
+                "test_key": "runtime_test",
+                "freshness_policy": {
+                    "mode": "on_change",
+                    "max_age_seconds": None,
+                    "invalidate_on": ["build_change"],
+                },
+            },
+            "provenance": {"source": "ci", "created_by": "ci"},
+            "version": 2,
+            "schema_version": "capability.v1",
+            "last_verification_id": "capver_old",
+            "last_verified_at": "2026-10-07T00:00:00+00:00",
+        })
+        service = PersistenceService(repo)
+        first = service.handle_runtime_build_change("sha256:first", actor="selftest")
+        same = service.handle_runtime_build_change("sha256:first", actor="selftest")
+        changed = service.handle_runtime_build_change("sha256:second", actor="selftest")
+        self.assertEqual(first["outcome"], "initialized")
+        self.assertEqual(first["invalidated"], [])
+        self.assertEqual(same["outcome"], "unchanged")
+        self.assertEqual(changed["outcome"], "changed")
+        self.assertEqual([x["name"] for x in changed["invalidated"]], ["runtime_test_capability"])
+        self.assertEqual(service.get_capability("cap_runtime_test")["verification_state"], "stale")
+        self.assertEqual(len(repo.rows["capability_verifications"]), 1)
+        self.assertEqual(repo.rows["capability_verifications"][0]["event_type"], "invalidation")
 
     def test_runtime_capability_persistence_reuses_canonical_fixture(self):
         source = Path("persistence/selftest.py").read_text(encoding="utf-8")
