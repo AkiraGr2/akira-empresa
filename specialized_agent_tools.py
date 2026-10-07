@@ -336,21 +336,30 @@ def _canonicalize_generated_patch(
     new_headers = [line.rstrip("\n") for line in lines if line.startswith("+++ ")]
 
     if operation == "modify":
-        # A source snapshot is authoritative whenever it is available. Even a
-        # syntactically valid unified diff must be reconciled against that exact
-        # source before acceptance; otherwise stale hunk coordinates can escape
-        # this boundary and fail later during sandbox materialization.
-        source = _inspection_file_content(inspection or {}, path)
-        if source is not None:
-            recovered = _recover_modify_patch_from_diff(path, source, patch)
-            if recovered:
-                return {**change, "patch": recovered}
-            # Source is available but the proposed hunk cannot be recovered from
-            # one exact, unique anchor. Fail closed instead of trusting coordinates.
+        # Validate the unified-diff envelope first. A malformed hunk must fail
+        # closed even when some body text could otherwise be interpreted.
+        hunk_indexes = [i for i, line in enumerate(lines) if line.startswith("@@")]
+        hunk_pattern = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$")
+        if (
+            len(old_headers) != 1
+            or len(new_headers) != 1
+            or old_headers[0].strip() != f"--- a/{path}"
+            or new_headers[0].strip() != f"+++ b/{path}"
+            or len(hunk_indexes) != 1
+            or not hunk_pattern.fullmatch(lines[hunk_indexes[0]].rstrip("\n"))
+        ):
             raise SpecializedAgentError(f"proposal_invalid_patch_hunk:{path}")
 
-        # Without source evidence we cannot safely validate a modify patch.
-        raise SpecializedAgentError(f"proposal_source_unavailable:{path}")
+        # Once syntax is valid, reconcile the proposal against the authoritative
+        # source snapshot before acceptance. This recovers stale coordinates only
+        # from exact, unique source text and never guesses a location.
+        source = _inspection_file_content(inspection or {}, path)
+        if source is None:
+            raise SpecializedAgentError(f"proposal_source_unavailable:{path}")
+        recovered = _recover_modify_patch_from_diff(path, source, patch)
+        if recovered:
+            return {**change, "patch": recovered}
+        raise SpecializedAgentError(f"proposal_invalid_patch_hunk:{path}")
 
     if not old_headers and not new_headers:
         if patch.strip():
