@@ -57,6 +57,11 @@ class ToolRegistryContractTests(unittest.TestCase):
         self.assertIn('owner_scope = s.get("owner_scope") if s.get("is_owner") else None', source)
         self.assertIn("owner_scope=owner_scope", source)
 
+    def test_web_search_registry_schema_matches_structured_runtime_output(self):
+        source = Path("nexus.py").read_text(encoding="utf-8")
+        self.assertIn('"name": "web_search"', source)
+        self.assertIn('"outputs_schema": {"result": "dict"}', source)
+
     def test_web_search_returns_structured_results_not_fake_fallback(self):
         source = Path("nexus.py").read_text(encoding="utf-8")
         self.assertIn('def search_web(q, max_results=3):', source)
