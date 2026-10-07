@@ -6718,7 +6718,7 @@ def v8_delete_conversation(request: Request, conversation_id: str):
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
     return {"ok": True, "conversation": updated}
 
-def _ensure_conversation(service, conversation_id, first_message, actor):
+def _ensure_conversation(service, conversation_id, first_message, actor, idempotency_key=None):
     if conversation_id:
         conv = service.get_conversation(conversation_id, owner=actor)
         if conv is None:
@@ -6730,7 +6730,11 @@ def _ensure_conversation(service, conversation_id, first_message, actor):
         return conv, None
     title = (first_message or "").strip()[:CONVERSATION_TITLE_MAX_CHARS] or "Nuevo chat"
     try:
-        r = service.create_conversation({"title": title}, actor=actor)
+        r = service.create_conversation(
+            {"title": title},
+            actor=actor,
+            idempotency_key=idempotency_key,
+        )
         return r["record"], None
     except Exception as e:
         print(f"[chat] create_conversation fallo: {type(e).__name__}: {str(e)[:200]}")
@@ -7702,6 +7706,16 @@ async def chat(request: Request):
         if requested_conv_id is not None and not isinstance(requested_conv_id, str):
             requested_conv_id = None
 
+        chat_exchange_id = data.get("chat_exchange_id")
+        if chat_exchange_id is not None:
+            if (
+                not isinstance(chat_exchange_id, str)
+                or not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", chat_exchange_id.strip())
+            ):
+                chat_exchange_id = None
+            else:
+                chat_exchange_id = chat_exchange_id.strip()
+
         ip = request.client.host if request.client else "0.0.0.0"
         is_owner = resolve_is_owner(request, data)
         if not check_rate_limit(ip, is_owner):
@@ -7716,17 +7730,74 @@ async def chat(request: Request):
         conversation_id = None
         persist = bool(session and service is not None)
         if persist:
-            conv, err = _ensure_conversation(service, requested_conv_id, msg, session["email"])
+            conversation_key = (
+                f"chat:{chat_exchange_id}:conversation"
+                if chat_exchange_id
+                else None
+            )
+            user_message_key = (
+                f"chat:{chat_exchange_id}:user"
+                if chat_exchange_id
+                else None
+            )
+            assistant_message_key = (
+                f"chat:{chat_exchange_id}:assistant"
+                if chat_exchange_id
+                else None
+            )
+            conv, err = _ensure_conversation(
+                service,
+                requested_conv_id,
+                msg,
+                session["email"],
+                idempotency_key=conversation_key,
+            )
             if err:
                 return {"response": f"Error: {err}", "model": "system", "conversation_id": None}
             conversation_id = conv["id"]
             try:
                 service.add_message(
-                    conversation_id, "user", msg,
-                    actor=session["email"], owner=session["email"]
+                    conversation_id,
+                    "user",
+                    msg,
+                    actor=session["email"],
+                    owner=session["email"],
+                    idempotency_key=user_message_key,
                 )
             except Exception as e:
                 print(f"[chat] add_message user fallo: {type(e).__name__}: {str(e)[:200]}")
+
+            # Un reintento del mismo intercambio puede llegar despues de que
+            # el primer request ya persistio la respuesta. Reutilizamos la
+            # respuesta existente y evitamos una segunda llamada al proveedor.
+            if assistant_message_key:
+                try:
+                    existing_assistant = service.get_message_by_idempotency_key(
+                        assistant_message_key,
+                        owner=session["email"],
+                    )
+                except Exception as e:
+                    print(
+                        f"[chat] lookup assistant idempotency fallo: "
+                        f"{type(e).__name__}: {str(e)[:200]}"
+                    )
+                    existing_assistant = None
+
+                if existing_assistant is not None:
+                    existing_conversation = service.get_conversation(
+                        conversation_id,
+                        owner=session["email"],
+                    )
+                    return {
+                        "response": existing_assistant.get("content") or "",
+                        "model": existing_assistant.get("model") or "Akira",
+                        "conversation_id": conversation_id,
+                        "conversation_message_count": (
+                            existing_conversation.get("message_count")
+                            if existing_conversation
+                            else None
+                        ),
+                    }
 
         teaching_lesson, teaching_mode = _extract_teaching_lesson(msg)
         if teaching_mode:
@@ -7751,11 +7822,27 @@ async def chat(request: Request):
                     service.add_message(
                         conversation_id, "assistant", teaching_response,
                         model="learning_engine", memories_used=[],
-                        duration_ms=0, actor=session["email"], owner=session["email"]
+                        duration_ms=0,
+                        actor=session["email"],
+                        owner=session["email"],
+                        idempotency_key=assistant_message_key,
                     )
                 except Exception as e:
                     print(f"[chat] add_message teaching response fallo: {type(e).__name__}")
-            return {"response": teaching_response, "model": "learning_engine", "conversation_id": conversation_id}
+            teaching_conversation = service.get_conversation(
+                conversation_id,
+                owner=session["email"],
+            ) if persist else None
+            return {
+                "response": teaching_response,
+                "model": "learning_engine",
+                "conversation_id": conversation_id,
+                "conversation_message_count": (
+                    teaching_conversation.get("message_count")
+                    if teaching_conversation
+                    else None
+                ),
+            }
 
         memories = (
             await asyncio.to_thread(_recall_memories, service, msg)
@@ -7906,19 +7993,50 @@ async def chat(request: Request):
 
         if persist and final_response:
             try:
-                service.add_message(
+                stored_assistant = service.add_message(
                     conversation_id, "assistant", final_response,
                     model=model_used,
                     memories_used=[m.get("id") for m in memories if m.get("id")],
                     duration_ms=duration_ms,
                     error=error_meta,
                     actor=session["email"],
-                    owner=session["email"]
+                    owner=session["email"],
+                    idempotency_key=assistant_message_key,
                 )
+                # En concurrencia, otro retry puede haber ganado la clave.
+                # La respuesta devuelta debe ser exactamente la persistida.
+                stored_record = (
+                    stored_assistant.get("record")
+                    if isinstance(stored_assistant, dict)
+                    else None
+                )
+                if isinstance(stored_record, dict):
+                    final_response = str(stored_record.get("content") or final_response)
+                    model_used = stored_record.get("model") or model_used
             except Exception as e:
                 print(f"[chat] add_message assistant fallo: {type(e).__name__}: {str(e)[:200]}")
 
-        response = {"response": final_response, "model": model_used, "conversation_id": conversation_id}
+        conversation_message_count = None
+        if persist and conversation_id:
+            try:
+                latest_conversation = service.get_conversation(
+                    conversation_id,
+                    owner=session["email"],
+                )
+                conversation_message_count = (
+                    latest_conversation.get("message_count")
+                    if latest_conversation
+                    else None
+                )
+            except Exception:
+                conversation_message_count = None
+
+        response = {
+            "response": final_response,
+            "model": model_used,
+            "conversation_id": conversation_id,
+            "conversation_message_count": conversation_message_count,
+        }
         if memories:
             response["memories_used"] = len(memories)
         return response
@@ -7992,7 +8110,7 @@ async def chat_stream(request: Request):
             else:
                 yield f'data: {json_lib.dumps({"text": ""})}\n\n'
 
-            yield f'data: {json_lib.dumps({"done": True, "conversation_id": conversation_id, "model": model_used}, ensure_ascii=False)}\n\n'
+            yield f'data: {json_lib.dumps({"done": True, "conversation_id": conversation_id, "conversation_message_count": payload.get("conversation_message_count"), "model": model_used}, ensure_ascii=False)}\n\n'
 
         return StreamingResponse(
             generate(),
