@@ -418,14 +418,15 @@ def search_web_sources(q, max_results=5):
         return []
 
 def search_web(q, max_results=3):
-    try:
-        import requests, urllib.parse
-        q_enc = urllib.parse.quote_plus(q[:120])
-        url = f"https://api.duckduckgo.com/?q={q_enc}&format=json&pretty=1&no_html=1"
-        r = requests.get(url, timeout=6, headers={"User-Agent":"AKIRA V7.3"})
-        j = r.json()
-        return j.get("AbstractText","")[:400] or "Busqueda"
-    except: return "Busqueda"
+    """Return structured web-search evidence; never replace empty results with fake text."""
+    query = str(q or "").strip()[:180]
+    results = search_web_sources(query, max_results=max_results)
+    return {
+        "query": query,
+        "engine": "duckduckgo",
+        "result_count": len(results),
+        "results": results,
+    }
 
 def select_model_route(msg, has_image=False, web_needed=False):
     if has_image: return PRIMARY_CHAT_MODEL, "vision"
