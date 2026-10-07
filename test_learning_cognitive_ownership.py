@@ -1,7 +1,7 @@
 import unittest
 
 from persistence.core import entity_spec
-from persistence.service import NotFoundError, PersistenceService
+from persistence.service import NotFoundError, PersistenceService, ValidationError
 
 
 class FakeTx:
@@ -151,7 +151,7 @@ class OwnershipServiceTests(unittest.TestCase):
 
     def test_cognitive_stage_cannot_skip_a_stage(self):
         cycle = self._seed_cycle()
-        with self.assertRaises(Exception):
+        with self.assertRaises(ValidationError):
             self.service.record_stage(
                 cycle["id"], "reason", data={"x": 1},
                 actor="tester", owner_scope="scope:A",
@@ -218,6 +218,28 @@ class OwnershipServiceTests(unittest.TestCase):
         )
         self.assertEqual(completed["status"], "completed")
         self.assertEqual(completed["current_stage"], "update_self_model")
+
+    def test_completed_cognitive_cycle_rejects_failed_stage(self):
+        cycle = self._seed_cycle()
+        self.service.record_stage(
+            cycle["id"], "observe", data={"ok": True},
+            actor="tester", owner_scope="scope:A",
+        )
+        self.service.record_stage(
+            cycle["id"], "interpret", data={"ok": False},
+            status="failure", error={"type": "SyntheticFailure"},
+            actor="tester", owner_scope="scope:A",
+        )
+        with self.assertRaises(ValidationError):
+            self.service.complete_cycle(
+                cycle["id"], "completed",
+                actor="tester", owner_scope="scope:A",
+            )
+        failed = self.service.complete_cycle(
+            cycle["id"], "failed",
+            actor="tester", owner_scope="scope:A",
+        )
+        self.assertEqual(failed["status"], "failed")
 
     def test_cleanup_cannot_touch_foreign_learning(self):
         with self.assertRaises(NotFoundError):
