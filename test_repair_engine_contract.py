@@ -179,6 +179,38 @@ class RepairEngineContractTests(unittest.TestCase):
         agent = self.repo.get("agents", "agent_selftest")
         self.assertEqual(agent["status"], "disabled")
 
+    def test_repair_test_stage_runs_repair_specific_allowlisted_regressions(self):
+        repair = self.service.create_repair(
+            "selftest_agent", "verify repair test selection", "disable_selftest_agent",
+            actor="owner@example.test", owner_scope="scope:A",
+        )
+        for stage in ("diagnosed", "isolated"):
+            repair = self.service.advance_repair(
+                repair["id"], stage, actor="owner@example.test", owner_scope="scope:A"
+            )
+        repair = self.service.advance_repair(
+            repair["id"], "proposed", actor="owner@example.test", owner_scope="scope:A",
+            proposal={"action_type": "disable_selftest_agent"},
+        )
+        repair = self.service.sandbox_repair(
+            repair["id"], actor="owner@example.test", owner_scope="scope:A"
+        )
+        expected_tests = [
+            "test_repair_engine_contract",
+            "test_mission_task_ownership",
+            "test_authorization_contract",
+        ]
+        with patch(
+            "specialized_agent_tools.run_python_tests",
+            return_value={"status": "passed", "tests": ["repair_contract"]},
+        ) as run_tests:
+            result = self.service.test_repair(
+                repair["id"], actor="owner@example.test", owner_scope="scope:A"
+            )
+        run_tests.assert_called_once_with(tests=expected_tests)
+        self.assertEqual(result["stage"], "tested")
+        self.assertEqual(result["tests"]["status"], "passed")
+
     def test_repair_requires_explicit_approval_before_apply(self):
         repair = self.service.create_repair(
             "selftest_agent", "test", "disable_selftest_agent",

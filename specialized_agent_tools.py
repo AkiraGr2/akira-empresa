@@ -56,6 +56,7 @@ SAFE_TEST_MODULES = frozenset({
     "test_learning_cognitive_ownership",
     "test_memory_embedding_ownership",
     "test_mission_task_ownership",
+    "test_repair_engine_contract",
     "test_controlled_autonomy_contract",
     "test_specialized_agents_contract",
     "test_specialized_agent_mission_wiring",
