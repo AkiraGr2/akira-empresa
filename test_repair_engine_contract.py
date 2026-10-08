@@ -174,6 +174,8 @@ class RepairEngineContractTests(unittest.TestCase):
 
         self.assertEqual(repair["stage"], "applied")
         self.assertEqual(repair["status"], "completed")
+        self.assertIn("'postcondition_verified': True", repair["result"])
+        self.assertIn("apply_postcondition_verified", repair["evidence"])
         agent = self.repo.get("agents", "agent_selftest")
         self.assertEqual(agent["status"], "disabled")
 
@@ -197,6 +199,76 @@ class RepairEngineContractTests(unittest.TestCase):
             self.service.advance_repair(
                 repair["id"], "diagnosed", actor="other@example.test", owner_scope="scope:B"
             )
+
+    def test_applied_repair_fails_closed_when_postcondition_cannot_be_read_back(self):
+        repair = self.service.create_repair(
+            "selftest_agent", "verify readback", "disable_selftest_agent",
+            actor="owner@example.test", owner_scope="scope:A",
+        )
+        repair = self.service.advance_repair(
+            repair["id"], "diagnosed", actor="owner@example.test", owner_scope="scope:A"
+        )
+        repair = self.service.advance_repair(
+            repair["id"], "isolated", actor="owner@example.test", owner_scope="scope:A"
+        )
+        repair = self.service.advance_repair(
+            repair["id"], "proposed", actor="owner@example.test", owner_scope="scope:A",
+            proposal={"action_type": "disable_selftest_agent"},
+        )
+        repair = self.service.sandbox_repair(
+            repair["id"], actor="owner@example.test", owner_scope="scope:A"
+        )
+        with patch("specialized_agent_tools.run_python_tests", return_value={"status": "passed", "tests": ["ok"]}):
+            repair = self.service.test_repair(
+                repair["id"], actor="owner@example.test", owner_scope="scope:A"
+            )
+        repair = self.service.evaluate_repair(
+            repair["id"], actor="owner@example.test", owner_scope="scope:A"
+        )
+        repair = self.service.approve_repair(
+            repair["id"], actor="owner@example.test", owner_scope="scope:A"
+        )
+
+        stale_agent = self.service.get_agent_by_name("selftest_agent")
+        with patch.object(self.service, "get_agent_by_name", side_effect=[dict(stale_agent), dict(stale_agent)]):
+            result = self.service.apply_repair(
+                repair["id"], actor="owner@example.test", owner_scope="scope:A"
+            )
+
+        self.assertEqual(result["stage"], "failed")
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("apply_postcondition_failed", result["evidence"])
+        postcondition_audits = [
+            event for event in self.repo.audits
+            if event.get("action") == "repair.apply.postcondition"
+        ]
+        self.assertEqual(len(postcondition_audits), 1)
+        self.assertEqual(postcondition_audits[0]["status"], "failure")
+
+    def test_repair_can_be_discarded_and_discarded_state_is_terminal(self):
+        repair = self.service.create_repair(
+            "selftest_agent", "cancel safely", "disable_selftest_agent",
+            actor="owner@example.test", owner_scope="scope:A",
+        )
+        result = self.service.discard_repair(
+            repair["id"], actor="owner@example.test", owner_scope="scope:A", reason="cancelled by test"
+        )
+        self.assertEqual(result["stage"], "discarded")
+        self.assertEqual(result["status"], "cancelled")
+        with self.assertRaises(ValidationError):
+            self.service.advance_repair(
+                result["id"], "diagnosed", actor="owner@example.test", owner_scope="scope:A"
+            )
+
+    def test_repair_state_can_be_reread_through_a_new_service_instance(self):
+        repair = self.service.create_repair(
+            "selftest_agent", "verify stored repair", "disable_selftest_agent",
+            actor="owner@example.test", owner_scope="scope:A",
+        )
+        reread = PersistenceService(self.repo).get_repair(repair["id"], owner_scope="scope:A")
+        self.assertEqual(reread["id"], repair["id"])
+        self.assertEqual(reread["stage"], "detected")
+        self.assertEqual(reread["owner_scope"], "scope:A")
 
     def test_unsupported_or_invalid_actions_are_rejected(self):
         with self.assertRaises(ValidationError):
