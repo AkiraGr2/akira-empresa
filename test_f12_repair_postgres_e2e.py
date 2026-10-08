@@ -194,10 +194,14 @@ class F12RepairPostgresApiE2ETests(unittest.TestCase):
             self.assertEqual(approved.json()["repair"]["stage"], "approved")
             self.assertEqual(approved.json()["repair"]["status"], "approved")
 
-            applied = client.post(
-                f"/api/v8/repair/{repair['id']}/apply",
-                headers=headers,
-            )
+            with patch.object(
+                self.service, "save_learning", return_value={"outcome": "created"}
+            ) as save_learning:
+                applied = client.post(
+                    f"/api/v8/repair/{repair['id']}/apply",
+                    headers=headers,
+                )
+                save_learning.assert_called_once()
             self.assertEqual(applied.status_code, 200, applied.text)
             result = applied.json()["repair"]
             self.assertEqual(result["stage"], "applied")
