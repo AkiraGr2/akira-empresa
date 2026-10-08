@@ -117,7 +117,7 @@ class F12RepairPostgresApiE2ETests(unittest.TestCase):
 
     def test_complete_authenticated_repair_cycle_persists_and_reads_back(self):
         client = TestClient(nexus.app)
-        owner_email = nexus.OWNER_EMAILS[0]
+        owner_email = "ci-owner@example.test"
         token, _expires, reason = akira_auth.issue_session(
             sub="f12-postgres-e2e-synthetic-owner",
             email=owner_email,
@@ -130,7 +130,9 @@ class F12RepairPostgresApiE2ETests(unittest.TestCase):
         unauthenticated = client.get("/api/v8/repair")
         self.assertEqual(unauthenticated.status_code, 401)
 
-        with patch("nexus._persistence_service", return_value=self.service):
+        with patch.object(nexus, "OWNER_EMAILS", [owner_email]), patch(
+            "nexus._persistence_service", return_value=self.service
+        ):
             created = client.post(
                 "/api/v8/repair",
                 headers=headers,
@@ -184,7 +186,7 @@ class F12RepairPostgresApiE2ETests(unittest.TestCase):
             )
             self.assertEqual(evaluated.status_code, 200, evaluated.text)
             self.assertEqual(evaluated.json()["repair"]["stage"], "evaluated")
-            self.assertFalse(evaluated.json()["repair"].get("code_mutation_allowed", True))
+            self.assertFalse(evaluated.json()["repair"]["evaluation"]["code_mutation_allowed"])
 
             approved = client.post(
                 f"/api/v8/repair/{repair['id']}/approve",
