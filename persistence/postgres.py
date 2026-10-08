@@ -65,9 +65,9 @@ def _iter_migration_statements(sql: str):
         if not stmt:
             continue
         match = re.fullmatch(
-            r"ALTER\\s+TABLE\\s+((?:public\\.)?[A-Za-z_][A-Za-z0-9_]*"
-            r"(?:\\s*,\\s*(?:public\\.)?[A-Za-z_][A-Za-z0-9_]*)+)"
-            r"\\s+ENABLE\\s+ROW\\s+LEVEL\\s+SECURITY",
+            r"ALTER\s+TABLE\s+((?:public\.)?[A-Za-z_][A-Za-z0-9_]*"
+            r"(?:\s*,\s*(?:public\.)?[A-Za-z_][A-Za-z0-9_]*)+)"
+            r"\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY",
             stmt,
             flags=re.IGNORECASE,
         )
