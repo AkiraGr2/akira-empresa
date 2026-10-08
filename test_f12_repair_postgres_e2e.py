@@ -97,12 +97,6 @@ class F12RepairPostgresApiE2ETests(unittest.TestCase):
                         current["version"],
                         actor="f12-ci-cleanup",
                     )
-                for learning in cls.repo.search(
-                    "learning_events",
-                    {"event": f"repair_applied:{cls.repair_id}"},
-                    limit=20,
-                ):
-                    cls.repo.delete("learning_events", learning["id"])
             if getattr(cls, "agent_id", None):
                 cls.repo.delete("agents", cls.agent_id)
             if getattr(cls, "tool_id", None):
