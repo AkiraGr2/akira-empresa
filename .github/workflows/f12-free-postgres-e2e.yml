@@ -53,4 +53,6 @@ jobs:
       - name: Run F12 API lifecycle against disposable PostgreSQL
         env:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/akira_f12_test
-        run: python -m unittest test_f12_repair_postgres_e2e -v
+        run: |
+          python -m unittest persistence.test_postgres_migration_statements -v
+          python -m unittest test_f12_repair_postgres_e2e -v
