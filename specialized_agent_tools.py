@@ -8,6 +8,8 @@ Contrato:
 from __future__ import annotations
 
 import ast
+import contextvars
+from contextlib import contextmanager
 import difflib
 import json
 import os
@@ -69,6 +71,41 @@ class SpecializedAgentError(RuntimeError):
     pass
 
 
+_F8_ZERO_COST_AUDIT = contextvars.ContextVar("akira_f8_zero_cost_audit", default=False)
+
+
+@contextmanager
+def f8_zero_cost_audit_scope():
+    """Scope provider calls for F8 to an explicitly confirmed free Groq plan."""
+    token = _F8_ZERO_COST_AUDIT.set(True)
+    try:
+        yield
+    finally:
+        _F8_ZERO_COST_AUDIT.reset(token)
+
+
+def f8_zero_cost_audit_active() -> bool:
+    return bool(_F8_ZERO_COST_AUDIT.get())
+
+
+def f8_audit_provider_preflight() -> dict[str, Any]:
+    """Read-only preflight; never sends a provider request or consumes inference quota."""
+    confirmed = os.getenv("AKIRA_F8_GROQ_FREE_PLAN_CONFIRMED", "").strip().lower() == "true"
+    if not confirmed:
+        return {
+            "ok": False,
+            "provider": "groq",
+            "reason": "groq_free_plan_not_confirmed",
+        }
+    if not _groq_keys():
+        return {
+            "ok": False,
+            "provider": "groq",
+            "reason": "groq_api_key_missing",
+        }
+    return {"ok": True, "provider": "groq", "reason": "free_plan_explicitly_confirmed"}
+
+
 def _safe_json(raw: str) -> dict[str, Any]:
     text = str(raw or "").strip()
     if text.startswith("```"):
@@ -120,40 +157,45 @@ def _groq_keys() -> list[str]:
 def _specialist_json_call(prompt: str, max_output_tokens: int = 2600) -> dict[str, Any]:
     deadline = time.monotonic() + 28
 
-    try:
-        import requests
-        for key in _gemini_keys():
-            if time.monotonic() >= deadline:
-                break
-            remaining = max(1.0, min(12.0, deadline - time.monotonic()))
-            payload = {
-                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                "generationConfig": {
-                    "temperature": 0.1,
-                    "maxOutputTokens": max_output_tokens,
-                    "responseMimeType": "application/json",
-                },
-            }
-            try:
-                response = requests.post(
-                    "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent",
-                    params={"key": key},
-                    json=payload,
-                    timeout=remaining,
-                )
-                if response.status_code != 200:
+    if f8_zero_cost_audit_active():
+        gate = f8_audit_provider_preflight()
+        if not gate["ok"]:
+            raise SpecializedAgentError(f"f8_zero_cost_audit_blocked:{gate['reason']}")
+    else:
+        try:
+            import requests
+            for key in _gemini_keys():
+                if time.monotonic() >= deadline:
+                    break
+                remaining = max(1.0, min(12.0, deadline - time.monotonic()))
+                payload = {
+                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                    "generationConfig": {
+                        "temperature": 0.1,
+                        "maxOutputTokens": max_output_tokens,
+                        "responseMimeType": "application/json",
+                    },
+                }
+                try:
+                    response = requests.post(
+                        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent",
+                        params={"key": key},
+                        json=payload,
+                        timeout=remaining,
+                    )
+                    if response.status_code != 200:
+                        continue
+                    body = response.json()
+                    raw = (((body.get("candidates") or [{}])[0].get("content") or {})
+                           .get("parts") or [{}])[0].get("text")
+                    if raw:
+                        result = _safe_json(raw)
+                        result["_model"] = "gemini-3.1-pro-preview"
+                        return result
+                except Exception:
                     continue
-                body = response.json()
-                raw = (((body.get("candidates") or [{}])[0].get("content") or {})
-                       .get("parts") or [{}])[0].get("text")
-                if raw:
-                    result = _safe_json(raw)
-                    result["_model"] = "gemini-3.1-pro-preview"
-                    return result
-            except Exception:
-                continue
-    except Exception:
-        pass
+        except Exception:
+            pass
 
     try:
         import requests
