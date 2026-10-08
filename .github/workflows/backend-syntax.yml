@@ -72,6 +72,10 @@ jobs:
         run: |
           python -m pip install -r requirements.txt
 
+      - name: Test F8 tool-audit cleanup contract
+        run: |
+          python -m unittest test_tool_audit_cleanup_contract -v
+
       - name: Test memory recall capability contract
         run: |
           python -m unittest test_memory_recall_contract -v
