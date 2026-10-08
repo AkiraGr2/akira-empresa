@@ -76,6 +76,10 @@ jobs:
         run: |
           python -m unittest test_tool_audit_cleanup_contract -v
 
+      - name: Test F8 strict closure-gate contract
+        run: |
+          python -m unittest test_tool_audit_closure_contract -v
+
       - name: Test memory recall capability contract
         run: |
           python -m unittest test_memory_recall_contract -v
