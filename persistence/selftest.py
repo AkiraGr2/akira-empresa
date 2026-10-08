@@ -691,6 +691,7 @@ def run_logic_tests(service, fresh_service_factory=None):
                 "sandbox_repair", "test_repair", "evaluate_repair",
                 "approve_repair", "discard_repair", "apply_repair",
             )
+            apply_source = inspect.getsource(service.apply_repair)
             checks = {
                 "capability_declared": capability.get("implementation_state") == "implemented",
                 "action_catalog_allowlisted": (
@@ -711,11 +712,21 @@ def run_logic_tests(service, fresh_service_factory=None):
                     and REPAIR_STAGE_TRANSITIONS["approved"] == {"applied", "discarded", "failed"}
                 ),
                 "service_contract": all(hasattr(service, method) for method in required_methods),
+                "action_specific_postcondition_readback": all(
+                    marker in apply_source
+                    for marker in (
+                        "selftest_agent_disabled",
+                        "orphan_mission_detached",
+                        "stale_task_failed",
+                        "repair.apply.postcondition",
+                        "postcondition_verified",
+                    )
+                ),
             }
             ok = all(checks.values())
             source_digest = hashlib.sha256(
                 inspect.getsource(service.create_repair).encode("utf-8")
-                + inspect.getsource(service.apply_repair).encode("utf-8")
+                + apply_source.encode("utf-8")
             ).hexdigest()[:16]
             event = {
                 "event_type": "verification",
@@ -727,8 +738,11 @@ def run_logic_tests(service, fresh_service_factory=None):
                     "title": "Repair Engine v1 controlled lifecycle",
                     "reference": "selftest:repair-engine-v1",
                     "summary": (
-                        "Lifecycle persistente con acciones allowlisted, sandbox, tests, "
-                        "evaluacion, aprobacion explicita, apply controlado y learn."
+                        "Selftest runtime no mutante: valida catalogo allowlisted, maquina de estados, "
+                        "servicios y guardas de lectura de postcondicion; el ciclo apply completo se "
+                        "prueba por separado en el contrato automatizado."
+                        if ok else
+                        "El contrato runtime de Repair Engine no supero todas las comprobaciones."
                     ),
                     "hash": source_digest,
                 }],
