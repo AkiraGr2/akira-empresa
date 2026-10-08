@@ -617,6 +617,45 @@ def _run_one(
     return report
 
 
+def _evaluate_audit_closure(
+    reports: list[dict[str, Any]],
+    cleanup: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply the exact F8 closure gate; unexpected verdicts must never pass."""
+    counts: dict[str, int] = {}
+    for report in reports:
+        verdict = report.get("verdict", "FAILED")
+        counts[verdict] = counts.get(verdict, 0) + 1
+
+    expected_counts = {
+        "VERIFIED": max(0, len(TOOL_ORDER) - 2),
+        "FAIL_CLOSED": 1,
+        "VERIFIED_VIA_F7": 1,
+    }
+    actual_order = [str(report.get("tool") or "") for report in reports]
+    by_tool = {
+        str(report.get("tool") or ""): report.get("verdict")
+        for report in reports
+    }
+    checks = {
+        "case_count_exact": len(reports) == len(TOOL_ORDER),
+        "tool_order_exact": actual_order == TOOL_ORDER,
+        "unique_tools": len(actual_order) == len(set(actual_order)),
+        "verdict_distribution_exact": counts == expected_counts,
+        "disabled_image_fails_closed": by_tool.get("image_generate") == "FAIL_CLOSED",
+        "cognitive_cycle_inherits_f7": by_tool.get("cognitive_cycle") == "VERIFIED_VIA_F7",
+        "no_failed": counts.get("FAILED", 0) == 0,
+        "no_inconclusive": counts.get("INCONCLUSIVE", 0) == 0,
+        "cleanup_confirmed": isinstance(cleanup, dict) and cleanup.get("ok") is True,
+    }
+    return {
+        "ok": all(checks.values()),
+        "checks": checks,
+        "expected_verdicts": expected_counts,
+        "actual_verdicts": counts,
+    }
+
+
 def run_tool_audit(
     service,
     invoke: Callable[..., tuple[dict[str, Any] | None, dict[str, Any] | None]],
@@ -660,18 +699,14 @@ def run_tool_audit(
         verdict = report.get("verdict", "FAILED")
         counts[verdict] = counts.get(verdict, 0) + 1
 
-    final_ok = (
-        counts.get("FAILED", 0) == 0
-        and counts.get("INCONCLUSIVE", 0) == 0
-        and cleanup.get("ok") is True
-        and len(reports) == len(TOOL_ORDER)
-    )
+    closure = _evaluate_audit_closure(reports, cleanup)
 
     return {
         "run_id": run_id,
         "tool_count": len(reports),
         "summary": counts,
         "cleanup": cleanup,
-        "ok": final_ok,
+        "closure": closure,
+        "ok": closure["ok"],
         "reports": reports,
     }
