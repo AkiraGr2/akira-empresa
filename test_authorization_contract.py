@@ -53,6 +53,16 @@ class AuthorizationContractTests(unittest.TestCase):
             "v8_capabilities_list",
             "v8_capability_get",
             "v8_capability_verifications",
+            "v8_self",
+            "v8_repair_create",
+            "v8_repair_list",
+            "v8_repair_advance",
+            "v8_repair_get",
+            "v8_repair_sandbox",
+            "v8_repair_test",
+            "v8_repair_evaluate",
+            "v8_repair_approve",
+            "v8_repair_apply",
             "v8_create_mission",
             "v8_list_missions",
             "v8_recent_missions",
@@ -97,8 +107,32 @@ class AuthorizationContractTests(unittest.TestCase):
             self.assertIn("_require_owner(request)", source, name)
     def test_self_surface_exposes_capability_registry_from_persistence(self):
         source = self._function_source("v8_self")
+        self.assertIn("_require_owner(request)", source)
         self.assertIn("service.capabilities_for_self_model(limit=200)", source)
+        self.assertIn('service.self_knowledge_snapshot(owner_scope=s["owner_scope"], limit=200)', source)
         self.assertIn('"capabilities_registry"', source)
+
+    def test_repair_routes_derive_owner_and_actor_from_signed_session(self):
+        create = self._function_source("v8_repair_create")
+        self.assertIn('actor=s["email"]', create)
+        self.assertIn('owner_scope=s["owner_scope"]', create)
+        self.assertNotIn('payload.get("owner_scope")', create)
+        self.assertNotIn('payload.get("actor")', create)
+
+        scoped_routes = {
+            "v8_repair_list": 'owner_scope=s["owner_scope"]',
+            "v8_repair_advance": 'owner_scope=s["owner_scope"]',
+            "v8_repair_get": 'owner_scope=s["owner_scope"]',
+            "v8_repair_sandbox": 'owner_scope=s["owner_scope"]',
+            "v8_repair_test": 'owner_scope=s["owner_scope"]',
+            "v8_repair_evaluate": 'owner_scope=s["owner_scope"]',
+            "v8_repair_approve": 'owner_scope=s["owner_scope"]',
+            "v8_repair_apply": 'owner_scope=s["owner_scope"]',
+        }
+        for name, marker in scoped_routes.items():
+            source = self._function_source(name)
+            self.assertIn("_require_owner(request)", source, name)
+            self.assertIn(marker, source, name)
 
     def test_capability_routes_are_owner_only(self):
         for name in ("v8_capabilities_list", "v8_capability_get", "v8_capability_verifications"):
