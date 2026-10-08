@@ -34,6 +34,9 @@ from specialized_agent_tools import (
     propose_code_change,
     review_code_change,
     run_python_tests,
+    f8_zero_cost_audit_scope,
+    f8_zero_cost_audit_active,
+    f8_audit_provider_preflight,
 )
 
 from autonomy_engine import (
@@ -4635,13 +4638,14 @@ def _current_build_ref():
 
 def _run_tool_audit_background(service, actor, owner_scope, run_id):
     try:
-        report = run_tool_audit(
-            service,
-            _invoke_registered_tool,
-            actor=actor,
-            owner_scope=owner_scope,
-            run_id=run_id,
-        )
+        with f8_zero_cost_audit_scope():
+            report = run_tool_audit(
+                service,
+                _invoke_registered_tool,
+                actor=actor,
+                owner_scope=owner_scope,
+                run_id=run_id,
+            )
         with _TOOL_AUDIT_RUNS_LOCK:
             _TOOL_AUDIT_RUNS[run_id] = {
                 "status": "completed",
@@ -4695,6 +4699,14 @@ def v8_tools_audit_start(request: Request):
     s, _owner_error = _require_owner(request)
     if _owner_error is not None:
         return _owner_error
+    provider_preflight = f8_audit_provider_preflight()
+    if not provider_preflight.get("ok"):
+        return JSONResponse({
+            "ok": False,
+            "reason": "zero_cost_provider_not_confirmed",
+            "provider_preflight": provider_preflight,
+            "audit_started": False,
+        }, status_code=409)
     service = _persistence_service()
     if service is None:
         return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
@@ -7444,6 +7456,10 @@ def _index_memory_embedding(service, memory, actor="semantic-index", owner_scope
     memory_id = str(memory.get("id") or "").strip()
     content = str(memory.get("content") or "").strip()
     if not memory_id or not content or memory.get("status") != "active":
+        return False
+    # F8 must not consume embedding quota as a side effect of testing memory_save.
+    # The dedicated memory-recall capability test owns embedding verification.
+    if f8_zero_cost_audit_active():
         return False
     source_hash = hashlib.sha256(
         (MEMORY_EMBEDDING_MODEL + "\n" + content).encode("utf-8")
