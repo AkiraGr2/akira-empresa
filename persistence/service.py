@@ -941,10 +941,70 @@ class PersistenceService:
         except Exception as exc:
             raise StorageError(type(exc).__name__) from exc
 
+        # A successful database write is not enough: read back the affected
+        # resource and verify the action-specific postcondition before marking
+        # the repair as applied.
+        postcondition_verified = False
+        postcondition_name = "unknown"
+        if action == "disable_selftest_agent":
+            postcondition_name = "selftest_agent_disabled"
+            after_agent = self.get_agent_by_name("selftest_agent")
+            postcondition_verified = bool(
+                after_agent
+                and after_agent.get("status") == "disabled"
+                and after_agent.get("current_task_id") is None
+                and after_agent.get("current_action") is None
+            )
+        elif action == "detach_orphan_selftest_task":
+            postcondition_name = "orphan_mission_detached"
+            task_id = str(proposal.get("task_id") or "").strip()
+            after_task = self.get_task(task_id, owner_scope=owner_scope)
+            postcondition_verified = bool(after_task and after_task.get("mission_id") is None)
+        elif action == "recover_stale_selftest_task":
+            postcondition_name = "stale_task_failed"
+            task_id = str(proposal.get("task_id") or "").strip()
+            after_task = self.get_task(task_id, owner_scope=owner_scope)
+            postcondition_verified = bool(
+                after_task
+                and after_task.get("status") == "failed"
+                and after_task.get("completed_at")
+                and isinstance(after_task.get("error"), dict)
+                and after_task["error"].get("type") == "RepairEngineRecovery"
+            )
+
+        try:
+            with self.repo.transaction() as audit_tx:
+                audit_tx.append_audit({
+                    "actor": actor,
+                    "action": "repair.apply.postcondition",
+                    "resource": "repair",
+                    "resource_id": repair_id,
+                    "status": "success" if postcondition_verified else "failure",
+                    "detail": {
+                        "action_type": action,
+                        "postcondition": postcondition_name,
+                        "postcondition_verified": postcondition_verified,
+                    },
+                })
+        except Exception:
+            # Do not claim application success if the verification audit itself
+            # could not be persisted.
+            postcondition_verified = False
+
+        if not postcondition_verified:
+            return self.advance_repair(
+                repair_id, "failed",
+                actor=actor, owner_scope=owner_scope,
+                evidence=["apply_postcondition_failed"],
+                result=f"Accion ejecutada, pero no se pudo verificar la postcondicion: {postcondition_name}",
+            )
+
+        result["postcondition_verified"] = True
+        result["postcondition"] = postcondition_name
         saved = self.advance_repair(
             repair_id, "applied",
             actor=actor, owner_scope=owner_scope,
-            evidence=[f"apply_changed:{changed}"],
+            evidence=[f"apply_changed:{changed}", "apply_postcondition_verified"],
             result=str(result)[:2000],
         )
         try:
