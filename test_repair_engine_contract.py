@@ -270,6 +270,73 @@ class RepairEngineContractTests(unittest.TestCase):
         self.assertEqual(reread["stage"], "detected")
         self.assertEqual(reread["owner_scope"], "scope:A")
 
+    def test_task_repair_actions_verify_their_specific_postconditions(self):
+        cases = (
+            ("detach_orphan_selftest_task", {"mission_id": "missing-mission"}, "orphan_mission_detached"),
+            ("recover_stale_selftest_task", {"status": "running"}, "stale_task_failed"),
+        )
+        for action_type, overrides, expected_postcondition in cases:
+            with self.subTest(action_type=action_type):
+                self.repo = FakeRepo()
+                self.service = PersistenceService(self.repo)
+                task = {
+                    "id": "task_" + action_type,
+                    "agent_name": "selftest_agent",
+                    "tool_name": "python_test",
+                    "status": "pending",
+                    "inputs": {},
+                    "owner_scope": "scope:A",
+                    "version": 1,
+                    "mission_id": None,
+                    "completed_at": None,
+                    "error": None,
+                }
+                task.update(overrides)
+                self.repo.rows["agent_tasks"].append(task)
+
+                repair = self.service.create_repair(
+                    task["id"], "verify scoped task repair", action_type,
+                    actor="owner@example.test", owner_scope="scope:A",
+                )
+                repair = self.service.advance_repair(
+                    repair["id"], "diagnosed", actor="owner@example.test", owner_scope="scope:A"
+                )
+                repair = self.service.advance_repair(
+                    repair["id"], "isolated", actor="owner@example.test", owner_scope="scope:A"
+                )
+                repair = self.service.advance_repair(
+                    repair["id"], "proposed", actor="owner@example.test", owner_scope="scope:A",
+                    proposal={"task_id": task["id"]},
+                )
+                repair = self.service.sandbox_repair(
+                    repair["id"], actor="owner@example.test", owner_scope="scope:A"
+                )
+                with patch("specialized_agent_tools.run_python_tests", return_value={"status": "passed", "tests": ["ok"]}):
+                    repair = self.service.test_repair(
+                        repair["id"], actor="owner@example.test", owner_scope="scope:A"
+                    )
+                repair = self.service.evaluate_repair(
+                    repair["id"], actor="owner@example.test", owner_scope="scope:A"
+                )
+                repair = self.service.approve_repair(
+                    repair["id"], actor="owner@example.test", owner_scope="scope:A"
+                )
+                with patch.object(self.service, "save_learning", return_value={"outcome": "created"}):
+                    result = self.service.apply_repair(
+                        repair["id"], actor="owner@example.test", owner_scope="scope:A"
+                    )
+
+                self.assertEqual(result["stage"], "applied")
+                self.assertEqual(result["status"], "completed")
+                self.assertIn("'postcondition_verified': True", result["result"])
+                self.assertIn(expected_postcondition, result["result"])
+                final_task = self.service.get_task(task["id"], owner_scope="scope:A")
+                if action_type == "detach_orphan_selftest_task":
+                    self.assertIsNone(final_task["mission_id"])
+                else:
+                    self.assertEqual(final_task["status"], "failed")
+                    self.assertEqual(final_task["error"]["type"], "RepairEngineRecovery")
+
     def test_unsupported_or_invalid_actions_are_rejected(self):
         with self.assertRaises(ValidationError):
             self.service.create_repair(
