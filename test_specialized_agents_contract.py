@@ -66,6 +66,21 @@ class SpecializedAgentsContractTests(unittest.TestCase):
         modules = specialized_agent_tools._normalize_test_modules(["persistence.test_absorption"])
         self.assertEqual(modules, ["persistence.test_absorption"])
 
+    def test_tester_allows_f12_repair_contract_and_its_safety_regressions(self):
+        modules = specialized_agent_tools._normalize_test_modules([
+            "test_repair_engine_contract",
+            "test_mission_task_ownership",
+            "test_authorization_contract",
+        ])
+        self.assertEqual(
+            modules,
+            [
+                "test_repair_engine_contract",
+                "test_mission_task_ownership",
+                "test_authorization_contract",
+            ],
+        )
+
     def test_tester_accepts_precise_allowlisted_unittest_selector(self):
         targets = specialized_agent_tools._normalize_test_modules([
             "test_tool_registry_contract.ToolRegistryContractTests.test_registered_inputs_are_schema_validated_before_dispatch"

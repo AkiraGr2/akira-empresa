@@ -805,7 +805,11 @@ class PersistenceService:
         try:
             from specialized_agent_tools import run_python_tests
             result = run_python_tests(
-                tests=["test_mission_task_ownership", "test_self_knowledge_contract"],
+                tests=[
+                    "test_repair_engine_contract",
+                    "test_mission_task_ownership",
+                    "test_authorization_contract",
+                ],
             )
         except Exception as exc:
             return self.advance_repair(
