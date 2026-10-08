@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime
+import re
 
 import psycopg
 from psycopg.rows import dict_row
@@ -50,6 +51,33 @@ def make_pool(database_url: str):
     )
 
 
+
+def _iter_migration_statements(sql: str):
+    """Yield executable statements, expanding PostgreSQL multi-table RLS ALTERs.
+
+    Existing migration history is immutable. Migration 020 currently expresses
+    a multi-table ENABLE ROW LEVEL SECURITY as one comma-separated ALTER TABLE,
+    which PostgreSQL does not accept. Normalize only that narrow form at runtime
+    so clean databases can apply the unchanged historical migration.
+    """
+    for raw in sql.split(";"):
+        stmt = raw.strip()
+        if not stmt:
+            continue
+        match = re.fullmatch(
+            r"ALTER\\s+TABLE\\s+((?:public\\.)?[A-Za-z_][A-Za-z0-9_]*"
+            r"(?:\\s*,\\s*(?:public\\.)?[A-Za-z_][A-Za-z0-9_]*)+)"
+            r"\\s+ENABLE\\s+ROW\\s+LEVEL\\s+SECURITY",
+            stmt,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            for table in match.group(1).split(","):
+                yield f"ALTER TABLE {table.strip()} ENABLE ROW LEVEL SECURITY"
+        else:
+            yield stmt
+
+
 def migrate(pool) -> list:
     """Aplica migraciones pendientes en UNA transaccion, con candado para que dos procesos no migren a la vez."""
     applied_now = []
@@ -65,9 +93,8 @@ def migrate(pool) -> list:
             for version, sql in MIGRATIONS:
                 if version in done:
                     continue
-                for stmt in (s.strip() for s in sql.split(";")):
-                    if stmt:
-                        cur.execute(stmt)
+                for stmt in _iter_migration_statements(sql):
+                    cur.execute(stmt)
                 cur.execute("INSERT INTO schema_migrations (version) VALUES (%s)", (version,))
                 applied_now.append(version)
     return applied_now
