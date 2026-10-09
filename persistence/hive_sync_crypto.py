@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import math
 import os
 import re
 from collections.abc import Mapping
@@ -56,10 +57,23 @@ class HiveSyncSignatureError(HiveSyncCryptoError):
     """An envelope signature is missing, untrusted, malformed, or invalid."""
 
 
+def _reject_negative_zero(value: Any) -> None:
+    """Reject -0.0 before JCS collapses it to the same representation as +0.0."""
+    if isinstance(value, float) and value == 0.0 and math.copysign(1.0, value) < 0:
+        raise HiveSyncEnvelopeError("negative_zero_not_allowed")
+    if isinstance(value, Mapping):
+        for nested in value.values():
+            _reject_negative_zero(nested)
+    elif isinstance(value, (list, tuple)):
+        for nested in value:
+            _reject_negative_zero(nested)
+
+
 def canonical_json_bytes(value: Mapping[str, Any]) -> bytes:
     """Serialize a JSON object with RFC 8785 JCS and return its UTF-8 bytes."""
     if not isinstance(value, Mapping):
         raise HiveSyncEnvelopeError("canonical_json_requires_object")
+    _reject_negative_zero(value)
     try:
         canonical = rfc8785.dumps(dict(value))
     except Exception as exc:
