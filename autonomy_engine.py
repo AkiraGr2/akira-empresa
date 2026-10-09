@@ -181,13 +181,29 @@ def start_controlled_autonomy(service, request: dict[str, Any], actor: str, owne
                 proposal,
                 test_result,
             )
-        if review.get("verdict") != "approve":
-            raise ControlledAutonomyError("review_not_approved")
 
+        # Preserve bounded reviewer diagnostics before fail-closed rejection so the
+        # owner can distinguish an explicit review rejection from a generic HTTP 422.
+        raw_findings = review.get("findings") if isinstance(review.get("findings"), list) else []
+        review_findings = []
+        for finding in raw_findings[:20]:
+            if not isinstance(finding, dict):
+                continue
+            review_findings.append({
+                "severity": str(finding.get("severity") or "unknown")[:32],
+                "path": str(finding.get("path") or "")[:240],
+                "message": str(finding.get("message") or "")[:800],
+            })
+        raw_required_tests = review.get("required_tests") if isinstance(review.get("required_tests"), list) else []
+        review_required_tests = [str(item).strip()[:300] for item in raw_required_tests[:20] if str(item).strip()]
+        review_verdict = str(review.get("verdict") or "missing_verdict")[:80]
         evaluation = {
             "tests_passed": True,
-            "review_verdict": review.get("verdict"),
+            "review_verdict": review_verdict,
             "review_summary": str(review.get("summary") or "")[:2000],
+            "review_findings": review_findings,
+            "review_required_tests": review_required_tests,
+            "review_write_performed": review.get("write_performed") is True,
             "base_sha": base_sha,
             "external_write_allowed": False,
             "requires_human_approval": True,
@@ -196,6 +212,8 @@ def start_controlled_autonomy(service, request: dict[str, Any], actor: str, owne
             a, run_id, "evaluating", actor, owner_scope,
             {"evaluation": evaluation},
         )
+        if review_verdict != "approve":
+            raise ControlledAutonomyError(f"review_not_approved:{review_verdict}")
         _advance(
             a, run_id, "awaiting_approval", actor, owner_scope,
             {
