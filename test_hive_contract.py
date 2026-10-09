@@ -156,6 +156,56 @@ class HiveKnowledgeSharingContractTests(unittest.TestCase):
         events = [e for e in self.repo.audit if e.get("resource_id") == shared["id"]]
         self.assertTrue(any(e.get("action") == "hive.knowledge.revoke" for e in events))
 
+    def test_editing_shared_knowledge_revokes_consent_until_explicit_reshare(self):
+        verified = self.verify_knowledge()
+        shared = self.share(verified)
+
+        with self.assertRaisesRegex(
+            ValidationError, "knowledge factual change requires reverification separately"
+        ):
+            self.service.update_knowledge(
+                shared["id"],
+                {"content": "Changed content", "verification_status": "verified"},
+                expected_version=shared["version"],
+                actor="owner@example.test",
+                owner_scope="scope:A",
+            )
+        unchanged = self.repo.get("knowledge_records", shared["id"])
+        self.assertEqual(unchanged["privacy_level"], "SHAREABLE")
+        self.assertEqual(unchanged["version"], shared["version"])
+
+        edited = self.service.update_knowledge(
+            shared["id"],
+            {"content": "Materially changed after prior sharing consent."},
+            expected_version=shared["version"],
+            actor="owner@example.test",
+            owner_scope="scope:A",
+        )
+        self.assertEqual(edited["privacy_level"], "PRIVATE")
+        self.assertEqual(edited["verification_status"], "partially_verified")
+        self.assertEqual(edited["version"], shared["version"] + 1)
+        self.assertEqual(self.service.list_hive_knowledge(owner_scope="scope:A"), [])
+
+        reverified = self.service.verify_knowledge(
+            edited["id"],
+            [{
+                "type": "manual_verification",
+                "title": "Fresh evidence after edit",
+                "reference": "test://f15-fresh-after-edit",
+                "note": "This verifies the edited content independently.",
+            }],
+            actor="owner@example.test",
+            expected_version=edited["version"],
+            owner_scope="scope:A",
+        )
+        self.assertEqual(reverified["verification_status"], "verified")
+        self.assertEqual(reverified["privacy_level"], "PRIVATE")
+        self.assertEqual(self.service.list_hive_knowledge(owner_scope="scope:A"), [])
+
+        reshared = self.share(reverified)
+        self.assertEqual(reshared["privacy_level"], "SHAREABLE")
+        self.assertEqual(self.service.list_hive_knowledge(owner_scope="scope:A")[0]["id"], reshared["id"])
+
     def test_generic_knowledge_update_cannot_bypass_the_hive_gate(self):
         record = self.create_knowledge()
         with self.assertRaisesRegex(ValidationError, "explicit_hive_privacy_transition_required"):
