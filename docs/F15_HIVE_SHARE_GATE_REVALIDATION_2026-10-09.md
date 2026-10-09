@@ -74,9 +74,9 @@ No se añade tabla ni migración: el primer contrato usa `knowledge_records` y `
 ## 7. Estado actual de verificación (2026-10-09, COT)
 
 **Backend — PR #137**
-- Head de código y regresiones verificado: `1dd9d2dfd1b720e62910cde8c0d8c7ff25751505`.
-- Backend Syntax Verification: PASS — [run 37958332977](https://github.com/AkiraGr2/akira-empresa/actions/runs/37958332977).
-- PostgreSQL end-to-end: PASS — [run 37958333031](https://github.com/AkiraGr2/akira-empresa/actions/runs/37958333031).
+- Head de código y regresiones verificado en el PR actual: `9be468b41ab287d1d0450e3b97a706fb64b22e25`.
+- Backend Syntax Verification: PASS — [run 37958935422](https://github.com/AkiraGr2/akira-empresa/actions/runs/37958935422).
+- PostgreSQL end-to-end: PASS — [run 37958935427](https://github.com/AkiraGr2/akira-empresa/actions/runs/37958935427).
 - La suite PostgreSQL ejercitó rutas HTTP autenticadas, aislamiento de propietario, publicación/revocación, rechazo de `SENSITIVE` sin redacción, bloqueo de `COLLECTIVE`, rechazo de bypass genérico, error controlado 503 ante fallo del registro de capacidad y auditoría desde otra conexión.
 - La regresión nueva también demuestra que editar contenido revoca consentimiento y verificación, que una re-verificación posterior no republica el registro, que la auditoría conserva el cambio `SHAREABLE → PRIVATE`, y que archivar/reactivar no restaura la autorización anterior.
 
