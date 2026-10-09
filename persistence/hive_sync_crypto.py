@@ -272,8 +272,10 @@ def _validate_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
         snapshot = result.get("snapshot")
         if not isinstance(snapshot, Mapping):
             raise HiveSyncEnvelopeError("snapshot_event_requires_snapshot_object")
-        if not {"concept", "content"}.issubset(snapshot):
-            raise HiveSyncEnvelopeError("snapshot_concept_content_required")
+        for field in ("concept", "content"):
+            value = snapshot.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise HiveSyncEnvelopeError("snapshot_concept_content_required")
         if result.get("privacy_level") != "SHAREABLE":
             raise HiveSyncEnvelopeError("snapshot_must_be_shareable")
         if result.get("verification_status") != "verified":
