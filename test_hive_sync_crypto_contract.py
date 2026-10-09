@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,6 +17,7 @@ from persistence.hive_sync_crypto import (
     load_signing_key_from_environment,
     sign_envelope,
     snapshot_sha256,
+    strict_json_object_loads,
     verify_envelope,
 )
 
@@ -148,6 +150,35 @@ class HiveSyncCanonicalizationContractTests(unittest.TestCase):
     def test_unsupported_python_objects_are_rejected_before_serialization(self):
         with self.assertRaises(HiveSyncEnvelopeError):
             canonical_json_bytes({"unexpected": object()})
+
+    def test_strict_json_parser_rejects_duplicate_keys(self):
+        for raw in (
+            '{"event_type":"KNOWLEDGE_SNAPSHOT","event_type":"KNOWLEDGE_REVOCATION"}',
+            '{"nested":{"role":"owner","role":"attacker"}}',
+        ):
+            with self.subTest(raw=raw):
+                with self.assertRaises(HiveSyncEnvelopeError):
+                    strict_json_object_loads(raw)
+
+    def test_strict_json_parser_rejects_all_negative_zero_spellings(self):
+        for raw in ('{"value":-0}', '{"value":-0.0}', '{"value":-0e0}', '{"value":-0.000E+4}'):
+            with self.subTest(raw=raw):
+                with self.assertRaises(HiveSyncEnvelopeError):
+                    strict_json_object_loads(raw)
+
+    def test_strict_json_parser_rejects_nonfinite_and_invalid_json(self):
+        for raw in ('{"value":NaN}', '{"value":Infinity}', '{"value":-Infinity}', '{"broken":'):
+            with self.subTest(raw=raw):
+                with self.assertRaises(HiveSyncEnvelopeError):
+                    strict_json_object_loads(raw)
+        with self.assertRaises(HiveSyncEnvelopeError):
+            strict_json_object_loads(b'{"value":"\xff"}')
+
+    def test_strict_json_parser_requires_object_root(self):
+        for raw in ('[]', 'null', '"scalar"'):
+            with self.subTest(raw=raw):
+                with self.assertRaises(HiveSyncEnvelopeError):
+                    strict_json_object_loads(raw)
 
 
 class HiveSyncSignatureContractTests(unittest.TestCase):
@@ -327,6 +358,22 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
         self.assertNotIn("signature", unsigned)
         self.assertEqual(signed["service_key_id"], self.key_id)
         self.assertNotIn("=", signed["signature"], "base64url signature is unpadded")
+
+    def test_raw_json_envelope_is_parsed_strictly_before_verification(self):
+        signed = sign_envelope(make_envelope(), self.private_key, self.key_id)
+        raw = json.dumps(signed, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        self.assertTrue(verify_envelope(raw, {self.key_id: self.public_key}))
+
+        decoded = raw.decode("utf-8")
+        marker = '"event_type":"KNOWLEDGE_SNAPSHOT"'
+        self.assertIn(marker, decoded)
+        ambiguous = decoded.replace(
+            marker,
+            marker + ',"event_type":"KNOWLEDGE_REVOCATION"',
+            1,
+        )
+        with self.assertRaises(HiveSyncEnvelopeError):
+            verify_envelope(ambiguous, {self.key_id: self.public_key})
 
     def test_raw_public_key_bytes_can_verify(self):
         signed = sign_envelope(make_envelope(), self.private_key, self.key_id)
