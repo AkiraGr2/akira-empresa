@@ -291,6 +291,20 @@ class F15HivePostgresE2ETests(unittest.TestCase):
                 client.get("/api/v8/hive/knowledge", headers=headers).json()["knowledge"],
                 [],
             )
+            edit_events = [
+                event for event in self.fresh_repo.audit_search(
+                    actor=owner_email, action_prefix="knowledge.update", limit=100
+                )
+                if event.get("resource_id") == shared["id"]
+            ]
+            revoked_consent_event = next(
+                event for event in edit_events
+                if (event.get("detail") or {}).get("share_consent_revoked_due_to_material_change") is True
+            )
+            edit_detail = revoked_consent_event.get("detail") or {}
+            self.assertEqual(edit_detail.get("previous_privacy_level"), "SHAREABLE")
+            self.assertEqual(edit_detail.get("new_privacy_level"), "PRIVATE")
+            self.assertEqual(edit_detail.get("new_version"), edited["version"])
 
             verify_again = client.post(
                 f"/api/v8/knowledge/{shared['id']}/verify",
