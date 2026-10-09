@@ -52,6 +52,36 @@ class HiveSyncCanonicalizationContractTests(unittest.TestCase):
             b'{"a":"\xc3\xa1","n":[true,null],"z":1}',
         )
 
+    def test_rfc8785_number_serialization_vector(self):
+        # RFC 8785 §3.2.2 example: canonicalize binary64 values, not input spelling.
+        value = {"numbers": [333333333.33333329, 1e30, 4.50, 2e-3, 1e-27]}
+        self.assertEqual(
+            canonical_json_bytes(value),
+            b'{"numbers":[333333333.3333333,1e+30,4.5,0.002,1e-27]}',
+        )
+
+    def test_rfc8785_utf16_property_sorting_vector(self):
+        # RFC 8785 §3.2.3 property-order example, including non-ASCII keys.
+        value = {
+            "\u20ac": "Euro Sign",
+            "\r": "Carriage Return",
+            "\ufb33": "Hebrew Letter Dalet With Dagesh",
+            "1": "One",
+            "\U0001f600": "Emoji: Grinning Face",
+            "\u0080": "Control",
+            "\u00f6": "Latin Small Letter O With Diaeresis",
+        }
+        expected = (
+            '{"\\r":"Carriage Return","1":"One","\u0080":"Control",'
+            '"\u00f6":"Latin Small Letter O With Diaeresis","€":"Euro Sign",'
+            '"😀":"Emoji: Grinning Face","דּ":"Hebrew Letter Dalet With Dagesh"}'
+        )
+        self.assertEqual(canonical_json_bytes(value).decode("utf-8"), expected)
+
+    def test_negative_zero_is_rejected_before_signing(self):
+        with self.assertRaises(HiveSyncEnvelopeError):
+            canonical_json_bytes({"nested": [0, {"negative": -0.0}]})
+
     def test_snapshot_hash_is_sha256_of_jcs_bytes(self):
         snapshot = make_snapshot()
         import hashlib
