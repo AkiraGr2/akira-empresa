@@ -31,6 +31,7 @@ from github_controlled import (
     fetch_text_file,
     sandbox_changes,
 )
+from persistence.build_identity import runtime_build_ref
 from persistence.core import ValidationError
 
 
@@ -296,7 +297,7 @@ def _record_controlled_autonomy_verification(service, run, action):
             },
             "dependency_snapshot": ["AutonomyService", "github_controlled", "isolated_workspace_tests", "owner_scope", "human_approval"],
             "runtime_version": "controlled_autonomy_v1",
-            "build_ref": run.get("base_commit_sha") or "unknown",
+            "build_ref": runtime_build_ref(),
             "actor": str(run.get("created_by") or "owner"), "executor": "controlled_autonomy", "evaluator": "system",
             "observed_availability_state": "available",
         },
@@ -408,9 +409,6 @@ def apply_approved_controlled_autonomy(
         "external_verification": verified,
         "verified_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
     })
-    capability_verification = _record_controlled_autonomy_verification(service, run, action)
-    evaluation["capability_verification_id"] = capability_verification["record"]["id"]
-    evaluation["capability_effective_state"] = capability_verification["effective_state"]
     _advance(a, run_id, "evaluated", actor, owner_scope, {"evaluation": evaluation})
 
     learning_reference = ""
@@ -439,6 +437,25 @@ def apply_approved_controlled_autonomy(
         except Exception:
             pass
         raise ControlledAutonomyError("learning_persistence_failed") from exc
+
+    try:
+        capability_verification = _record_controlled_autonomy_verification(service, run, action)
+        effective_state = capability_verification.get("effective_state")
+        if effective_state != "verified":
+            raise ControlledAutonomyError("f14_capability_verification_not_current")
+        evaluation["capability_verification_id"] = capability_verification["record"]["id"]
+        evaluation["capability_effective_state"] = effective_state
+    except Exception as exc:
+        try:
+            a.record_failure(
+                run_id,
+                f"capability_verification_failed:{type(exc).__name__}",
+                actor,
+                owner_scope,
+            )
+        except Exception:
+            pass
+        raise ControlledAutonomyError("capability_verification_failed") from exc
 
     final = _advance(
         a, run_id, "completed", actor, owner_scope,

@@ -505,9 +505,14 @@ class ControlledAutonomyContractTests(unittest.TestCase):
                "decision": {"approved_by": "owner@example.com", "approved_at": "2026-10-06T17:00:00+00:00"}}
         action = {"branch_name": "akira/autonomy/autonomy_test_123", "pr_url": "https://github.com/AkiraGr2/akira-empresa/pull/999",
                   "pr_draft": True, "merged": False}
-        result = _record_controlled_autonomy_verification(service, run, action)
+        runtime_ref = "sha256:" + "d" * 48
+        with patch("autonomy_engine.runtime_build_ref", return_value=runtime_ref):
+            result = _record_controlled_autonomy_verification(service, run, action)
         self.assertEqual(result["effective_state"], "verified")
         args, kwargs = service.record_capability_verification.call_args
+        self.assertEqual(args[1]["build_ref"], runtime_ref)
+        self.assertEqual(args[1]["environment"]["base_commit_sha"], "a" * 40)
+        self.assertNotEqual(args[1]["build_ref"], args[1]["environment"]["base_commit_sha"])
         self.assertEqual(kwargs["idempotency_key"], "f14:e2e:autonomy_test_123")
         self.assertEqual(args[0], "cap_f14")
         self.assertEqual(args[1]["test_key"], "controlled_autonomy_v1_e2e")
@@ -608,7 +613,7 @@ class ControlledAutonomyContractTests(unittest.TestCase):
              patch(
                  "autonomy_engine._record_controlled_autonomy_verification",
                  return_value={"record": {"id": "capver_test"}, "effective_state": "verified"},
-             ):
+             ) as record_verification:
             with self.assertRaises(ControlledAutonomyError) as ctx:
                 apply_approved_controlled_autonomy(service, run["id"], actor, owner_scope)
 
@@ -617,8 +622,76 @@ class ControlledAutonomyContractTests(unittest.TestCase):
         self.assertIn("evaluated", statuses)
         self.assertNotIn("learned", statuses)
         self.assertNotIn("completed", statuses)
+        record_verification.assert_not_called()
         fake_autonomy.record_failure.assert_called_once()
         self.assertIn("learning_persistence_failed:", fake_autonomy.record_failure.call_args.args[1])
+
+    def test_f14_stale_capability_verification_fails_closed_after_learning(self):
+        service = Mock()
+        run = {
+            "id": "autonomy_test_stale_verification",
+            "goal": "F14 stale verification fail-closed test",
+            "created_by": "owner@example.com",
+            "repository": "AkiraGr2/akira-empresa",
+            "base_branch": "main",
+            "base_commit_sha": "a" * 40,
+            "decision": {
+                "status": "approved",
+                "mode": "human",
+                "approved_by": "owner@example.com",
+                "approved_at": "2026-10-06T17:00:00+00:00",
+            },
+            "proposal": {
+                "summary": "synthetic change",
+                "changes": [{
+                    "path": "docs/new.txt",
+                    "operation": "create",
+                    "reason": "test",
+                    "patch": "--- /dev/null\n+++ b/docs/new.txt\n@@ -0,0 +1 @@\n+synthetic\n",
+                }],
+            },
+            "sandbox": {"expected_hashes": {"docs/new.txt": "b" * 64}},
+            "evaluation": {"tests_passed": True, "review_verdict": "approve"},
+            "status": "acting",
+        }
+        action = {
+            "branch_name": "akira/autonomy/autonomy_test_stale_verification",
+            "base_sha": run["base_commit_sha"],
+            "branch_head": "c" * 40,
+            "pr_url": "https://github.com/AkiraGr2/akira-empresa/pull/999",
+            "pr_draft": True,
+            "pr_state": "open",
+            "pr_number": 999,
+            "base_branch": "main",
+            "merged": False,
+        }
+        fake_autonomy = Mock()
+        fake_autonomy.get_run.return_value = run
+        service.save_learning.return_value = {"record": {"id": "learn_test"}}
+        statuses = []
+
+        def record_advance(_a, _run_id, status, _actor, _owner_scope, changes=None):
+            statuses.append(status)
+            return dict(run, status=status, **(changes or {}))
+
+        with patch("autonomy_engine._autonomy", return_value=fake_autonomy), \
+             patch("autonomy_engine._advance", side_effect=record_advance), \
+             patch("autonomy_engine.controlled_apply", return_value=action), \
+             patch("autonomy_engine.branch_head", return_value=action["branch_head"]), \
+             patch(
+                 "autonomy_engine._record_controlled_autonomy_verification",
+                 return_value={"record": {"id": "capver_stale"}, "effective_state": "stale"},
+             ) as record_verification:
+            with self.assertRaisesRegex(ControlledAutonomyError, "capability_verification_failed"):
+                apply_approved_controlled_autonomy(
+                    service, run["id"], "owner@example.com", "owner:scope"
+                )
+
+        self.assertIn("evaluated", statuses)
+        self.assertIn("learned", statuses)
+        self.assertNotIn("completed", statuses)
+        record_verification.assert_called_once()
+        fake_autonomy.record_failure.assert_called_once()
 
     def test_controlled_gateway_contract_is_branch_only(self):
         source = Path("github_controlled.py").read_text(encoding="utf-8")
