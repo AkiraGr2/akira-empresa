@@ -339,6 +339,76 @@ class ControlledAutonomyContractTests(unittest.TestCase):
         self.assertIn("docs/new.txt", calls[0])
         self.assertEqual(calls[1], [])
         self.assertEqual(calls[2], ["docs/new.txt"])
+    def test_generated_create_content_builds_canonical_patch_without_model_headers(self):
+        from specialized_agent_tools import propose_code_change
+        from github_controlled import apply_unified_patch
+
+        file_content = "# Production Verification\n\nHuman approval was required."
+        def inspector(repo, paths=None, max_files=8, queries=None):
+            if paths:
+                raise GitHubReadUpstreamError("not_found")
+            return {
+                "ok": True, "branch": "main", "head_commit_sha": "a" * 40,
+                "root": [], "files": [], "total_bytes": 0,
+            }
+
+        with patch("specialized_agent_tools._specialist_json_call", return_value={
+            "status": "proposal",
+            "summary": "create target from explicit content",
+            "changes": [{
+                "path": "docs/new.txt",
+                "operation": "create",
+                "reason": "bounded verification note",
+                "content": file_content,
+            }],
+            "tests": [], "risks": [],
+        }):
+            result = propose_code_change(
+                inspector, "AkiraGr2/akira-empresa", ["docs/new.txt"],
+                "Crea la nota de verificación.", ["docs/new.txt"],
+            )
+
+        change = result["changes"][0]
+        self.assertNotIn("content", change)
+        self.assertEqual(
+            change["patch"],
+            "--- /dev/null\n+++ b/docs/new.txt\n@@ -0,0 +1,3 @@\n"
+            "+# Production Verification\n+\n+Human approval was required.\n",
+        )
+        self.assertEqual(
+            apply_unified_patch("", change["patch"], "docs/new.txt", "create"),
+            file_content + "\n",
+        )
+
+    def test_generated_empty_create_patch_fails_with_actionable_reason(self):
+        def inspector(repo, paths=None, max_files=8, queries=None):
+            if paths:
+                raise GitHubReadUpstreamError("not_found")
+            return {
+                "ok": True, "branch": "main", "head_commit_sha": "a" * 40,
+                "root": [], "files": [], "total_bytes": 0,
+            }
+
+        with patch("specialized_agent_tools._specialist_json_call", return_value={
+            "status": "proposal",
+            "summary": "empty create",
+            "changes": [{
+                "path": "docs/new.txt",
+                "operation": "create",
+                "reason": "test missing content",
+                "patch": "",
+            }],
+            "tests": [], "risks": [],
+        }):
+            with self.assertRaisesRegex(
+                specialized_agent_tools.SpecializedAgentError,
+                "proposal_create_content_missing:docs/new.txt",
+            ):
+                propose_code_change(
+                    inspector, "AkiraGr2/akira-empresa", ["docs/new.txt"],
+                    "Crea una nota.", ["docs/new.txt"],
+                )
+
     def test_generated_create_patch_is_canonicalized_before_sandbox(self):
         from specialized_agent_tools import propose_code_change
         from github_controlled import apply_unified_patch
