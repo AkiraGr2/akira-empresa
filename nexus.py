@@ -2580,6 +2580,7 @@ def v8_hive_knowledge_privacy(request: Request, knowledge_id: str, payload: dict
                 "collective_sync_not_configured",
                 "explicit_share_confirmation_required",
                 "verified_knowledge_required_for_share",
+                "sensitive_knowledge_requires_redaction",
                 "share_provenance_required",
                 "share_evidence_required",
                 "invalid_privacy_transition",
