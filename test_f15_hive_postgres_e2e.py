@@ -36,11 +36,29 @@ class F15HivePostgresE2ETests(unittest.TestCase):
         migrate(cls.pool)
         cls.repo = PostgresRepository(cls.pool)
         cls.service = PersistenceService(cls.repo)
-        cls.service.create_capability(
-            HIVE_KNOWLEDGE_SHARING_CAPABILITY,
-            actor="f15-postgres-ci",
-            idempotency_key="f15-e2e-hive-capability",
+        # Importing nexus starts the normal persistence bootstrap in a background
+        # thread, which may already have seeded this canonical capability. Reuse
+        # the persisted row instead of inventing a second idempotency key.
+        capability_rows = cls.service.list_capabilities(
+            filters={"name": "hive_knowledge_sharing_v1"}, limit=1
         )
+        if not capability_rows:
+            cls.service.create_capability(
+                HIVE_KNOWLEDGE_SHARING_CAPABILITY,
+                actor="f15-postgres-ci",
+                idempotency_key="bootstrap:capability:hive_knowledge_sharing_v1:v1",
+            )
+            capability_rows = cls.service.list_capabilities(
+                filters={"name": "hive_knowledge_sharing_v1"}, limit=1
+            )
+        if len(capability_rows) != 1:
+            raise AssertionError("F15 Hive capability bootstrap did not persist exactly one canonical row")
+        seeded_capability = capability_rows[0]
+        for key in ("category", "implementation_state", "verification_state", "availability_state"):
+            if seeded_capability.get(key) != HIVE_KNOWLEDGE_SHARING_CAPABILITY.get(key):
+                raise AssertionError(
+                    f"F15 Hive capability state mismatch for {key}: {seeded_capability.get(key)!r}"
+                )
 
         cls.fresh_pool = make_pool(DATABASE_URL)
         cls.fresh_pool.open(wait=True, timeout=30)
