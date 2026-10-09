@@ -87,6 +87,11 @@ def start_controlled_autonomy(service, request: dict[str, Any], actor: str, owne
     a = _autonomy(service, actor, owner_scope)
     created = a.create_run(request, actor=actor, owner_scope=owner_scope)
     run = created["record"]
+    # A retry with the same idempotency key may arrive while the original run is
+    # already advancing. Return the persisted record without restarting its state
+    # machine; otherwise a replay can turn a healthy in-progress run into failed.
+    if created.get("outcome") != "created":
+        return run
     run_id = run["id"]
 
     try:
