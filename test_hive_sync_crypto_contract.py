@@ -112,6 +112,43 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
         self.public_key = self.private_key.public_key()
         self.key_id = "test-key-v1"
 
+    def test_unknown_envelope_fields_are_rejected(self):
+        for field in ("owner_scope", "authorization", "debug_secret"):
+            with self.subTest(field=field):
+                envelope = make_envelope()
+                envelope[field] = "must-not-leak"
+                with self.assertRaises(HiveSyncEnvelopeError):
+                    sign_envelope(envelope, self.private_key, self.key_id)
+
+    def test_snapshot_projection_rejects_unallowlisted_fields(self):
+        for field in ("owner_scope", "id", "status", "created_at", "verified_by"):
+            with self.subTest(field=field):
+                snapshot = make_snapshot()
+                snapshot[field] = "must-not-leak"
+                with self.assertRaises(HiveSyncEnvelopeError):
+                    sign_envelope(make_envelope(snapshot), self.private_key, self.key_id)
+
+    def test_nested_snapshot_rejects_private_runtime_metadata(self):
+        snapshot = make_snapshot()
+        snapshot["evidence"] = [{"metadata": {"access_token": "synthetic-secret"}}]
+        with self.assertRaises(HiveSyncEnvelopeError):
+            sign_envelope(make_envelope(snapshot), self.private_key, self.key_id)
+
+    def test_revocation_rejects_knowledge_payload_metadata(self):
+        envelope = {
+            "protocol_version": "hive-sync/1",
+            "event_type": "KNOWLEDGE_REVOCATION",
+            "event_id": "10000000-0000-4000-8000-000000000005",
+            "collective_id": "20000000-0000-4000-8000-000000000001",
+            "recipient_membership_id": "30000000-0000-4000-8000-000000000001",
+            "consent_id": "consent-test-03",
+            "content_hash": snapshot_sha256(make_snapshot()),
+            "revocation_generation": 3,
+            "privacy_level": "SHAREABLE",
+        }
+        with self.assertRaises(HiveSyncEnvelopeError):
+            sign_envelope(envelope, self.private_key, self.key_id)
+
     def test_sign_and_verify_snapshot_event(self):
         unsigned = make_envelope()
         original = dict(unsigned)
