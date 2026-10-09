@@ -74,7 +74,7 @@ No se añade tabla ni migración: el primer contrato usa `knowledge_records` y `
 ## 7. Estado actual de verificación (2026-10-09, COT)
 
 **Backend — PR #137**
-- Head de código y regresiones verificado en el PR actual: `9be468b41ab287d1d0450e3b97a706fb64b22e25`.
+- Head de código y regresiones backend evaluado: `9be468b41ab287d1d0450e3b97a706fb64b22e25`.
 - Backend Syntax Verification: PASS — [run 37958935422](https://github.com/AkiraGr2/akira-empresa/actions/runs/37958935422).
 - PostgreSQL end-to-end: PASS — [run 37958935427](https://github.com/AkiraGr2/akira-empresa/actions/runs/37958935427).
 - La suite PostgreSQL ejercitó rutas HTTP autenticadas, aislamiento de propietario, publicación/revocación, rechazo de `SENSITIVE` sin redacción, bloqueo de `COLLECTIVE`, rechazo de bypass genérico, error controlado 503 ante fallo del registro de capacidad y auditoría desde otra conexión.
