@@ -61,8 +61,12 @@ FORBIDDEN_NESTED_SNAPSHOT_KEYS = frozenset({
     "owner_scope", "owner_id", "owner_email", "user_id", "created_by",
     "idempotency_key", "last_verified_at", "verified_by", "access_token",
     "refresh_token", "authorization", "headers", "session", "private_key",
-    "api_key", "password", "secret",
+    "api_key", "password", "secret", "secret_key", "credentials",
 })
+_FORBIDDEN_NORMALIZED_KEYS = frozenset(
+    re.sub(r"[^a-z0-9]", "", key.casefold())
+    for key in FORBIDDEN_NESTED_SNAPSHOT_KEYS
+)
 _KEY_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 _UTC_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$")
@@ -195,14 +199,17 @@ def snapshot_sha256(snapshot: Mapping[str, Any]) -> str:
     return hashlib.sha256(canonical_json_bytes(snapshot)).hexdigest()
 
 
-def _reject_sensitive_snapshot_keys(value: Any) -> None:
-    """Reject private/runtime metadata keys anywhere inside a snapshot projection."""
+def _reject_sensitive_nested_keys(value: Any) -> None:
+    """Reject sensitive runtime metadata keys in nested JSON payloads."""
     stack = [value]
     while stack:
         current = stack.pop()
         if isinstance(current, Mapping):
             for key, nested in current.items():
-                if isinstance(key, str) and key.strip().lower() in FORBIDDEN_NESTED_SNAPSHOT_KEYS:
+                if (
+                    isinstance(key, str)
+                    and re.sub(r"[^a-z0-9]", "", key.casefold()) in _FORBIDDEN_NORMALIZED_KEYS
+                ):
                     raise HiveSyncEnvelopeError("snapshot_contains_forbidden_metadata")
                 stack.append(nested)
         elif isinstance(current, (list, tuple)):
@@ -303,7 +310,11 @@ def _validate_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
             raise HiveSyncEnvelopeError("snapshot_must_be_verified")
         if set(snapshot) - ALLOWED_SNAPSHOT_FIELDS:
             raise HiveSyncEnvelopeError("snapshot_contains_unknown_fields")
-        _reject_sensitive_snapshot_keys(snapshot)
+        _reject_sensitive_nested_keys(snapshot)
+        # These envelope-level objects are signed too, so defense in depth must
+        # reject runtime secrets in them as well as inside the snapshot projection.
+        _reject_sensitive_nested_keys(result["evidence"])
+        _reject_sensitive_nested_keys(result["provenance"])
         if "revocation_generation" in result:
             raise HiveSyncEnvelopeError("snapshot_must_not_contain_revocation_generation")
         actual_hash = snapshot_sha256(snapshot)
