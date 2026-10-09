@@ -237,6 +237,22 @@ class CapabilityEngineContractTests(unittest.TestCase):
                 "orchestration", "repair", "evolution", "hive", "external", "general",
             })
 
+    def test_f15_hive_sharing_capability_is_partial_and_fail_closed(self):
+        from persistence.capability import validate_capability
+        from persistence.capability_catalog import BASE_CAPABILITIES
+
+        matches = [c for c in BASE_CAPABILITIES if c.get("name") == "hive_knowledge_sharing_v1"]
+        self.assertEqual(len(matches), 1)
+        record = validate_capability(matches[0])
+        self.assertEqual(record["category"], "hive")
+        self.assertEqual(record["implementation_state"], "partial")
+        self.assertEqual(record["verification_state"], "unverified")
+        self.assertEqual(record["availability_state"], "degraded")
+        limitations = " ".join(record["limitations"]).lower()
+        self.assertIn("cross-owner", limitations)
+        self.assertIn("collective", limitations)
+        self.assertIn("no realiza ninguna escritura externa", limitations)
+
     def test_f7_capability_migration_contains_no_sql_statement_split_semicolons(self):
         from persistence.migrations import MIGRATIONS
 
