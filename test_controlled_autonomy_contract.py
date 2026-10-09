@@ -19,6 +19,7 @@ from github_controlled import ControlledGitHubError, apply_unified_patch, sandbo
 from specialized_agent_tools import run_python_tests_in_workspace, propose_code_change
 from autonomy_engine import (
     _canonicalize_proposal_against_base,
+    _enforce_f14_production_verification_contract,
     ControlledAutonomyError,
     _build_f14_learning_event,
     _record_controlled_autonomy_verification,
@@ -939,6 +940,99 @@ class ControlledAutonomyContractTests(unittest.TestCase):
         self.assertNotIn('"/git/refs/heads/main"', source)
         self.assertNotIn('"merge": True', source)
         self.assertIn('if bool(verified.get("merged"))', source)
+
+
+
+    def test_f14_production_verification_contract_materializes_document_and_test(self):
+        request = {
+            "goal": "Verificación de producción F14: añadir el documento de evidencia y su prueba de contenido.",
+            "repository": "AkiraGr2/akira-empresa",
+            "paths": [
+                "docs/F14_PRODUCTION_VERIFICATION.md",
+                "test_controlled_autonomy_contract.py",
+            ],
+        }
+        source = (
+            "class ControlledAutonomyContractTests(unittest.TestCase):\n"
+            "    pass\n\n\n"
+            "if __name__ == \"__main__\":\n"
+            "    unittest.main()\n"
+        )
+        proposal = {
+            "status": "proposal",
+            "summary": "Model-generated document only",
+            "changes": [{
+                "path": "docs/F14_PRODUCTION_VERIFICATION.md",
+                "operation": "create",
+                "reason": "document",
+                "patch": (
+                    "--- /dev/null\n"
+                    "+++ b/docs/F14_PRODUCTION_VERIFICATION.md\n"
+                    "@@ -0,0 +1,3 @@\n"
+                    "# model title\n"
+                    "+\n"
+                    "+note\n"
+                ),
+            }],
+            "requires_human_approval": True,
+            "write_performed": False,
+        }
+        with patch(
+            "autonomy_engine.fetch_text_file",
+            return_value={"content": source},
+        ) as fetch_source:
+            result = _enforce_f14_production_verification_contract(
+                proposal,
+                request,
+                "a" * 40,
+            )
+
+        self.assertEqual(
+            [item["path"] for item in result["changes"]],
+            [
+                "docs/F14_PRODUCTION_VERIFICATION.md",
+                "test_controlled_autonomy_contract.py",
+            ],
+        )
+        document_patch = result["changes"][0]["patch"]
+        test_patch = result["changes"][1]["patch"]
+        self.assertIn("# Production Verification - F14", document_patch)
+        self.assertIn(
+            "Esta ejecución es una verificación de Controlled Autonomy v1 y requirió aprobación humana.",
+            document_patch,
+        )
+        self.assertIn(
+            "test_docs_F14_PRODUCTION_VERIFICATION_exists_and_contains_title_and_human_approval_note",
+            test_patch,
+        )
+        self.assertIn("Path(__file__).resolve().parent", test_patch)
+        self.assertIn("self.assertTrue(target.is_file())", test_patch)
+        self.assertIn('target.read_text(encoding="utf-8")', test_patch)
+        self.assertIn("self.assertIn", test_patch)
+        self.assertTrue(result["requires_human_approval"])
+        self.assertFalse(result["write_performed"])
+        fetch_source.assert_called_once_with(
+            "AkiraGr2/akira-empresa",
+            "test_controlled_autonomy_contract.py",
+            "a" * 40,
+        )
+
+    def test_f14_production_verification_contract_ignores_other_scopes(self):
+        request = {
+            "goal": "Improve a different bounded feature",
+            "repository": "AkiraGr2/akira-empresa",
+            "paths": ["README.md"],
+        }
+        proposal = {"status": "proposal", "changes": []}
+        with patch("autonomy_engine.fetch_text_file") as fetch_source:
+            result = _enforce_f14_production_verification_contract(
+                proposal,
+                request,
+                "b" * 40,
+            )
+        self.assertIs(result, proposal)
+        fetch_source.assert_not_called()
+
 
 
 if __name__ == "__main__":
