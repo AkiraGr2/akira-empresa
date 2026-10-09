@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from persistence.capability import validate_capability_verification
 from persistence.autonomy import (
     AutonomyContractError,
     AutonomyService,
@@ -578,8 +579,77 @@ class ControlledAutonomyContractTests(unittest.TestCase):
         self.assertEqual(args[0], "cap_f14")
         self.assertEqual(args[1]["test_key"], "controlled_autonomy_v1_e2e")
         self.assertEqual(args[1]["result"], "pass")
+        # Validate the real persistence contract, not only a mocked call.
+        validated = validate_capability_verification(args[1])
+        self.assertEqual(validated["test_key"], "controlled_autonomy_v1_e2e")
+        self.assertNotIn("observed_availability_state", args[1])
         self.assertEqual(len(args[1]["evidence"]), 3)
         self.assertEqual(args[1]["evidence"][1]["type"], "human_validation")
+
+    def test_f14_capability_failure_recovery_never_repeats_github_write(self):
+        service = FakePersistence()
+        lifecycle = AutonomyService(service)
+        created = lifecycle.create_run({
+            "goal": "Reconcile final F14 capability evidence",
+            "repository": "AkiraGr2/akira-empresa",
+            "base_branch": "main",
+            "paths": ["docs/F14_PRODUCTION_VERIFICATION.md"],
+            "instruction": "Create one bounded Markdown file",
+        }, actor="owner@example.com", owner_scope="scope:F14")
+        run_id = created["record"]["id"]
+        base_sha = "a" * 40
+        for status in ("planning", "delegating", "proposed", "sandboxed", "tested", "evaluating", "awaiting_approval"):
+            changes = {}
+            if status == "planning":
+                changes["base_commit_sha"] = base_sha
+            elif status == "proposed":
+                changes["proposal"] = {"status": "proposal", "summary": "test", "changes": [{"path": "docs/F14_PRODUCTION_VERIFICATION.md"}]}
+            elif status == "sandboxed":
+                changes["sandbox"] = {"expected_hashes": {"docs/F14_PRODUCTION_VERIFICATION.md": "b" * 64}}
+            lifecycle.advance(run_id, status, "owner@example.com", "scope:F14", changes)
+        lifecycle.approve(run_id, "owner@example.com", "scope:F14")
+        action = {
+            "repository": "AkiraGr2/akira-empresa",
+            "base_branch": "main",
+            "base_sha": base_sha,
+            "branch_name": "akira/autonomy/" + run_id,
+            "branch_head": "c" * 40,
+            "pr_number": 126,
+            "pr_url": "https://github.com/AkiraGr2/akira-empresa/pull/126",
+            "pr_draft": True,
+            "pr_state": "open",
+            "merged": False,
+        }
+        lifecycle.advance(run_id, "external_applied", "owner@example.com", "scope:F14", {
+            "action": action, "branch_name": action["branch_name"], "base_commit_sha": base_sha,
+        })
+        external_evidence = {
+            "external_action_verified": True,
+            "external_verification": {
+                "branch_head_matches": True, "draft_pr": True, "merged": False,
+                "base_branch": True, "pr_number": 126, "pr_url": action["pr_url"],
+            },
+        }
+        lifecycle.advance(run_id, "evaluated", "owner@example.com", "scope:F14", {"evaluation": external_evidence})
+        lifecycle.advance(run_id, "learned", "owner@example.com", "scope:F14", {"learning_reference": "learn_existing"})
+        lifecycle.record_failure(run_id, "capability_verification_failed:ValidationError", "owner@example.com", "scope:F14")
+
+        with patch("autonomy_engine.verify_existing_draft_action", return_value=external_evidence["external_verification"]), \
+             patch("autonomy_engine._record_controlled_autonomy_verification", return_value={
+                 "record": {"id": "capver_recovered"}, "effective_state": "verified",
+             }), \
+             patch("autonomy_engine.controlled_apply") as external_write:
+            completed = apply_approved_controlled_autonomy(
+                service, run_id, "owner@example.com", "scope:F14"
+            )
+
+        external_write.assert_not_called()
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(completed["action"]["pr_url"], action["pr_url"])
+        self.assertEqual(completed["learning_reference"], "learn_existing")
+        self.assertEqual(completed["evaluation"]["capability_effective_state"], "verified")
+        self.assertFalse(completed["evaluation"]["recovery"]["external_write_repeated"])
+        self.assertEqual(completed["evaluation"]["recovery"]["previous_failure_reason"], "capability_verification_failed:ValidationError")
 
     def test_lifecycle_requires_learning_reference_for_completion(self):
         service = AutonomyService(FakePersistence())
