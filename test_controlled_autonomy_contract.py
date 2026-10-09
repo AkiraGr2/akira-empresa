@@ -940,6 +940,8 @@ class ControlledAutonomyContractTests(unittest.TestCase):
         self.assertNotIn('"/git/refs/heads/main"', source)
         self.assertNotIn('"merge": True', source)
         self.assertIn('if bool(verified.get("merged"))', source)
+        self.assertIn('canonical_patch = canonicalize_modify_patch(path, current["content"], change["patch"])', source)
+        self.assertIn('apply_unified_patch(current["content"], canonical_patch, path, "modify")', source)
 
 
 
