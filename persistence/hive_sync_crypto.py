@@ -96,14 +96,21 @@ def _utf8_size(value: str) -> int:
 def _preflight_json_value(value: Any) -> None:
     """Bound and validate a JSON-like tree before recursive checks or serialization.
 
-    This avoids spending unbounded memory on oversized payloads and prevents deeply
-    nested caller data from escaping as RecursionError before the canonicalizer runs.
+    Cycles, excessive nesting, oversized payloads and unsupported Python objects are
+    rejected before helpers inspect nested fields or the canonicalizer materializes JSON.
     """
-    stack = [(value, 0)]
+    # Exit markers maintain only the active ancestry, so shared-but-acyclic children
+    # remain valid while cyclic Python object graphs fail immediately.
+    stack = [(value, 0, False)]
+    active_containers: set[int] = set()
     node_count = 0
     estimated_bytes = 0
     while stack:
-        current, depth = stack.pop()
+        current, depth, exiting = stack.pop()
+        if exiting:
+            active_containers.remove(id(current))
+            continue
+
         node_count += 1
         if node_count > MAX_JSON_NODE_COUNT:
             raise HiveSyncEnvelopeError("canonical_json_node_limit_exceeded")
@@ -111,6 +118,11 @@ def _preflight_json_value(value: Any) -> None:
             raise HiveSyncEnvelopeError("canonical_json_nesting_too_deep")
 
         if isinstance(current, Mapping):
+            ident = id(current)
+            if ident in active_containers:
+                raise HiveSyncEnvelopeError("canonical_json_cycle_not_allowed")
+            active_containers.add(ident)
+            stack.append((current, depth, True))
             estimated_bytes += 2
             for key, nested in current.items():
                 if not isinstance(key, str):
@@ -118,11 +130,16 @@ def _preflight_json_value(value: Any) -> None:
                 if len(key) > MAX_CANONICAL_JSON_BYTES:
                     raise HiveSyncEnvelopeError("canonical_json_payload_too_large")
                 estimated_bytes += _utf8_size(key) + 3
-                stack.append((nested, depth + 1))
+                stack.append((nested, depth + 1, False))
         elif isinstance(current, (list, tuple)):
+            ident = id(current)
+            if ident in active_containers:
+                raise HiveSyncEnvelopeError("canonical_json_cycle_not_allowed")
+            active_containers.add(ident)
+            stack.append((current, depth, True))
             estimated_bytes += 2
             for nested in current:
-                stack.append((nested, depth + 1))
+                stack.append((nested, depth + 1, False))
         elif isinstance(current, str):
             if len(current) > MAX_CANONICAL_JSON_BYTES:
                 raise HiveSyncEnvelopeError("canonical_json_payload_too_large")
@@ -206,6 +223,9 @@ def _validate_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(envelope, Mapping):
         raise HiveSyncEnvelopeError("envelope_requires_object")
     result = dict(envelope)
+    # Enforce resource limits and reject cyclic object graphs before checks such as
+    # nested metadata scanning and duplicate-parent detection traverse caller data.
+    _preflight_json_value(result)
     if set(result) - ALLOWED_ENVELOPE_FIELDS:
         raise HiveSyncEnvelopeError("envelope_contains_unknown_fields")
     required_string_fields = (
