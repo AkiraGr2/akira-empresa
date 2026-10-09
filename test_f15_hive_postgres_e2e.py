@@ -167,10 +167,12 @@ class F15HivePostgresE2ETests(unittest.TestCase):
         self.assertEqual(self.fresh_service.list_hive_knowledge(owner_scope=owner_a), [])
 
         # Inspect database audit evidence through an independently opened connection.
-        audit_events = self.fresh_repo.search(
-            "audit_log", {"resource_id": shared_a["id"]}, limit=100,
-            order_by="created_at", descending=False,
-        )
+        audit_events = [
+            event for event in self.fresh_repo.audit_search(
+                actor="f15-postgres-ci", action_prefix="hive.knowledge", limit=100
+            )
+            if event.get("resource_id") == shared_a["id"]
+        ]
         actions = [event.get("action") for event in audit_events]
         self.assertIn("hive.knowledge.share", actions)
         self.assertIn("hive.knowledge.revoke", actions)
