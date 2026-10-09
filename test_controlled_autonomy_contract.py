@@ -613,7 +613,7 @@ class ControlledAutonomyContractTests(unittest.TestCase):
              patch(
                  "autonomy_engine._record_controlled_autonomy_verification",
                  return_value={"record": {"id": "capver_test"}, "effective_state": "verified"},
-             ):
+             ) as record_verification:
             with self.assertRaises(ControlledAutonomyError) as ctx:
                 apply_approved_controlled_autonomy(service, run["id"], actor, owner_scope)
 
@@ -622,6 +622,7 @@ class ControlledAutonomyContractTests(unittest.TestCase):
         self.assertIn("evaluated", statuses)
         self.assertNotIn("learned", statuses)
         self.assertNotIn("completed", statuses)
+        record_verification.assert_not_called()
         fake_autonomy.record_failure.assert_called_once()
         self.assertIn("learning_persistence_failed:", fake_autonomy.record_failure.call_args.args[1])
 
