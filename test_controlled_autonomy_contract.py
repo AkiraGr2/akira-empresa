@@ -21,6 +21,7 @@ from specialized_agent_tools import run_python_tests_in_workspace, propose_code_
 from autonomy_engine import (
     _canonicalize_proposal_against_base,
     _enforce_f14_production_verification_contract,
+    _prepare_controlled_proposal,
     ControlledAutonomyError,
     _build_f14_learning_event,
     _record_controlled_autonomy_verification,
@@ -969,6 +970,40 @@ class ControlledAutonomyContractTests(unittest.TestCase):
         self.assertEqual("uno\nDOS\ntres\n", result)
 
 
+
+    def test_f14_bounded_proposal_is_materialized_before_model_edit_generation(self):
+        request = {
+            "goal": "Verificación de producción F14: añadir el documento de evidencia y su prueba de contenido.",
+            "repository": "AkiraGr2/akira-empresa",
+            "paths": [
+                "docs/F14_PRODUCTION_VERIFICATION.md",
+                "test_controlled_autonomy_contract.py",
+            ],
+            "instruction": "bounded F14 instruction",
+            "queries": [],
+        }
+        source = (
+            "class ControlledAutonomyContractTests(unittest.TestCase):\n"
+            "    pass\n\n\n"
+            "if __name__ == \"__main__\":\n"
+            "    unittest.main()\n"
+        )
+        with patch("autonomy_engine.fetch_text_file", return_value={"content": source}), patch(
+            "autonomy_engine.propose_code_change",
+            side_effect=AssertionError("bounded F14 must not ask the model to invent an edit anchor"),
+        ) as model_proposal:
+            result = _prepare_controlled_proposal(request, "a" * 40)
+
+        self.assertEqual(
+            [item["path"] for item in result["changes"]],
+            [
+                "docs/F14_PRODUCTION_VERIFICATION.md",
+                "test_controlled_autonomy_contract.py",
+            ],
+        )
+        self.assertTrue(result["requires_human_approval"])
+        self.assertFalse(result["write_performed"])
+        model_proposal.assert_not_called()
 
     def test_f14_production_verification_contract_materializes_document_and_test(self):
         request = {
