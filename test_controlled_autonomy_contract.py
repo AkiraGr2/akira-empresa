@@ -1062,5 +1062,35 @@ class ControlledAutonomyContractTests(unittest.TestCase):
 
 
 
+    def test_modify_patch_recovers_unique_removed_block_when_context_is_stale(self):
+        path = "example.py"
+        source = "before\nTARGET\nafter\n"
+        patch = (
+            "--- a/example.py\n"
+            "+++ b/example.py\n"
+            "@@ -1,3 +1,3 @@\n"
+            " stale context\n"
+            "-TARGET\n"
+            "+REPLACED\n"
+            " stale tail\n"
+        )
+        canonical = github_controlled.canonicalize_modify_patch(path, source, patch)
+        result = apply_unified_patch(source, canonical, path, "modify")
+        self.assertEqual("before\nREPLACED\nafter\n", result)
+
+    def test_modify_patch_still_rejects_nonunique_removed_block(self):
+        path = "example.py"
+        source = "TARGET\nother\nTARGET\n"
+        patch = (
+            "--- a/example.py\n"
+            "+++ b/example.py\n"
+            "@@ -1 +1 @@\n"
+            "-TARGET\n"
+            "+REPLACED\n"
+        )
+        with self.assertRaisesRegex(ControlledGitHubError, "patch_anchor_not_unique"):
+            github_controlled.canonicalize_modify_patch(path, source, patch)
+
+
 if __name__ == "__main__":
     unittest.main()
