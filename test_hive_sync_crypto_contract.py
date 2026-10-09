@@ -130,6 +130,18 @@ class HiveSyncCanonicalizationContractTests(unittest.TestCase):
         with self.assertRaises(HiveSyncEnvelopeError):
             canonical_json_bytes({"items": [None] * 100_001})
 
+    def test_node_limit_stops_before_exhausting_large_container(self):
+        class GuardedList(list):
+            def __iter__(self):
+                for index, item in enumerate(super().__iter__()):
+                    if index >= 100_000:
+                        raise AssertionError("preflight eagerly consumed too many siblings")
+                    yield item
+
+        # A bounded traversal rejects this before iterating the entire container.
+        with self.assertRaises(HiveSyncEnvelopeError):
+            canonical_json_bytes({"items": GuardedList([None] * 200_000)})
+
     def test_cyclic_python_object_graph_is_rejected(self):
         cyclic = []
         cyclic.append(cyclic)
