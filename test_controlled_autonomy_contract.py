@@ -674,10 +674,10 @@ class ControlledAutonomyContractTests(unittest.TestCase):
             statuses.append(status)
             return dict(run, status=status, **(changes or {}))
 
-        with patch("autonomy_engine._autonomy", return_value=fake_autonomy), \\
-             patch("autonomy_engine._advance", side_effect=record_advance), \\
-             patch("autonomy_engine.controlled_apply", return_value=action), \\
-             patch("autonomy_engine.branch_head", return_value=action["branch_head"]), \\
+        with patch("autonomy_engine._autonomy", return_value=fake_autonomy), \
+             patch("autonomy_engine._advance", side_effect=record_advance), \
+             patch("autonomy_engine.controlled_apply", return_value=action), \
+             patch("autonomy_engine.branch_head", return_value=action["branch_head"]), \
              patch(
                  "autonomy_engine._record_controlled_autonomy_verification",
                  return_value={"record": {"id": "capver_stale"}, "effective_state": "stale"},
