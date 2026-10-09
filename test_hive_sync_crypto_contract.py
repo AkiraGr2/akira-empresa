@@ -71,6 +71,10 @@ class HiveSyncCanonicalizationContractTests(unittest.TestCase):
         with self.assertRaises(HiveSyncEnvelopeError):
             canonical_json_bytes({"number": float("nan")})
 
+    def test_canonical_payload_size_is_bounded(self):
+        with self.assertRaises(HiveSyncEnvelopeError):
+            canonical_json_bytes({"blob": "x" * (1024 * 1024)})
+
 
 class HiveSyncSignatureContractTests(unittest.TestCase):
     def setUp(self):
@@ -179,6 +183,20 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
         }
         signed = sign_envelope(envelope, self.private_key, self.key_id)
         self.assertTrue(verify_envelope(signed, {self.key_id: self.public_key}))
+
+    def test_revocation_cannot_carry_snapshot_content(self):
+        envelope = {
+            "protocol_version": "hive-sync/1",
+            "event_type": "KNOWLEDGE_REVOCATION",
+            "event_id": "evt-revoke-02",
+            "collective_id": "collective-test-01",
+            "recipient_membership_id": "membership-test-02",
+            "consent_id": "consent-test-03",
+            "content_hash": snapshot_sha256(make_snapshot()),
+            "snapshot": make_snapshot(),
+        }
+        with self.assertRaises(HiveSyncEnvelopeError):
+            sign_envelope(envelope, self.private_key, self.key_id)
 
     def test_loaded_key_file_signs_and_verifies(self):
         key_bytes = self.private_key.private_bytes(
