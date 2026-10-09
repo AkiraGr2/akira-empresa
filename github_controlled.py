@@ -546,7 +546,12 @@ def controlled_apply(
             )
         else:
             current = fetch_text_file(repo, path, branch)
-            new_content = apply_unified_patch(current["content"], change["patch"], path, "modify")
+            # The sandbox canonicalizes model patches against the exact source before
+            # hashing, so the external writer must apply that same canonical patch.
+            # Applying the original patch here can fail on stale hunk coordinates or
+            # whitespace even when the sandbox validated the change successfully.
+            canonical_patch = canonicalize_modify_patch(path, current["content"], change["patch"])
+            new_content = apply_unified_patch(current["content"], canonical_patch, path, "modify")
             digest = hashlib.sha256(new_content.encode("utf-8")).hexdigest()
             if digest != expected_hashes.get(path):
                 raise ControlledGitHubError(f"sandbox_hash_mismatch:{path}")
