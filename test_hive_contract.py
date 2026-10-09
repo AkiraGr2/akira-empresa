@@ -11,7 +11,7 @@ class HiveKnowledgeSharingContractTests(unittest.TestCase):
         self.repo = FakeRepo()
         self.service = PersistenceService(self.repo)
 
-    def create_knowledge(self, owner_scope="scope:A", source_reference="test://f15-source"):
+    def create_knowledge(self, owner_scope="scope:A", source_reference="test://f15-source", privacy_level="PRIVATE"):
         payload = {
             "concept": "F15 share gate",
             "content": "Solo el propietario puede autorizar este conocimiento para compartirlo.",
@@ -21,14 +21,14 @@ class HiveKnowledgeSharingContractTests(unittest.TestCase):
             "confidence": 0.9,
             "tags": ["f15", "hive"],
             "related_nodes": [],
-            "privacy_level": "PRIVATE",
+            "privacy_level": privacy_level,
         }
         return self.service.save_knowledge(
             payload, actor="owner@example.test", owner_scope=owner_scope
         )["record"]
 
-    def verify_knowledge(self, owner_scope="scope:A", source_reference="test://f15-source"):
-        record = self.create_knowledge(owner_scope, source_reference)
+    def verify_knowledge(self, owner_scope="scope:A", source_reference="test://f15-source", privacy_level="PRIVATE"):
+        record = self.create_knowledge(owner_scope, source_reference, privacy_level=privacy_level)
         return self.service.verify_knowledge(
             record["id"],
             [{
@@ -59,6 +59,14 @@ class HiveKnowledgeSharingContractTests(unittest.TestCase):
         stored = self.repo.get("knowledge_records", verified["id"])
         self.assertEqual(stored["privacy_level"], "PRIVATE")
         self.assertEqual(stored["version"], verified["version"])
+
+    def test_sensitive_knowledge_requires_redaction_before_sharing(self):
+        sensitive = self.verify_knowledge(privacy_level="SENSITIVE")
+        with self.assertRaisesRegex(ValidationError, "sensitive_knowledge_requires_redaction"):
+            self.share(sensitive)
+        stored = self.repo.get("knowledge_records", sensitive["id"])
+        self.assertEqual(stored["privacy_level"], "SENSITIVE")
+        self.assertEqual(stored["version"], sensitive["version"])
 
     def test_share_requires_verified_knowledge_and_provenance(self):
         unverified = self.create_knowledge()
