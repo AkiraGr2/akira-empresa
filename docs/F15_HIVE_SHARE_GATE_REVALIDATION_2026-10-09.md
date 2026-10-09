@@ -70,22 +70,25 @@ No se añade tabla ni migración: el primer contrato usa `knowledge_records` y `
 ## 7. Estado actual de verificación (2026-10-09, COT)
 
 **Backend — PR #137**
-- Head verificado: `b09ee57b5c24764a1bb2e73b6c237d37fb7befad`.
-- Backend Syntax Verification: PASS — [run 37955077627](https://github.com/AkiraGr2/akira-empresa/actions/runs/37955077627).
-- PostgreSQL end-to-end: PASS — [run 37955077616](https://github.com/AkiraGr2/akira-empresa/actions/runs/37955077616).
-- La suite PostgreSQL ejecutó la prueba autenticada HTTP de Hive y la prueba de persistencia/auditoría desde una segunda conexión, ambas con resultado `ok`.
+- Head verificado: `964a29fa419fe872b2f6811dfd4b3abba6e3ab9c`.
+- Backend Syntax Verification: PASS — [run 37955606445](https://github.com/AkiraGr2/akira-empresa/actions/runs/37955606445).
+- PostgreSQL end-to-end: PASS — [run 37955606263](https://github.com/AkiraGr2/akira-empresa/actions/runs/37955606263).
+- La suite PostgreSQL ejercitó las rutas HTTP autenticadas de Hive, el aislamiento de propietario, publicación/revocación, rechazo de `SENSITIVE` sin redacción, bloqueo de `COLLECTIVE`, rechazo de bypass genérico, error controlado 503 ante fallo del registro de capacidad, y lectura de auditoría desde otra conexión.
 
 **Frontend — PR #89**
-- Head verificado: `45c1c206738dbbe4b9aac37a012d239f5ef27366`.
-- Syntax Verification: PASS — [run 37954979161](https://github.com/AkiraGr2/akira-v3-frontend/actions/runs/37954979161).
-- Browser E2E: PASS — [run 37954979194](https://github.com/AkiraGr2/akira-v3-frontend/actions/runs/37954979194).
-- Pixel Office E2E, incluyendo transición SHAREABLE, revocación, conflicto de versión, estados de capacidad y bloqueo visual de `SENSITIVE`: PASS — [run 37954979156](https://github.com/AkiraGr2/akira-v3-frontend/actions/runs/37954979156).
+- Head verificado: `bb40bbceb331101a3baa2a73b4c641a32d054acb`.
+- Syntax Verification: PASS — [run 37955668469](https://github.com/AkiraGr2/akira-v3-frontend/actions/runs/37955668469).
+- Browser E2E: PASS — [run 37955668642](https://github.com/AkiraGr2/akira-v3-frontend/actions/runs/37955668642).
+- Pixel Office E2E: PASS — [run 37955668562](https://github.com/AkiraGr2/akira-v3-frontend/actions/runs/37955668562).
+- Pixel Office cubre la escena existente, sesión de propietario, transición SHAREABLE y revocación con versión, conflicto concurrente sin éxito falso, estados de capacidad bloqueados/fallidos, exclusión de controles para `SENSITIVE` y limpieza de sesión al recibir 401.
 
-**Límites y release**
+**Producción y release**
+- Se consultaron `main` de ambos repositorios: backend permanece en `7060e02ac01868425adb5f4e0c4748c88f05387b`; frontend permanece en `0ff0cd8eea5406bfc0c3e5e9c71eb301589aca8c`.
+- Render continúa en el despliegue F14 `dep-db4fbioae00c73a22uk0`, sin cambios F15. La consulta de Supabase de producción no encuentra todavía una fila de capacidad Hive, como se espera antes de merge/deploy.
 - Los dos PR siguen abiertos como Draft; no se fusionaron.
 - No se desplegaron estos cambios a Render ni GitHub Pages.
-- No se modificaron filas de producción en Supabase durante las pruebas; las pruebas E2E usan PostgreSQL desechable y fixtures sintéticos.
-- El backend declara la capacidad como `partial / unverified / degraded`; no se debe elevar a verified ni a Hive completa a partir de CI únicamente.
+- Las pruebas E2E usan un PostgreSQL de CI desechable y fixtures sintéticos; no se modificaron filas de producción.
+- El backend declara la capacidad como `partial / unverified / degraded`; CI no la convierte automáticamente en `verified`.
 - Sincronización colectiva, resolución distribuida de conflictos y Local Agent siguen fuera de esta unidad y no están disponibles/verificados.
 - Se registraron fallos de CI en commits intermedios; se corrigieron y los heads actuales enumerados arriba tienen los workflows verdes. Las ejecuciones fallidas no se borran ni se cuentan como PASS.
 
