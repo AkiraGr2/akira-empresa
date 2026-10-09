@@ -208,3 +208,35 @@ Todas las pruebas deben ejecutarse en PostgreSQL desechable o fixtures aisladas.
 - Local Agent fuera del alcance de sync v1, separado en contrato y ciclo de release.
 
 **Estado final:** solo se propone un contrato revisable. Este documento no prueba ni implementa sincronización colectiva, no crea datos, no publica endpoints, no registra peers y no cambia producción. Cualquier desacuerdo de contrato debe resolverse antes de migraciones y ejecución.
+
+## 14. Hallazgos operativos y gate de clave — 2026-10-09
+
+Esta sección registra hechos observados y límites, sin afirmar que exista ya una clave de sincronización configurada.
+
+### Hechos comprobados
+
+- El servicio Render identificado como backend AKIRA ejecuta Python, construye con `pip install -r requirements.txt`, está en plan `free`, tiene `autoDeploy=yes` y sigue la rama `main`. Por tanto, una fusión posterior a `main` dispararía despliegue automático. No desplegar una implementación colectiva mientras no pase los gates de contrato, claves y CI.
+- El `requirements.txt` actual no declara directamente `cryptography` ni `rfc8785`; ninguna de ellas se añadió en este PR. La dependencia transitiva de otra librería no sustituye declarar la dependencia criptográfica que el código usa directamente.
+- PyCA `cryptography` ofrece Ed25519 para firmar y verificar; la release PyPI consultada `50.0.2` declara Python `>=3.9`. PyPI muestra `rfc8785` `0.1.4`, paquete Python sin dependencias para JCS, pero aparece con estado Beta. No se han añadido las dependencias ni se han ejecutado pruebas de interoperabilidad.
+- Render documenta que se pueden almacenar *Secret Files* desde el panel y leerlos en runtime; para servicios no-Docker, están disponibles en el directorio del servicio y en `/etc/secrets/<filename>`. Render también documenta el uso de variables de entorno para configuración/secrets. Fuentes: [Render — Environment Variables and Secrets](https://render.com/docs/configure-environment-variables), [PyCA cryptography 50.0.2](https://pypi.org/project/cryptography/50.0.2/), [rfc8785 0.1.4](https://pypi.org/project/rfc8785/), [Ed25519 API](https://cryptography.io/en/latest/hazmat/primitives/asymmetric/ed25519/), [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785.html).
+- La metadata leída del servicio no permite confirmar que exista un archivo secreto o una variable concreta con la clave de sincronización. El estado de la clave actual, por tanto, es **NO VERIFICADO**. No se inspeccionaron valores secretos ni se cambiaron variables, archivos secretos, servicios, planes o despliegues.
+- La documentación de Render sobre su plan gratuito indica que Free está pensado para probar el servicio y no recomienda usarlo para aplicaciones de producción: [Render — Deploy for Free](https://render.com/docs/free). La configuración actual del backend es Free; esto no prueba un fallo criptográfico, pero sí es una limitación operativa que se debe resolver o aceptar formalmente antes de activar sincronización en producción.
+
+### Aprovisionamiento propuesto, no ejecutado
+
+1. En un contexto controlado por el operador, generar una clave privada Ed25519 fuera del repositorio y mantener la privada fuera de GitHub, logs, variables de salida de CI y Knowledge. Nunca generar una nueva clave automáticamente al arrancar el servicio: eso rompería la continuidad de `service_key_id` entre reinicios.
+2. Preferir un *Secret File* del servicio Render, por ejemplo `/etc/secrets/hive-sync-ed25519.pem`, con acceso operativo restringido. La ruta sería configuración (`HIVE_SYNC_SIGNING_KEY_FILE`); el identificador público se configuraría por separado (`HIVE_SYNC_SIGNING_KEY_ID`). Estos nombres son candidatos y no son todavía configuración activa.
+3. Registrar el material público y el `service_key_id` mediante un proceso auditado y versionado. Verificar la clave pública derivada de la clave privada fuera de línea antes de habilitar firma. No poner nunca la privada en tablas de Postgres.
+4. Definir una rotación con periodo de solapamiento: los verificadores aceptan la clave pública activa y la(s) anterior(es) aprobadas durante la ventana acordada; después de la transición, revocar la anterior sin invalidar silenciosamente recibos históricos. La política de retención debe quedar explícita.
+5. Fallar cerrado si falta la clave, el identificador, la clave no se puede cargar o la pareja de claves no coincide. No crear una clave de desarrollo implícita ni devolver un estado de sincronización disponible.
+6. Antes de un despliegue productivo, resolver el plan Free, provisionar la clave mediante el mecanismo elegido y comprobar el estado sin imprimir su valor. Ninguna acción de aprovisionamiento se ha realizado en este paso.
+
+### Pruebas obligatorias de preparación
+
+- Carga válida de clave desde archivo temporal de test y rechazo de ruta ausente, formato inválido, clave pública no coincidente y permisos/errores de lectura.
+- Generar y verificar envelope con claves efímeras solo de test; alteraciones de hash, destinatario, consentimiento, versión, `key_id` o payload deben fallar.
+- Vectores JCS fijos compartidos que cubran orden de claves, Unicode, números, arrays, claves inválidas, valores no representables y campo `signature` excluido del mensaje firmado.
+- Rotación de `service_key_id`, firma de nueva clave y verificación histórica bajo la política aprobada.
+- Comprobar que logs y respuestas HTTP nunca imprimen PEM/bytes privados y que error de configuración mantiene sync deshabilitada.
+
+**Gate de salida:** contrato revisado/aprobado; dependencias declaradas y fijadas; secreto configurado por el operador en el entorno correcto; clave pública registrada/verificada; pruebas de vector y rotación correctas; plan de despliegue compatible con la política operativa. Hasta cumplirlo, Hive Collective Sync permanece no disponible.
