@@ -47,8 +47,10 @@ ALLOWED_ENVELOPE_FIELDS = frozenset({
     "canonicalization", "revocation_generation", "signature",
 })
 ALLOWED_SNAPSHOT_FIELDS = frozenset({
-    "concept", "content", "domain", "source", "source_id",
-    "source_reference", "confidence", "evidence", "tags", "related_nodes",
+    # Omit internal identifiers (source_id, related_nodes) by default; callers
+    # must transform approved provenance into an explicit safe reference first.
+    "concept", "content", "domain", "source", "source_reference",
+    "confidence", "evidence", "tags",
 })
 FORBIDDEN_NESTED_SNAPSHOT_KEYS = frozenset({
     "owner_scope", "owner_id", "owner_email", "user_id", "created_by",
