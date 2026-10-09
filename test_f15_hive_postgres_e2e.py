@@ -79,7 +79,7 @@ class F15HivePostgresE2ETests(unittest.TestCase):
                 if pool is not None:
                     pool.close()
 
-    def create_knowledge(self, owner_scope, source_reference, key, concept):
+    def create_knowledge(self, owner_scope, source_reference, key, concept, privacy_level="PRIVATE"):
         record = self.service.save_knowledge(
             {
                 "concept": concept,
@@ -90,7 +90,7 @@ class F15HivePostgresE2ETests(unittest.TestCase):
                 "confidence": 0.95,
                 "tags": ["f15", "hive", "postgres-e2e"],
                 "related_nodes": [],
-                "privacy_level": "PRIVATE",
+                "privacy_level": privacy_level,
             },
             actor="f15-postgres-ci",
             owner_scope=owner_scope,
@@ -174,6 +174,30 @@ class F15HivePostgresE2ETests(unittest.TestCase):
                 "F15 authenticated API fixture",
             )
             verified = self.verify(record, "owner")
+
+            # A sensitive record needs a separately redacted and verified copy.
+            sensitive = self.create_knowledge(
+                "owner",
+                "https://example.test/f15-api-sensitive-source",
+                "f15:api:sensitive-record",
+                "F15 sensitive API fixture",
+                privacy_level="SENSITIVE",
+            )
+            sensitive_verified = self.verify(sensitive, "owner")
+            sensitive_share = client.post(
+                f"/api/v8/hive/knowledge/{sensitive_verified['id']}/privacy",
+                headers=headers,
+                json={
+                    "privacy_level": "SHAREABLE",
+                    "expected_version": sensitive_verified["version"],
+                    "confirmed": True,
+                },
+            )
+            self.assertEqual(sensitive_share.status_code, 400, sensitive_share.text)
+            self.assertEqual(sensitive_share.json()["reason"], "sensitive_knowledge_requires_redaction")
+            sensitive_after = self.fresh_repo.get("knowledge_records", sensitive_verified["id"])
+            self.assertEqual(sensitive_after["privacy_level"], "SENSITIVE")
+            self.assertEqual(sensitive_after["version"], sensitive_verified["version"])
 
             # Missing explicit consent cannot mutate privacy or version.
             no_consent = client.post(
