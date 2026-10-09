@@ -345,6 +345,34 @@ def _canonicalize_generated_patch(
     path = str(change.get("path") or "").strip()
     patch = str(change.get("patch") or "")
 
+    # For new files, accept explicit complete content and derive the diff locally.
+    # The model must not synthesize diff headers or hunk coordinates for creates.
+    if operation == "create" and "content" in change:
+        content = change.get("content")
+        if not isinstance(content, str):
+            raise SpecializedAgentError(f"proposal_create_content_invalid:{path}")
+        content = content.replace("\r\n", "\n").replace("\r", "\n")
+        if not content.strip():
+            raise SpecializedAgentError(f"proposal_create_content_empty:{path}")
+        if "\x00" in content:
+            raise SpecializedAgentError(f"proposal_create_content_invalid:{path}")
+        if len(content.encode("utf-8")) > MAX_PROPOSAL_CHARS:
+            raise SpecializedAgentError(f"proposal_create_content_too_large:{path}")
+        if not content.endswith("\n"):
+            content += "\n"
+        body_lines = content.splitlines(keepends=True)
+        if not body_lines or any(not line.endswith("\n") for line in body_lines):
+            raise SpecializedAgentError(f"proposal_create_content_invalid:{path}")
+        additions = "".join("+" + line for line in body_lines)
+        canonical = (
+            f"--- /dev/null\n+++ b/{path}\n"
+            f"@@ -0,0 +1,{len(body_lines)} @@\n"
+            f"{additions}"
+        )
+        cleaned = {k: v for k, v in change.items() if k != "content"}
+        cleaned["patch"] = canonical
+        return cleaned
+
     # For existing files, prefer a structured exact edit. This removes line-number
     # synthesis from the LLM trust boundary while preserving the bounded proposal.
     structured = change.get("edit")
@@ -394,6 +422,8 @@ def _canonicalize_generated_patch(
     if not old_headers and not new_headers:
         if patch.strip():
             return change
+        if operation == "create":
+            raise SpecializedAgentError(f"proposal_create_content_missing:{path}")
         raise SpecializedAgentError(f"proposal_patch_headers_invalid:{path}")
     if len(old_headers) != 1 or len(new_headers) != 1:
         raise SpecializedAgentError(f"proposal_patch_headers_invalid:{path}")
@@ -571,8 +601,9 @@ REGLAS:
       "reason":"...",
       "edit": {{
         "find":"texto exacto existente a reemplazar",
-        "replace":"texto exacto nuevo"
-      }}
+        "replace":"texto exacto nuevo (solo modify)"
+      }},
+      "content":"texto completo del archivo nuevo (solo create)"
     }}
   ],
   "tests": ["..."],
@@ -581,7 +612,8 @@ REGLAS:
   "write_performed": false
 }}
 7. Para "modify", usa SIEMPRE "edit.find" y "edit.replace" con texto literal que exista en la evidencia del repositorio. No inventes numeros de linea ni headers "@@".
-8. Para "create", usa "patch" como diff unificado. El servidor generara/validara cualquier numeracion de hunk; no escribas GitHub.
+8. Para "create", devuelve "content" con el texto completo y exacto del archivo, no un diff. El servidor genera los headers y el hunk determinísticamente; no escribas GitHub.
+9. Nunca devuelvas "content" vacío en una operación "create". Si no puedes proponer contenido completo, devuelve status="blocked" con el motivo.
 
 SOLICITUD DEL USUARIO:
 <request>{request}</request>
