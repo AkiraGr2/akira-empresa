@@ -72,8 +72,8 @@ La secuencia de producto continúa siendo: conocimiento privado → autorizació
 Cada entrega destinada a un miembro es un envelope de servicio con mínimo:
 
 - `protocol_version` literal `hive-sync/1` y `event_type`;
-- `publication_id` para agrupar los envíos de una publicación y `event_id` UUID único para esa entrega a un destinatario;
-- `collective_id`, referencia opaca estable del owner emisor, `recipient_membership_id`, generación de membresía autorizada y `sender_sequence` monotónica por colectiva/owner;
+- `publication_id` para agrupar los envíos de una publicación y `event_id` UUID canónico (minúsculas, formato estándar) único para esa entrega a un destinatario;
+- `collective_id` UUID canónico, referencia opaca estable del owner emisor, `recipient_membership_id` como UUID canónico de la membresía autorizada, generación de membresía y `sender_sequence` monotónica por colectiva/owner;
 - `knowledge_lineage_id`, `revision_id`, revisión(es) padre y `content_hash`;
 - snapshot mínimo sanitizado, clasificación de privacidad y estado de verificación de ese snapshot;
 - procedencia/evidencia asociada al mismo hash, en la proyección permitida;
@@ -92,7 +92,7 @@ La lista definitiva de campos de evidencia/procedencia debe cotejarse contra el 
 - Repetir el mismo ID con el mismo hash devuelve el resultado/recibo idempotente anterior sin nuevas revisiones o efectos. Reutilizar el ID con hash diferente es error de integridad, se pone en cuarentena y se audita.
 - `sender_sequence` detecta huecos y reordenamiento; no es reloj factual ni criterio last-write-wins. Un evento fuera de orden puede persistirse en inbox, pero no sobrescribe un estado más reciente ni salta validaciones.
 - Antes de entregar y de aceptar, el servidor revalida membresía, consentimiento, hash y generación. Si un receptor fue revocado antes de entregar, su fila pendiente no se envía. Una membresía nueva no entra en la audiencia histórica por defecto.
-- Los eventos normales requieren membresía vigente. Los de revocación llevan generación de consentimiento monotónica y no pueden ser revertidos por snapshot antiguo.
+- Los eventos normales requieren membresía vigente. Los de revocación llevan `revocation_generation` como entero positivo monotónico y no pueden ser revertidos por un snapshot antiguo. Booleanos, valores no enteros, cero, valores negativos o generación ausente se rechazan.
 - Los estados `PENDING`, `DELIVERED`, `ACKNOWLEDGED`, `FAILED` describen hechos persistidos: `DELIVERED` = el inbox del destinatario fue persistido; `ACKNOWLEDGED` = el destinatario registró la recepción/validación según el contrato; ninguno significa que el owner aceptó el conocimiento. La aceptación del contenido es un estado separado.
 - Si el proceso cae tras guardar outbox y antes de materializar inbox, la recuperación puede reintentar con el mismo ID. Debe confirmarse el estado mediante lectura desde conexión nueva antes de mostrar éxito final en Office.
 
@@ -175,7 +175,7 @@ El siguiente PR de código no debe abrirse hasta revisar este contrato, resolver
 2. **Identidad e integridad:** firma del servicio válida/inválida, clave desconocida/rotada/revocada, membresía suspendida/revocada, envelope con destinatario distinto y principal incorrecto.
 3. **Consentimiento:** ausencia, colectivo incorrecto, versión/hash obsoletos, cambio material tras consentir, contenido `PRIVATE`/`SENSITIVE`, evidencia/procedencia incompletas y nueva confirmación después de editar.
 4. **Idempotencia:** evento duplicado idéntico no produce mutaciones duplicadas; ID repetido con hash diferente va a cuarentena.
-5. **Concurrencia y orden:** mensajes duplicados/reordenados, huecos de secuencia, dos revisiones concurrentes y revocación más antigua que un snapshot reenviado.
+5. **Concurrencia y orden:** IDs UUID no canónicos, generación de revocación ausente/no positiva, mensajes duplicados/reordenados, huecos de secuencia, dos revisiones concurrentes y revocación más antigua que un snapshot reenviado.
 6. **Atomicidad/durabilidad:** fallo al escribir outbox/inbox/auditoría revierte toda la operación; caída simulada entre persistir y entregar puede recuperarse; lectura desde conexión nueva confirma estado y recibo.
 7. **Conflictos:** ambas revisiones sobreviven, no existe last-write-wins y resolver genera una revisión nueva auditable.
 8. **Revocación:** cancela pendientes, bloquea nuevas entregas, genera tombstone, impide reactivación por un evento antiguo y refleja el límite de las copias externas.
