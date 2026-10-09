@@ -2013,9 +2013,14 @@ class PersistenceService:
         factual_change = bool(factual_fields.intersection(clean))
 
         # A record can never become visible in the shareable export again just
-        # because someone later re-verifies it. Any material edit revokes its
-        # previous sharing consent atomically with the edit.
-        if current.get("privacy_level") == "SHAREABLE" and factual_change:
+        # because someone later re-verifies it. Material edits and status changes
+        # revoke the old consent in the same versioned update.
+        status_change = "status" in clean and clean["status"] != current.get("status")
+        share_consent_revoked = (
+            current.get("privacy_level") == "SHAREABLE"
+            and (factual_change or status_change)
+        )
+        if share_consent_revoked:
             clean["privacy_level"] = "PRIVATE"
 
         if current_status == "verified" and factual_change:
@@ -2064,7 +2069,13 @@ class PersistenceService:
                     "resource": "knowledge_records",
                     "resource_id": knowledge_id,
                     "status": "success",
-                    "detail": {"fields": sorted(clean), "new_version": updated["version"]},
+                    "detail": {
+                        "fields": sorted(clean),
+                        "new_version": updated["version"],
+                        "previous_privacy_level": current.get("privacy_level"),
+                        "new_privacy_level": updated.get("privacy_level"),
+                        "share_consent_revoked_due_to_material_change": share_consent_revoked,
+                    },
                 })
             except PersistenceError:
                 raise
