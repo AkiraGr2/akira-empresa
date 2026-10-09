@@ -943,6 +943,30 @@ class ControlledAutonomyContractTests(unittest.TestCase):
         self.assertIn('canonical_patch = canonicalize_modify_patch(path, current["content"], change["patch"])', source)
         self.assertIn('apply_unified_patch(current["content"], canonical_patch, path, "modify")', source)
 
+    def test_external_modify_recanonicalizes_patch_after_terminal_newline_is_trimmed(self):
+        path = "README.md"
+        source = "uno\\ndos\\ntres\\n"
+        patch = github_controlled.deterministic_modify_patch(
+            path, source, "dos\\n", "DOS\\n"
+        )
+        change = validate_change({
+            "path": path,
+            "operation": "modify",
+            "reason": "regression",
+            "patch": patch,
+        })
+
+        # validate_change currently trims text, removing the patch's final newline.
+        self.assertFalse(change["patch"].endswith("\\n"))
+        with self.assertRaisesRegex(ControlledGitHubError, "patch_context_mismatch"):
+            apply_unified_patch(source, change["patch"], path, "modify")
+
+        canonical_patch = github_controlled.canonicalize_modify_patch(
+            path, source, change["patch"]
+        )
+        result = apply_unified_patch(source, canonical_patch, path, "modify")
+        self.assertEqual("uno\\nDOS\\ntres\\n", result)
+
 
 
     def test_f14_production_verification_contract_materializes_document_and_test(self):
