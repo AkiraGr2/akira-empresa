@@ -174,6 +174,8 @@ class HiveKnowledgeSharingContractTests(unittest.TestCase):
                         "reference": "test://f15-same-operation-evidence",
                         "note": "Even supplied evidence cannot combine a material edit with re-verification.",
                     }],
+                    "last_verified_at": shared["last_verified_at"],
+                    "verified_by": "owner@example.test",
                 },
                 expected_version=shared["version"],
                 actor="owner@example.test",
@@ -214,6 +216,27 @@ class HiveKnowledgeSharingContractTests(unittest.TestCase):
         reshared = self.share(reverified)
         self.assertEqual(reshared["privacy_level"], "SHAREABLE")
         self.assertEqual(self.service.list_hive_knowledge(owner_scope="scope:A")[0]["id"], reshared["id"])
+
+        archived = self.service.archive_knowledge(
+            reshared["id"],
+            expected_version=reshared["version"],
+            actor="owner@example.test",
+            owner_scope="scope:A",
+        )
+        self.assertEqual(archived["status"], "archived")
+        self.assertEqual(archived["privacy_level"], "PRIVATE")
+        self.assertEqual(self.service.list_hive_knowledge(owner_scope="scope:A"), [])
+
+        reactivated = self.service.update_knowledge(
+            archived["id"],
+            {"status": "active"},
+            expected_version=archived["version"],
+            actor="owner@example.test",
+            owner_scope="scope:A",
+        )
+        self.assertEqual(reactivated["status"], "active")
+        self.assertEqual(reactivated["privacy_level"], "PRIVATE")
+        self.assertEqual(self.service.list_hive_knowledge(owner_scope="scope:A"), [])
 
     def test_generic_knowledge_update_cannot_bypass_the_hive_gate(self):
         record = self.create_knowledge()
