@@ -37,6 +37,25 @@ SIGNATURE_CONTEXT = b"AKIRA-HIVE-SYNC-V1\n"
 MAX_PRIVATE_KEY_FILE_BYTES = 16 * 1024
 MAX_CANONICAL_JSON_BYTES = 1024 * 1024
 ALLOWED_EVENT_TYPES = frozenset({"KNOWLEDGE_SNAPSHOT", "KNOWLEDGE_REVOCATION"})
+ALLOWED_ENVELOPE_FIELDS = frozenset({
+    "protocol_version", "event_type", "event_id", "publication_id",
+    "collective_id", "sender_owner_ref", "recipient_membership_id",
+    "membership_generation", "sender_sequence", "knowledge_lineage_id",
+    "revision_id", "parent_revision_ids", "content_hash", "snapshot",
+    "privacy_level", "verification_status", "provenance", "evidence",
+    "consent_id", "audience_hash", "issued_at", "service_key_id",
+    "canonicalization", "revocation_generation", "signature",
+})
+ALLOWED_SNAPSHOT_FIELDS = frozenset({
+    "concept", "content", "domain", "source", "source_id",
+    "source_reference", "confidence", "evidence", "tags", "related_nodes",
+})
+FORBIDDEN_NESTED_SNAPSHOT_KEYS = frozenset({
+    "owner_scope", "owner_id", "owner_email", "user_id", "created_by",
+    "idempotency_key", "last_verified_at", "verified_by", "access_token",
+    "refresh_token", "authorization", "headers", "session", "private_key",
+    "api_key", "password", "secret",
+})
 _KEY_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 _SIGNATURE_RE = re.compile(r"^[A-Za-z0-9_-]{86}$")
@@ -94,10 +113,24 @@ def snapshot_sha256(snapshot: Mapping[str, Any]) -> str:
     return hashlib.sha256(canonical_json_bytes(snapshot)).hexdigest()
 
 
+def _reject_sensitive_snapshot_keys(value: Any) -> None:
+    """Reject private/runtime metadata keys anywhere inside a snapshot projection."""
+    if isinstance(value, Mapping):
+        for key, nested in value.items():
+            if isinstance(key, str) and key.strip().lower() in FORBIDDEN_NESTED_SNAPSHOT_KEYS:
+                raise HiveSyncEnvelopeError("snapshot_contains_forbidden_metadata")
+            _reject_sensitive_snapshot_keys(nested)
+    elif isinstance(value, (list, tuple)):
+        for nested in value:
+            _reject_sensitive_snapshot_keys(nested)
+
+
 def _validate_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(envelope, Mapping):
         raise HiveSyncEnvelopeError("envelope_requires_object")
     result = dict(envelope)
+    if set(result) - ALLOWED_ENVELOPE_FIELDS:
+        raise HiveSyncEnvelopeError("envelope_contains_unknown_fields")
     required = (
         "protocol_version",
         "event_type",
@@ -138,6 +171,11 @@ def _validate_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
             raise HiveSyncEnvelopeError("snapshot_must_be_shareable")
         if result.get("verification_status") != "verified":
             raise HiveSyncEnvelopeError("snapshot_must_be_verified")
+        if set(snapshot) - ALLOWED_SNAPSHOT_FIELDS:
+            raise HiveSyncEnvelopeError("snapshot_contains_unknown_fields")
+        _reject_sensitive_snapshot_keys(snapshot)
+        if "revocation_generation" in result:
+            raise HiveSyncEnvelopeError("snapshot_must_not_contain_revocation_generation")
         actual_hash = snapshot_sha256(snapshot)
         if actual_hash != result["content_hash"]:
             raise HiveSyncEnvelopeError("snapshot_hash_mismatch")
@@ -146,6 +184,8 @@ def _validate_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
         # become a channel for re-sending any knowledge payload.
         if "snapshot" in result:
             raise HiveSyncEnvelopeError("revocation_must_not_contain_snapshot")
+        if any(field in result for field in ("privacy_level", "verification_status", "evidence", "provenance")):
+            raise HiveSyncEnvelopeError("revocation_must_not_contain_knowledge_payload")
         generation = result.get("revocation_generation")
         if isinstance(generation, bool) or not isinstance(generation, int) or generation < 1:
             raise HiveSyncEnvelopeError("revocation_generation_invalid")
