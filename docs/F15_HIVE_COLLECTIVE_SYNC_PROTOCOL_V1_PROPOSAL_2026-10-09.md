@@ -101,7 +101,7 @@ La lista definitiva de campos de evidencia/procedencia debe cotejarse contra el 
 El inbox conserva por separado evento recibido, validación y decisión del receptor:
 
 1. **RECEIVED:** bytes/envelope guardados de manera durable.
-2. **VALIDATED:** versión, firma, peer, membresía, consentimiento, hash, clasificación y límites del payload comprobados.
+2. **VALIDATED:** versión, firma del servicio, owner emisor, membresías destinataria y emisora, consentimiento, hash, clasificación y límites del payload comprobados.
 3. **PENDING_REVIEW:** snapshot validado espera una decisión local; no es conocimiento activo de la colectiva.
 4. **ACCEPTED:** el receptor acepta de forma explícita y queda una relación colectiva durable ligada al hash/revisión recibida.
 5. **REJECTED / QUARANTINED:** contenido no deseado o inválido; se conserva el mínimo registro de auditoría necesario sin activar el dato.
@@ -127,8 +127,8 @@ Revocar significa cancelar el consentimiento para nuevas entregas y hacer que la
 - Outbox no entregada se cancela en la misma transacción; una entrega en vuelo puede dejar de ser recuperable, por eso el protocolo necesita evento de revocación posterior y receipt.
 - El receptor que valida un tombstone marca la relación retirada, bloquea su redistribución y la excluye de la vista activa de colectiva. Mantiene el mínimo historial/auditoría para explicar el cambio. El tratamiento de copias locales ya curadas o exportadas requiere una política del producto separada; no se afirma borrado remoto.
 - Un snapshot con generación de consentimiento anterior no puede reactivar la relación. Reintentos y mensajes fuera de orden no eliminan el tombstone.
-- La revocación no puede reactivar un peer ni restablecer una membresía suspendida/revocada.
-- Office debe distinguir «revocación pendiente de confirmación remota», «confirmada por el peer» y «no se puede verificar el estado remoto». Nunca mostrar «borrado en todas partes».
+- La revocación no puede reactivar una membresía suspendida/revocada ni volver a autorizar un consentimiento revocado.
+- Office debe distinguir revocación solicitada, tombstone persistido y estado de la proyección/inbox del destinatario. Un registro persistido en el backend no prueba que se hayan eliminado copias locales descargadas o exportadas. Nunca mostrar «borrado en todas partes».
 
 ## 9. Esquema conceptual y límites transaccionales
 
@@ -171,8 +171,8 @@ Cada escritura requiere auth de owner, autorización por colectiva, estado vigen
 
 El siguiente PR de código no debe abrirse hasta revisar este contrato, resolver el key management del servicio y leer de nuevo los routers, modelos, esquema de Knowledge y mecanismo de auth. Debe incluir como mínimo:
 
-1. **Aislamiento de propietarios:** tests de dos owners y dos peers; no leer ni mutar filas ajenas y respuestas opacas para recursos ajenos.
-2. **Identidad:** firma válida/inválida, clave revocada, peer suspendido, membresía revocada y principal incorrecto.
+1. **Aislamiento de propietarios:** tests de dos owners y varias membresías destinatarias; no leer ni mutar filas ajenas y respuestas opacas para recursos ajenos.
+2. **Identidad e integridad:** firma del servicio válida/inválida, clave desconocida/rotada/revocada, membresía suspendida/revocada, envelope con destinatario distinto y principal incorrecto.
 3. **Consentimiento:** ausencia, colectivo incorrecto, versión/hash obsoletos, cambio material tras consentir, contenido `PRIVATE`/`SENSITIVE`, evidencia/procedencia incompletas y nueva confirmación después de editar.
 4. **Idempotencia:** evento duplicado idéntico no produce mutaciones duplicadas; ID repetido con hash diferente va a cuarentena.
 5. **Concurrencia y orden:** mensajes duplicados/reordenados, huecos de secuencia, dos revisiones concurrentes y revocación más antigua que un snapshot reenviado.
@@ -190,21 +190,20 @@ Todas las pruebas deben ejecutarse en PostgreSQL desechable o fixtures aisladas.
 2. Resolver key management para Render, selección/versionado de dependencias Ed25519/JCS y vectores de interoperabilidad. Sin eso no se habilita sincronización firmada.
 3. Tras aprobación del contrato, volver a inspeccionar migraciones, auth, schema de Knowledge y convenciones de API.
 4. Abrir un PR de implementación backend separado: modelos/migraciones aditivas, servicios y contratos transaccionales; después endpoints, outbox/inbox y tests.
-4. Probar en PostgreSQL desechable con pares sintéticos y lecturas desde conexiones nuevas.
-5. Implementar y probar conflictos y revocaciones antes de conectar controles de Office.
-6. Diseñar Local Agent en un artefacto/PR separado, con emparejamiento, scopes, sandbox, límites de red/FS, approvals y health challenge; no reutilizar el token web como llave maestra.
-7. Ejecutar CI, revisión de seguridad y aprobación humana. El backend se despliega primero solo después de aprobar; luego se verifica runtime/persistencia antes de publicar frontend.
-8. Ejecutar auditoría integral entre sistemas al completar F15. No declarar F15 completa por el merge de una sola unidad.
+5. Probar en PostgreSQL desechable con owners/membresías sintéticos y lecturas desde conexiones nuevas.
+6. Implementar y probar conflictos y revocaciones antes de conectar controles de Office.
+7. Diseñar Local Agent en un artefacto/PR separado, con emparejamiento, scopes, sandbox, límites de red/FS, approvals y health challenge; no reutilizar el token web como llave maestra.
+8. Ejecutar CI, revisión de seguridad y aprobación humana. El backend se despliega primero solo después de aprobar; luego se verifica runtime/persistencia antes de publicar frontend.
+9. Ejecutar auditoría integral entre sistemas al completar F15. No declarar F15 completa por el merge de una sola unidad.
 
 ## 13. Decisiones propuestas que requieren revisión explícita
 
 - Transporte mediado por backend en v1, con envelopes Ed25519 firmados por el servicio, JSON canónico JCS y hash SHA-256; ninguna ruta pública acepta envelopes arbitrarios.
 - Invitación con aceptación explícita; membresía revocable y denegación por defecto.
 - V1 sin merge automático de conocimiento factual.
-- Consentimiento vinculado a una única revisión/hash y a una única colectiva destino.
+- Consentimiento vinculado a una única revisión/hash, una colectiva destino y el conjunto concreto de membresías destinatarias autorizado; miembros nuevos no heredan publicaciones históricas.
 - Inbox requiere aceptación del owner receptor; recepción no activa conocimiento por sí sola.
 - Estado `COLLECTIVE` como relación de distribución/aceptación separada del valor `privacy_level`: el esquema legado ya permite ese literal, pero Share Gate actualmente lo rechaza y el valor aislado no representa membresía/consentimiento. No cambiar su uso sin una auditoría global de lectores/escritores.
-- Consentimiento ligado al hash exacto y al conjunto concreto de membresías destinatarias; las membresías nuevas no heredan publicaciones previas.
 - Revocación como tombstone durable y bloqueo de distribución futura, sin prometer eliminación garantizada de copias externas.
 - Local Agent fuera del alcance de sync v1, separado en contrato y ciclo de release.
 
