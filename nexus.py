@@ -2494,7 +2494,18 @@ def v8_hive_status(request: Request):
     service = _persistence_service()
     if service is None:
         return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
-    rows = service.list_capabilities(filters={"name": "hive_knowledge_sharing_v1"}, limit=1)
+    try:
+        rows = service.list_capabilities(filters={"name": "hive_knowledge_sharing_v1"}, limit=1)
+    except PersistenceError as e:
+        return JSONResponse(
+            {"ok": False, "reason": "storage", "error_type": type(e).__name__},
+            status_code=503,
+        )
+    except Exception as e:
+        return JSONResponse(
+            {"ok": False, "reason": "internal", "error_type": type(e).__name__},
+            status_code=500,
+        )
     capability = rows[0] if rows else None
     return {
         "ok": True,
