@@ -1,12 +1,13 @@
 """Fail-closed cryptographic primitives for the proposed Hive Sync v1 protocol.
 
-This module does not authorize publication. It does not validate human consent,
-collective membership, recipient audience, evidence/provenance completeness, or the
-export allow-list; callers must validate those first and pass an already-sanitized
-snapshot. A valid signature proves integrity and service-key possession only, not
-that the publication was authorized. No private key is generated at import or startup;
-production signing is unavailable unless an operator provides a valid Ed25519 PEM key
-file and key ID through explicit configuration.
+This module does not authorize publication or create a sanitized export projection.
+Callers must validate human consent, collective membership, exact recipient audience,
+evidence/provenance completeness, and the approved export transformation before signing.
+The module rejects unknown envelope/snapshot fields as defense in depth; that structural
+allowlist is not a substitute for the caller's authorization or sanitization pipeline.
+A valid signature proves integrity and service-key possession only, not that publication
+was authorized. No private key is generated at import or startup; production signing is
+unavailable unless an operator explicitly configures a valid Ed25519 PEM file and key ID.
 """
 from __future__ import annotations
 
