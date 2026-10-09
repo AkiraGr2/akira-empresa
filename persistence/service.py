@@ -2006,21 +2006,29 @@ class PersistenceService:
                 clean["related_nodes"], owner_scope=owner_scope or current.get("owner_scope")
             )
         current_status = current.get("verification_status") or "unknown"
-        factual_fields = {"concept", "content", "domain", "source", "source_id", "source_reference", "confidence", "related_nodes"}
-        if current_status == "verified" and factual_fields.intersection(clean):
-            # Cambiar el contenido de un knowledge verificado invalida su evidencia anterior.
-            # Debe volver a quedar parcialmente verificado hasta aportar nueva evidencia.
-            if clean.get("verification_status") not in (None, "partially_verified", "verified"):
+        factual_fields = {
+            "concept", "content", "domain", "source", "source_id",
+            "source_reference", "confidence", "related_nodes",
+        }
+        evidence_fields = factual_fields | {"evidence"}
+        factual_change = bool(evidence_fields.intersection(clean))
+
+        # A record can never become visible in the shareable export again just
+        # because someone later re-verifies it. Any material edit revokes its
+        # previous sharing consent atomically with the edit.
+        if current.get("privacy_level") == "SHAREABLE" and factual_change:
+            clean["privacy_level"] = "PRIVATE"
+
+        if current_status == "verified" and factual_change:
+            # Changing facts invalidates the old evidence. Reverification must be
+            # a separate explicit operation with fresh evidence after the edit.
+            if clean.get("verification_status") == "verified":
+                raise ValidationError("knowledge factual change requires reverification separately")
+            if clean.get("verification_status") not in (None, "partially_verified"):
                 raise ValidationError("knowledge verified no admite degradacion implicita incompatible")
-            if clean.get("verification_status") is None:
-                clean["verification_status"] = "partially_verified"
-            if clean["verification_status"] == "verified":
-                evidence = clean.get("evidence", current.get("evidence") or [])
-                if not evidence:
-                    raise ValidationError("knowledge verified requiere evidencia")
-            else:
-                clean["last_verified_at"] = None
-                clean["verified_by"] = None
+            clean["verification_status"] = "partially_verified"
+            clean["last_verified_at"] = None
+            clean["verified_by"] = None
         if "verification_status" in clean:
             next_status = clean["verification_status"]
             transitions = {
