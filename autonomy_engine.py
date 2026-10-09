@@ -31,6 +31,7 @@ from github_controlled import (
     fetch_text_file,
     sandbox_changes,
 )
+from persistence.build_identity import runtime_build_ref
 from persistence.core import ValidationError
 
 
@@ -296,7 +297,7 @@ def _record_controlled_autonomy_verification(service, run, action):
             },
             "dependency_snapshot": ["AutonomyService", "github_controlled", "isolated_workspace_tests", "owner_scope", "human_approval"],
             "runtime_version": "controlled_autonomy_v1",
-            "build_ref": run.get("base_commit_sha") or "unknown",
+            "build_ref": runtime_build_ref(),
             "actor": str(run.get("created_by") or "owner"), "executor": "controlled_autonomy", "evaluator": "system",
             "observed_availability_state": "available",
         },
