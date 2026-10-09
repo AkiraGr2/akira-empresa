@@ -64,7 +64,7 @@ FORBIDDEN_NESTED_SNAPSHOT_KEYS = frozenset({
 })
 _KEY_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
-_UTC_TIMESTAMP_RE = re.compile(r"^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?Z$")
+_UTC_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$")
 _SIGNATURE_RE = re.compile(r"^[A-Za-z0-9_-]{86}$")
 
 
