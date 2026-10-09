@@ -48,6 +48,8 @@ class GitHubReadonlyGatewayTests(unittest.TestCase):
         }
 
         def fake_get(url):
+            if url.endswith("/git/ref/heads/main"):
+                return {"object": {"sha": "a" * 40}}
             if url.endswith("/contents?ref=main"):
                 return root
             return file_data
