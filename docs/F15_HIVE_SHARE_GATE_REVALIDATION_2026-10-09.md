@@ -38,7 +38,8 @@ Arquitectura recuperada para Hive: `PRIVATE → SHAREABLE autorizado → COLLECT
 | HSG-01 | Las rutas de estado, vista exportable y transición Hive requieren la guardia central de propietario. | Prueba estática de rutas + CI. |
 | HSG-02 | Las operaciones sobre conocimiento exigen coincidencia exacta de `owner_scope`; el fallback legacy `owner_scope='owner'` no autoriza publicación. | Regresión con dos scopes y registro legacy. |
 | HSG-03 | Una transición de privacidad exige confirmación explícita y `expected_version` válido. | Pruebas negativas para confirmación y versión. |
-| HSG-04 | Solo conocimiento activo, verificado, con evidencia y procedencia (`source_reference` o `source_id`) puede pasar a `SHAREABLE`. | Pruebas de estado, evidencia y procedencia. |
+| HSG-04 | Solo conocimiento activo `PRIVATE`, verificado, con evidencia y procedencia (`source_reference` o `source_id`) puede pasar a `SHAREABLE`. | Pruebas de estado, evidencia y procedencia. |
+| HSG-11 | Un registro `SENSITIVE` no puede pasar directamente a `SHAREABLE`; requiere una copia redactada nueva, verificada y con procedencia propia. | Regresión de servicio + API PostgreSQL + Office UI. |
 | HSG-05 | El cambio de privacidad es versionado y la auditoría se escribe en la misma transacción; relectura confirma el resultado. | Prueba de versión, evento auditado y relectura. |
 | HSG-06 | La vista exportable devuelve únicamente Knowledge `SHAREABLE`, verificado y del scope exacto del solicitante. | Prueba de aislamiento y exclusión de registros privados. |
 | HSG-07 | La ruta genérica de actualización de Knowledge no puede saltarse la compuerta Hive cambiando `privacy_level`. | Prueba de servicio y guardia de API. |
@@ -48,7 +49,7 @@ Arquitectura recuperada para Hive: `PRIVATE → SHAREABLE autorizado → COLLECT
 
 ## 5. Límites explícitos de esta entrega
 
-Esta primera unidad no implementa la sincronización entre propietarios, promoción colectiva, resolución distribuida de conflictos, elección de peers, ni ejecución de comandos o acceso a filesystem local. La respuesta del backend debe seguir declarando estas capacidades como no disponibles. `SHAREABLE` representa elegibilidad para una futura integración autorizada, no publicación externa ejecutada.
+Esta primera unidad no implementa la sincronización entre propietarios, promoción colectiva, resolución distribuida de conflictos, elección de peers, ni ejecución de comandos o acceso a filesystem local. Los registros marcados `SENSITIVE` no se pueden compartir directamente, incluso si tienen evidencia; deben ser saneados en un nuevo registro `PRIVATE` y volver a verificarse. La respuesta del backend debe seguir declarando estas capacidades como no disponibles. `SHAREABLE` representa elegibilidad para una futura integración autorizada, no publicación externa ejecutada.
 
 No se añade tabla ni migración: el primer contrato usa `knowledge_records` y `audit_log` existentes. No se reescriben registros históricos ni se ajustan estados persistidos manualmente.
 
@@ -58,6 +59,7 @@ No se añade tabla ni migración: el primer contrato usa `knowledge_records` y `
 2. **Bypass vía API antigua:** `PATCH /api/v8/knowledge/{id}` rechaza cambios de privacidad; el servicio también aplica el guard.
 3. **Registro legacy de alcance ambiguo:** coincidencia exacta para la nueva transición, aun cuando lecturas existentes conservan compatibilidad.
 4. **Compartir hechos sin validar:** requerir verificación, evidencia y referencia de procedencia.
+11. **Filtración de contenido sensible:** bloquear la transición directa `SENSITIVE → SHAREABLE` tanto en el servicio como en la interfaz.
 5. **Doble operación o concurrencia:** versión optimista, conflicto explícito y relectura posterior.
 6. **Éxito de UI sin persistencia:** se exige relectura desde el servicio y evento auditado en la transacción.
 7. **Sincronización simulada:** `propagation_performed=false` y rechazo de `COLLECTIVE`.
@@ -65,11 +67,26 @@ No se añade tabla ni migración: el primer contrato usa `knowledge_records` y `
 9. **Regresión de rutas:** añadir el prefijo Hive al contrato de rutas sensibles.
 10. **Despliegue prematuro:** no se hará merge ni se declarará producción hasta revisar CI, aprobación del PR, Render, relectura persistida y evidencia del build desplegado.
 
-## 7. Estado de verificación al escribir este documento
+## 7. Estado actual de verificación (2026-10-09, COT)
 
-- Análisis de repositorios y persistencia: realizado para diseñar esta unidad.
-- Código en rama: en implementación.
-- Pruebas/CI de esta rama: pendientes de ejecución por GitHub Actions.
-- PR: pendiente de abrir al completar el conjunto de cambios.
-- Merge/despliegue: no ejecutados.
-- Evidencia productiva F15: no disponible aún y no se declara.
+**Backend — PR #137**
+- Head verificado: `b09ee57b5c24764a1bb2e73b6c237d37fb7befad`.
+- Backend Syntax Verification: PASS — [run 37955077627](https://github.com/AkiraGr2/akira-empresa/actions/runs/37955077627).
+- PostgreSQL end-to-end: PASS — [run 37955077616](https://github.com/AkiraGr2/akira-empresa/actions/runs/37955077616).
+- La suite PostgreSQL ejecutó la prueba autenticada HTTP de Hive y la prueba de persistencia/auditoría desde una segunda conexión, ambas con resultado `ok`.
+
+**Frontend — PR #89**
+- Head verificado: `45c1c206738dbbe4b9aac37a012d239f5ef27366`.
+- Syntax Verification: PASS — [run 37954979161](https://github.com/AkiraGr2/akira-v3-frontend/actions/runs/37954979161).
+- Browser E2E: PASS — [run 37954979194](https://github.com/AkiraGr2/akira-v3-frontend/actions/runs/37954979194).
+- Pixel Office E2E, incluyendo transición SHAREABLE, revocación, conflicto de versión, estados de capacidad y bloqueo visual de `SENSITIVE`: PASS — [run 37954979156](https://github.com/AkiraGr2/akira-v3-frontend/actions/runs/37954979156).
+
+**Límites y release**
+- Los dos PR siguen abiertos como Draft; no se fusionaron.
+- No se desplegaron estos cambios a Render ni GitHub Pages.
+- No se modificaron filas de producción en Supabase durante las pruebas; las pruebas E2E usan PostgreSQL desechable y fixtures sintéticos.
+- El backend declara la capacidad como `partial / unverified / degraded`; no se debe elevar a verified ni a Hive completa a partir de CI únicamente.
+- Sincronización colectiva, resolución distribuida de conflictos y Local Agent siguen fuera de esta unidad y no están disponibles/verificados.
+- Se registraron fallos de CI en commits intermedios; se corrigieron y los heads actuales enumerados arriba tienen los workflows verdes. Las ejecuciones fallidas no se borran ni se cuentan como PASS.
+
+Esta revalidación cubre la primera unidad vertical Hive Share Gate. No constituye cierre de F15 ni evidencia de producción.
