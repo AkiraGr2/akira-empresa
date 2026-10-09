@@ -32,6 +32,7 @@ def make_envelope(snapshot=None):
     snapshot = make_snapshot() if snapshot is None else snapshot
     return {
         "protocol_version": "hive-sync/1",
+        "canonicalization": "RFC8785",
         "event_type": "KNOWLEDGE_SNAPSHOT",
         "event_id": "10000000-0000-4000-8000-000000000001",
         "collective_id": "20000000-0000-4000-8000-000000000001",
@@ -156,6 +157,7 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
     def test_revocation_rejects_knowledge_payload_metadata(self):
         envelope = {
             "protocol_version": "hive-sync/1",
+        "canonicalization": "RFC8785",
             "event_type": "KNOWLEDGE_REVOCATION",
             "event_id": "10000000-0000-4000-8000-000000000005",
             "collective_id": "20000000-0000-4000-8000-000000000001",
@@ -167,6 +169,19 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
         }
         with self.assertRaises(HiveSyncEnvelopeError):
             sign_envelope(envelope, self.private_key, self.key_id)
+
+    def test_canonicalization_marker_is_required_and_fixed(self):
+        envelope = make_envelope()
+        del envelope["canonicalization"]
+        with self.assertRaises(HiveSyncEnvelopeError):
+            sign_envelope(envelope, self.private_key, self.key_id)
+
+        for bad_value in ("JCS", "RFC8785-JCS", None, 1):
+            with self.subTest(canonicalization=bad_value):
+                envelope = make_envelope()
+                envelope["canonicalization"] = bad_value
+                with self.assertRaises(HiveSyncEnvelopeError):
+                    sign_envelope(envelope, self.private_key, self.key_id)
 
     def test_sign_and_verify_snapshot_event(self):
         unsigned = make_envelope()
@@ -249,6 +264,7 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
     def test_revocation_generation_must_be_positive_integer(self):
         base = {
             "protocol_version": "hive-sync/1",
+        "canonicalization": "RFC8785",
             "event_type": "KNOWLEDGE_REVOCATION",
             "event_id": "10000000-0000-4000-8000-000000000004",
             "collective_id": "20000000-0000-4000-8000-000000000001",
@@ -299,6 +315,7 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
     def test_revocation_envelope_can_reference_hash_without_snapshot(self):
         envelope = {
             "protocol_version": "hive-sync/1",
+        "canonicalization": "RFC8785",
             "event_type": "KNOWLEDGE_REVOCATION",
             "event_id": "10000000-0000-4000-8000-000000000002",
             "collective_id": "20000000-0000-4000-8000-000000000001",
@@ -313,6 +330,7 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
     def test_revocation_cannot_carry_snapshot_content(self):
         envelope = {
             "protocol_version": "hive-sync/1",
+        "canonicalization": "RFC8785",
             "event_type": "KNOWLEDGE_REVOCATION",
             "event_id": "10000000-0000-4000-8000-000000000003",
             "collective_id": "20000000-0000-4000-8000-000000000001",
