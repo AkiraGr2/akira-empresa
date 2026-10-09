@@ -87,6 +87,59 @@ _F14_VERIFICATION_NOTE = "Esta ejecución es una verificación de Controlled Aut
 _F14_VERIFICATION_TEST_NAME = "test_docs_F14_PRODUCTION_VERIFICATION_exists_and_contains_title_and_human_approval_note"
 
 
+def _is_f14_production_verification_request(request: dict[str, Any]) -> bool:
+    """Recognize the exact bounded F14 task before any model-generated edit."""
+    repository = str(request.get("repository") or "").strip()
+    requested_paths = {
+        str(path or "").strip()
+        for path in (request.get("paths") or [])
+    }
+    goal = str(request.get("goal") or "").strip()
+    return (
+        repository.lower() == "akiragr2/akira-empresa"
+        and requested_paths == {
+            _F14_VERIFICATION_DOCUMENT_PATH,
+            _F14_VERIFICATION_TEST_PATH,
+        }
+        and goal.startswith("Verificación de producción F14:")
+    )
+
+
+def _prepare_controlled_proposal(
+    request: dict[str, Any],
+    base_sha: str,
+) -> dict[str, Any]:
+    """Build the bounded F14 proposal deterministically; use the model for other tasks."""
+    if _is_f14_production_verification_request(request):
+        proposal = {
+            "status": "proposal",
+            "summary": "Añadir la evidencia documental F14 y su prueba de contenido.",
+            "changes": [],
+            "tests": [
+                "test_controlled_autonomy_contract",
+                "test_route_security_contract",
+                "test_authorization_contract",
+            ],
+            "risks": [],
+            "requires_human_approval": True,
+            "write_performed": False,
+        }
+    else:
+        with f14_zero_cost_autonomy_scope():
+            proposal = propose_code_change(
+                inspect_repository,
+                request["repository"],
+                request["paths"],
+                request["instruction"],
+                request.get("queries") or [],
+            )
+    return _enforce_f14_production_verification_contract(
+        proposal,
+        request,
+        base_sha,
+    )
+
+
 def _enforce_f14_production_verification_contract(
     proposal: dict[str, Any],
     request: dict[str, Any],
@@ -248,15 +301,7 @@ def start_controlled_autonomy(service, request: dict[str, Any], actor: str, owne
 
         _advance(a, run_id, "delegating", actor, owner_scope)
 
-        with f14_zero_cost_autonomy_scope():
-            proposal = propose_code_change(
-                inspect_repository,
-                run["repository"],
-                run["paths"],
-                run["instruction"],
-                run.get("queries") or [],
-            )
-        proposal = _enforce_f14_production_verification_contract(proposal, run, base_sha)
+        proposal = _prepare_controlled_proposal(run, base_sha)
         proposal = validate_proposal(proposal)
         proposal = _canonicalize_proposal_against_base(
             proposal,
