@@ -2173,7 +2173,9 @@ class PersistenceService:
             return current
 
         if target_privacy_level == "SHAREABLE":
-            if previous not in {"PRIVATE", "SENSITIVE"}:
+            if previous == "SENSITIVE":
+                raise ValidationError("sensitive_knowledge_requires_redaction")
+            if previous != "PRIVATE":
                 raise ValidationError("invalid_privacy_transition")
             if current.get("verification_status") != "verified":
                 raise ValidationError("verified_knowledge_required_for_share")
