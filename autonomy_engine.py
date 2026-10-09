@@ -167,9 +167,9 @@ def _enforce_f14_production_verification_contract(
         "--- /dev/null\n"
         f"+++ b/{_F14_VERIFICATION_DOCUMENT_PATH}\n"
         "@@ -0,0 +1,3 @@\n"
-        f"{_F14_VERIFICATION_TITLE}\n"
+        f"+{_F14_VERIFICATION_TITLE}\n"
         "+\n"
-        f"{_F14_VERIFICATION_NOTE}\n"
+        f"+{_F14_VERIFICATION_NOTE}\n"
     )
     return {
         **(proposal if isinstance(proposal, dict) else {}),
