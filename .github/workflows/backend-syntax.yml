@@ -72,6 +72,10 @@ jobs:
         run: |
           python -m pip install -r requirements.txt
 
+      - name: Test F15 Hive Sync crypto contract
+        run: |
+          python -m unittest test_hive_sync_crypto_contract -v
+
       - name: Test F8 tool-audit cleanup contract
         run: |
           python -m unittest test_tool_audit_cleanup_contract -v
