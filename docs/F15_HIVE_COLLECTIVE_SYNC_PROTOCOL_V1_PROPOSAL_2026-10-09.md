@@ -43,7 +43,8 @@ Como v1 es mediada por el backend, **el servicio firma los envelopes de distribu
 Contrato criptográfico candidato:
 
 - JSON canónico conforme a RFC 8785 (JCS); hash del snapshot: `SHA-256(JCS(snapshot))`.
-- Firma Ed25519 del envelope sin el campo `signature`: el mensaje firmado son los bytes UTF-8 de `AKIRA-HIVE-SYNC-V1\n` seguidos de `JCS(envelope_without_signature)`.
+- El campo `canonicalization` MUST usar exactamente el literal `RFC8785`; ausencia, alias o una versión desconocida hacen que el envelope se rechace (sin negociación implícita del serializador).
+- Firma Ed25519 del envelope sin el campo `signature`: el mensaje firmado son los bytes UTF-8 de `AKIRA-HIVE-SYNC-V1\n` seguidos de `JCS(envelope_without_signature)`. El campo `signature` codifica los 64 bytes de firma en Base64url sin padding.
 - Cada firma incluye `service_key_id`; el backend receptor valida firma, algoritmo y estado de la clave antes de aplicar el evento.
 - La clave privada del servicio debe estar protegida en un mecanismo operativo aprobado (por ejemplo, gestor de claves/secretos con rotación y acceso restringido). No se hardcodean claves ni se almacenan en frontend o en Knowledge.
 - La acción del owner se acredita mediante consentimiento persistido y auditoría transaccional. La firma del servicio no se usa como sustituto de esa fila.
