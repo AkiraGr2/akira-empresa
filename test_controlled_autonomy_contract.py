@@ -945,9 +945,9 @@ class ControlledAutonomyContractTests(unittest.TestCase):
 
     def test_external_modify_recanonicalizes_patch_after_terminal_newline_is_trimmed(self):
         path = "README.md"
-        source = "uno\\ndos\\ntres\\n"
+        source = "uno\ndos\ntres\n"
         patch = github_controlled.deterministic_modify_patch(
-            path, source, "dos\\n", "DOS\\n"
+            path, source, "dos\n", "DOS\n"
         )
         change = validate_change({
             "path": path,
@@ -957,7 +957,7 @@ class ControlledAutonomyContractTests(unittest.TestCase):
         })
 
         # validate_change currently trims text, removing the patch's final newline.
-        self.assertFalse(change["patch"].endswith("\\n"))
+        self.assertFalse(change["patch"].endswith("\n"))
         with self.assertRaisesRegex(ControlledGitHubError, "patch_context_mismatch"):
             apply_unified_patch(source, change["patch"], path, "modify")
 
@@ -965,7 +965,7 @@ class ControlledAutonomyContractTests(unittest.TestCase):
             path, source, change["patch"]
         )
         result = apply_unified_patch(source, canonical_patch, path, "modify")
-        self.assertEqual("uno\\nDOS\\ntres\\n", result)
+        self.assertEqual("uno\nDOS\ntres\n", result)
 
 
 
