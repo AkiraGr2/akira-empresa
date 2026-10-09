@@ -996,9 +996,9 @@ class ControlledAutonomyContractTests(unittest.TestCase):
         )
         document_patch = result["changes"][0]["patch"]
         test_patch = result["changes"][1]["patch"]
-        self.assertIn("# Production Verification - F14", document_patch)
+        self.assertIn("+# Production Verification - F14", document_patch)
         self.assertIn(
-            "Esta ejecución es una verificación de Controlled Autonomy v1 y requirió aprobación humana.",
+            "+Esta ejecución es una verificación de Controlled Autonomy v1 y requirió aprobación humana.",
             document_patch,
         )
         self.assertIn(
