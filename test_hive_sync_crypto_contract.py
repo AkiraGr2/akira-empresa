@@ -163,10 +163,12 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
         with self.assertRaises(HiveSyncEnvelopeError):
             sign_envelope(envelope, self.private_key, self.key_id)
 
-        envelope = make_envelope()
-        envelope["event_type"] = "EXECUTE_COMMAND"
-        with self.assertRaises(HiveSyncEnvelopeError):
-            sign_envelope(envelope, self.private_key, self.key_id)
+        for bad_event_type in ("EXECUTE_COMMAND", [], {"type": "KNOWLEDGE_SNAPSHOT"}, None):
+            with self.subTest(event_type=bad_event_type):
+                envelope = make_envelope()
+                envelope["event_type"] = bad_event_type
+                with self.assertRaises(HiveSyncEnvelopeError):
+                    sign_envelope(envelope, self.private_key, self.key_id)
 
     def test_v1_identifiers_must_be_canonical_uuids(self):
         for field, bad_value in (
