@@ -108,10 +108,24 @@ def canonicalize_modify_patch(path: str, source: str, patch: str) -> str:
     new_text = "".join(line[1:] for line in body if line.startswith((" ", "+")))
     if not old_text or old_text == new_text:
         raise ControlledGitHubError(f"patch_not_recoverable:{path}")
-    if source.count(old_text) != 1:
-        raise ControlledGitHubError(f"patch_anchor_not_unique:{path}")
+    if source.count(old_text) == 1:
+        return deterministic_modify_patch(path, source, old_text, new_text)
 
-    return deterministic_modify_patch(path, source, old_text, new_text)
+    # A generated unified diff may include repeated surrounding context (for
+    # example, several blank lines near a file footer). If the complete hunk
+    # context is not unique, fall back only to the exact removed lines, and
+    # only when that removed block occurs exactly once in the authoritative
+    # source. This keeps insertion/replacement deterministic and fail-closed.
+    removed_text = "".join(line[1:] for line in body if line.startswith("-"))
+    added_text = "".join(line[1:] for line in body if line.startswith("+"))
+    if (
+        removed_text
+        and removed_text != added_text
+        and source.count(removed_text) == 1
+    ):
+        return deterministic_modify_patch(path, source, removed_text, added_text)
+
+    raise ControlledGitHubError(f"patch_anchor_not_unique:{path}")
 
 def _token() -> str:
     token = os.getenv("GITHUB_TOKEN", "").strip()
