@@ -318,7 +318,6 @@ def _record_controlled_autonomy_verification(service, run, action):
             "runtime_version": "controlled_autonomy_v1",
             "build_ref": runtime_build_ref(),
             "actor": str(run.get("created_by") or "owner"), "executor": "controlled_autonomy", "evaluator": "system",
-            "observed_availability_state": "available",
         },
         actor=str(run.get("created_by") or "owner"),
         idempotency_key=f"f14:e2e:{run_id}",
