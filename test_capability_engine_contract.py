@@ -249,7 +249,7 @@ class CapabilityEngineContractTests(unittest.TestCase):
         self.assertEqual(record["verification_state"], "unverified")
         self.assertEqual(record["availability_state"], "degraded")
         limitations = " ".join(record["limitations"]).lower()
-        self.assertIn("cross-owner", limitations)
+        self.assertIn("entre propietarios", limitations)
         self.assertIn("collective", limitations)
         self.assertIn("no realiza ninguna escritura externa", limitations)
 
