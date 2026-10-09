@@ -33,9 +33,9 @@ def make_envelope(snapshot=None):
     return {
         "protocol_version": "hive-sync/1",
         "event_type": "KNOWLEDGE_SNAPSHOT",
-        "event_id": "evt-test-01",
-        "collective_id": "collective-test-01",
-        "recipient_membership_id": "membership-test-02",
+        "event_id": "10000000-0000-4000-8000-000000000001",
+        "collective_id": "20000000-0000-4000-8000-000000000001",
+        "recipient_membership_id": "30000000-0000-4000-8000-000000000001",
         "consent_id": "consent-test-03",
         "content_hash": snapshot_sha256(snapshot),
         "snapshot": snapshot,
@@ -133,7 +133,7 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
 
     def test_recipient_tampering_invalidates_signature(self):
         signed = sign_envelope(make_envelope(), self.private_key, self.key_id)
-        signed["recipient_membership_id"] = "attacker-membership"
+        signed["recipient_membership_id"] = "30000000-0000-4000-8000-000000000009"
         with self.assertRaises(HiveSyncSignatureError):
             verify_envelope(signed, {self.key_id: self.public_key})
 
@@ -167,6 +167,36 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
         envelope["event_type"] = "EXECUTE_COMMAND"
         with self.assertRaises(HiveSyncEnvelopeError):
             sign_envelope(envelope, self.private_key, self.key_id)
+
+    def test_v1_identifiers_must_be_canonical_uuids(self):
+        for field, bad_value in (
+            ("event_id", "evt-not-a-uuid"),
+            ("collective_id", "20000000-0000-4000-8000-000000000001".upper()),
+            ("recipient_membership_id", "not-a-membership-uuid"),
+        ):
+            with self.subTest(field=field, bad_value=bad_value):
+                envelope = make_envelope()
+                envelope[field] = bad_value
+                with self.assertRaises(HiveSyncEnvelopeError):
+                    sign_envelope(envelope, self.private_key, self.key_id)
+
+    def test_revocation_generation_must_be_positive_integer(self):
+        base = {
+            "protocol_version": "hive-sync/1",
+            "event_type": "KNOWLEDGE_REVOCATION",
+            "event_id": "10000000-0000-4000-8000-000000000004",
+            "collective_id": "20000000-0000-4000-8000-000000000001",
+            "recipient_membership_id": "30000000-0000-4000-8000-000000000001",
+            "consent_id": "consent-test-03",
+            "content_hash": snapshot_sha256(make_snapshot()),
+        }
+        for value in (0, -1, True, "2", None):
+            with self.subTest(value=value):
+                envelope = dict(base, revocation_generation=value)
+                with self.assertRaises(HiveSyncEnvelopeError):
+                    sign_envelope(envelope, self.private_key, self.key_id)
+        with self.assertRaises(HiveSyncEnvelopeError):
+            sign_envelope(base, self.private_key, self.key_id)
 
     def test_missing_signature_is_rejected(self):
         with self.assertRaises(HiveSyncSignatureError):
@@ -204,7 +234,7 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
         envelope = {
             "protocol_version": "hive-sync/1",
             "event_type": "KNOWLEDGE_REVOCATION",
-            "event_id": "evt-revoke-01",
+            "event_id": "10000000-0000-4000-8000-000000000002",
             "collective_id": "collective-test-01",
             "recipient_membership_id": "membership-test-02",
             "consent_id": "consent-test-03",
@@ -218,7 +248,7 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
         envelope = {
             "protocol_version": "hive-sync/1",
             "event_type": "KNOWLEDGE_REVOCATION",
-            "event_id": "evt-revoke-02",
+            "event_id": "10000000-0000-4000-8000-000000000003",
             "collective_id": "collective-test-01",
             "recipient_membership_id": "membership-test-02",
             "consent_id": "consent-test-03",
