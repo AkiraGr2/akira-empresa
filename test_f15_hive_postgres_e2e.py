@@ -23,7 +23,7 @@ import akira_auth  # noqa: E402
 import nexus  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from persistence.core import ConflictError, NotFoundError, ValidationError
+from persistence.core import ConflictError, NotFoundError, StorageError, ValidationError
 from persistence.capability_catalog import HIVE_KNOWLEDGE_SHARING_CAPABILITY
 from persistence.postgres import PostgresRepository, make_pool, migrate
 from persistence.service import PersistenceService
@@ -166,6 +166,14 @@ class F15HivePostgresE2ETests(unittest.TestCase):
             self.assertEqual(status.json()["capability"]["verification_state"], "unverified")
             self.assertFalse(status.json()["cross_owner_propagation"])
             self.assertFalse(status.json()["collective_sync_available"])
+
+            # Runtime capability lookup failures are reported as controlled 503s,
+            # not raw unhandled exceptions from the status endpoint.
+            with patch.object(self.service, "list_capabilities", side_effect=StorageError("synthetic test storage failure")):
+                unavailable = client.get("/api/v8/hive/status", headers=headers)
+            self.assertEqual(unavailable.status_code, 503, unavailable.text)
+            self.assertEqual(unavailable.json()["reason"], "storage")
+            self.assertEqual(unavailable.json()["error_type"], "StorageError")
 
             record = self.create_knowledge(
                 "owner",
