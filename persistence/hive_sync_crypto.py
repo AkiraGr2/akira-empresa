@@ -101,21 +101,19 @@ def _utf8_size(value: str) -> int:
 def _preflight_json_value(value: Any) -> None:
     """Bound and validate a JSON-like tree before recursive checks or serialization.
 
-    Cycles, excessive nesting, oversized payloads and unsupported Python objects are
-    rejected before helpers inspect nested fields or the canonicalizer materializes JSON.
+    Use iterator frames rather than pushing every sibling onto a worklist: node and
+    size limits must bound temporary memory too, not only the final serialized bytes.
+    Cycles, excessive nesting and unsupported Python objects fail closed.
     """
-    # Exit markers maintain only the active ancestry, so shared-but-acyclic children
-    # remain valid while cyclic Python object graphs fail immediately.
-    stack = [(value, 0, False)]
+    # Frames hold one active container and its iterator, so auxiliary memory scales
+    # with nesting depth rather than the total number of children in a large array.
+    stack: list[tuple[str, Any, int, Any]] = []
     active_containers: set[int] = set()
     node_count = 0
     estimated_bytes = 0
-    while stack:
-        current, depth, exiting = stack.pop()
-        if exiting:
-            active_containers.remove(id(current))
-            continue
 
+    def visit(current: Any, depth: int) -> None:
+        nonlocal node_count, estimated_bytes
         node_count += 1
         if node_count > MAX_JSON_NODE_COUNT:
             raise HiveSyncEnvelopeError("canonical_json_node_limit_exceeded")
@@ -127,24 +125,15 @@ def _preflight_json_value(value: Any) -> None:
             if ident in active_containers:
                 raise HiveSyncEnvelopeError("canonical_json_cycle_not_allowed")
             active_containers.add(ident)
-            stack.append((current, depth, True))
             estimated_bytes += 2
-            for key, nested in current.items():
-                if not isinstance(key, str):
-                    raise HiveSyncEnvelopeError("canonical_json_object_key_not_string")
-                if len(key) > MAX_CANONICAL_JSON_BYTES:
-                    raise HiveSyncEnvelopeError("canonical_json_payload_too_large")
-                estimated_bytes += _utf8_size(key) + 3
-                stack.append((nested, depth + 1, False))
+            stack.append(("mapping", current, depth, iter(current.items())))
         elif isinstance(current, (list, tuple)):
             ident = id(current)
             if ident in active_containers:
                 raise HiveSyncEnvelopeError("canonical_json_cycle_not_allowed")
             active_containers.add(ident)
-            stack.append((current, depth, True))
             estimated_bytes += 2
-            for nested in current:
-                stack.append((nested, depth + 1, False))
+            stack.append(("sequence", current, depth, iter(current)))
         elif isinstance(current, str):
             if len(current) > MAX_CANONICAL_JSON_BYTES:
                 raise HiveSyncEnvelopeError("canonical_json_payload_too_large")
@@ -161,6 +150,28 @@ def _preflight_json_value(value: Any) -> None:
         if estimated_bytes > MAX_CANONICAL_JSON_BYTES:
             raise HiveSyncEnvelopeError("canonical_json_payload_too_large")
 
+    visit(value, 0)
+    while stack:
+        kind, container, depth, iterator = stack[-1]
+        try:
+            entry = next(iterator)
+        except StopIteration:
+            active_containers.remove(id(container))
+            stack.pop()
+            continue
+
+        if kind == "mapping":
+            key, nested = entry
+            if not isinstance(key, str):
+                raise HiveSyncEnvelopeError("canonical_json_object_key_not_string")
+            if len(key) > MAX_CANONICAL_JSON_BYTES:
+                raise HiveSyncEnvelopeError("canonical_json_payload_too_large")
+            estimated_bytes += _utf8_size(key) + 3
+            if estimated_bytes > MAX_CANONICAL_JSON_BYTES:
+                raise HiveSyncEnvelopeError("canonical_json_payload_too_large")
+            visit(nested, depth + 1)
+        else:
+            visit(entry, depth + 1)
 
 def strict_json_object_loads(payload: bytes | str) -> dict[str, Any]:
     """Parse a received v1 envelope without losing ambiguous JSON syntax.
