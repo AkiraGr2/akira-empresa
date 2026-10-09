@@ -165,7 +165,16 @@ class HiveKnowledgeSharingContractTests(unittest.TestCase):
         ):
             self.service.update_knowledge(
                 shared["id"],
-                {"content": "Changed content", "verification_status": "verified"},
+                {
+                    "content": "Changed content",
+                    "verification_status": "verified",
+                    "evidence": [{
+                        "type": "manual_verification",
+                        "title": "Same-operation evidence",
+                        "reference": "test://f15-same-operation-evidence",
+                        "note": "Even supplied evidence cannot combine a material edit with re-verification.",
+                    }],
+                },
                 expected_version=shared["version"],
                 actor="owner@example.test",
                 owner_scope="scope:A",
