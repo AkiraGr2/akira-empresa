@@ -7,11 +7,8 @@ from __future__ import annotations
 
 import os
 import unittest
+from unittest.mock import patch
 from urllib.parse import urlparse
-
-from persistence.core import ConflictError, NotFoundError, ValidationError
-from persistence.postgres import PostgresRepository, make_pool, migrate
-from persistence.service import PersistenceService
 
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
@@ -20,6 +17,16 @@ DATABASE_URL = os.environ.get(
 if urlparse(DATABASE_URL).hostname not in {"127.0.0.1", "localhost"}:
     raise RuntimeError("F15 PostgreSQL E2E refuses non-local DATABASE_URL; production access is prohibited")
 
+# Test-only signing key. The guard above rejects non-loopback database URLs before imports.
+os.environ["AKIRA_SESSION_SECRET"] = "f15-postgres-e2e-test-only-secret-never-use"
+import akira_auth  # noqa: E402
+import nexus  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+
+from persistence.core import ConflictError, NotFoundError, ValidationError
+from persistence.capability_catalog import HIVE_KNOWLEDGE_SHARING_CAPABILITY
+from persistence.postgres import PostgresRepository, make_pool, migrate
+from persistence.service import PersistenceService
 
 class F15HivePostgresE2ETests(unittest.TestCase):
     @classmethod
@@ -29,6 +36,11 @@ class F15HivePostgresE2ETests(unittest.TestCase):
         migrate(cls.pool)
         cls.repo = PostgresRepository(cls.pool)
         cls.service = PersistenceService(cls.repo)
+        cls.service.create_capability(
+            HIVE_KNOWLEDGE_SHARING_CAPABILITY,
+            actor="f15-postgres-ci",
+            idempotency_key="f15-e2e-hive-capability",
+        )
 
         cls.fresh_pool = make_pool(DATABASE_URL)
         cls.fresh_pool.open(wait=True, timeout=30)
@@ -92,6 +104,149 @@ class F15HivePostgresE2ETests(unittest.TestCase):
             actor="f15-postgres-ci",
             owner_scope=owner_scope,
         )
+
+    def test_authenticated_http_routes_enforce_owner_and_hive_transition_contract(self):
+        client = TestClient(nexus.app)
+        owner_email = "f15-api-owner@example.test"
+        non_owner_email = "f15-api-non-owner@example.test"
+        owner_token, _expires, token_error = akira_auth.issue_session(
+            sub="f15-api-owner-sub",
+            email=owner_email,
+        )
+        self.assertIsNone(token_error)
+        self.assertTrue(owner_token)
+        headers = {"Authorization": f"Bearer {owner_token}"}
+
+        non_owner_token, _expires, token_error = akira_auth.issue_session(
+            sub="f15-api-non-owner-sub",
+            email=non_owner_email,
+        )
+        self.assertIsNone(token_error)
+        non_owner_headers = {"Authorization": f"Bearer {non_owner_token}"}
+
+        # Route authentication must be enforced before any data access.
+        self.assertEqual(client.get("/api/v8/hive/status").status_code, 401)
+        self.assertEqual(client.get("/api/v8/hive/knowledge").status_code, 401)
+        self.assertEqual(
+            client.post(
+                "/api/v8/hive/knowledge/missing/privacy",
+                json={"privacy_level": "SHAREABLE", "expected_version": 1, "confirmed": True},
+            ).status_code,
+            401,
+        )
+
+        with patch.object(nexus, "OWNER_EMAILS", [owner_email]), patch(
+            "nexus._persistence_service", return_value=self.service
+        ):
+            self.assertEqual(client.get("/api/v8/hive/status", headers=non_owner_headers).status_code, 403)
+            self.assertEqual(client.get("/api/v8/hive/knowledge", headers=non_owner_headers).status_code, 403)
+
+            status = client.get("/api/v8/hive/status", headers=headers)
+            self.assertEqual(status.status_code, 200, status.text)
+            self.assertEqual(status.json()["contract"], "hive_knowledge_sharing.v1")
+            self.assertEqual(status.json()["capability"]["name"], "hive_knowledge_sharing_v1")
+            self.assertEqual(status.json()["capability"]["verification_state"], "unverified")
+            self.assertFalse(status.json()["cross_owner_propagation"])
+            self.assertFalse(status.json()["collective_sync_available"])
+
+            record = self.create_knowledge(
+                "owner",
+                "https://example.test/f15-api-source",
+                "f15:api:owner-record",
+                "F15 authenticated API fixture",
+            )
+            verified = self.verify(record, "owner")
+
+            # Missing explicit consent cannot mutate privacy or version.
+            no_consent = client.post(
+                f"/api/v8/hive/knowledge/{verified['id']}/privacy",
+                headers=headers,
+                json={"privacy_level": "SHAREABLE", "expected_version": verified["version"], "confirmed": False},
+            )
+            self.assertEqual(no_consent.status_code, 400, no_consent.text)
+            unchanged = self.fresh_repo.get("knowledge_records", verified["id"])
+            self.assertEqual(unchanged["privacy_level"], "PRIVATE")
+            self.assertEqual(unchanged["version"], verified["version"])
+
+            # Exact, authenticated owner scope is used for the real HTTP transition.
+            shared_response = client.post(
+                f"/api/v8/hive/knowledge/{verified['id']}/privacy",
+                headers=headers,
+                json={
+                    "privacy_level": "SHAREABLE",
+                    "expected_version": verified["version"],
+                    "confirmed": True,
+                    "owner_scope": "attacker-controlled-scope",
+                    "actor": "attacker@example.test",
+                },
+            )
+            self.assertEqual(shared_response.status_code, 200, shared_response.text)
+            shared_payload = shared_response.json()
+            self.assertTrue(shared_payload["ok"])
+            self.assertFalse(shared_payload["propagation_performed"])
+            self.assertEqual(shared_payload["knowledge"]["owner_scope"], "owner")
+            shared = self.fresh_repo.get("knowledge_records", verified["id"])
+            self.assertEqual(shared["privacy_level"], "SHAREABLE")
+            self.assertEqual(shared["version"], verified["version"] + 1)
+
+            feed = client.get("/api/v8/hive/knowledge", headers=headers)
+            self.assertEqual(feed.status_code, 200, feed.text)
+            self.assertEqual([row["id"] for row in feed.json()["knowledge"]], [shared["id"]])
+
+            # A separate verified record under a different scope must never leak to this owner feed.
+            foreign = self.create_knowledge(
+                "g:foreign-owner",
+                "https://example.test/f15-api-foreign-source",
+                "f15:api:foreign-record",
+                "Foreign F15 fixture",
+            )
+            foreign_verified = self.verify(foreign, "g:foreign-owner")
+            self.transition(foreign_verified, "g:foreign-owner", "SHAREABLE")
+            feed_after_foreign = client.get("/api/v8/hive/knowledge", headers=headers)
+            self.assertEqual(feed_after_foreign.status_code, 200, feed_after_foreign.text)
+            self.assertEqual([row["id"] for row in feed_after_foreign.json()["knowledge"]], [shared["id"]])
+
+            bypass = client.patch(
+                f"/api/v8/knowledge/{shared['id']}",
+                headers=headers,
+                json={
+                    "expected_version": shared["version"],
+                    "changes": {"privacy_level": "PRIVATE"},
+                },
+            )
+            self.assertEqual(bypass.status_code, 409, bypass.text)
+            still_shared = self.fresh_repo.get("knowledge_records", shared["id"])
+            self.assertEqual(still_shared["privacy_level"], "SHAREABLE")
+            self.assertEqual(still_shared["version"], shared["version"])
+
+            collective = client.post(
+                f"/api/v8/hive/knowledge/{shared['id']}/privacy",
+                headers=headers,
+                json={
+                    "privacy_level": "COLLECTIVE",
+                    "expected_version": shared["version"],
+                    "confirmed": True,
+                },
+            )
+            self.assertEqual(collective.status_code, 409, collective.text)
+            after_collective = self.fresh_repo.get("knowledge_records", shared["id"])
+            self.assertEqual(after_collective["privacy_level"], "SHAREABLE")
+            self.assertEqual(after_collective["version"], shared["version"])
+
+            revoke = client.post(
+                f"/api/v8/hive/knowledge/{shared['id']}/privacy",
+                headers=headers,
+                json={
+                    "privacy_level": "PRIVATE",
+                    "expected_version": shared["version"],
+                    "confirmed": True,
+                },
+            )
+            self.assertEqual(revoke.status_code, 200, revoke.text)
+            self.assertEqual(revoke.json()["knowledge"]["privacy_level"], "PRIVATE")
+            feed_after_revoke = client.get("/api/v8/hive/knowledge", headers=headers)
+            self.assertEqual(feed_after_revoke.status_code, 200, feed_after_revoke.text)
+            self.assertEqual(feed_after_revoke.json()["knowledge"], [])
 
     def test_share_gate_persists_exact_scope_version_audit_and_revocation(self):
         owner_a = "f15-postgres-owner-A"
