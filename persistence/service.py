@@ -29,7 +29,7 @@ from .core import (AGENT_SCHEMA_VERSION, AGENT_TASK_SCHEMA_VERSION,
                    COGNITIVE_CYCLE_SCHEMA_VERSION, COGNITIVE_EVENT_SCHEMA_VERSION,
                    COGNITIVE_STAGES, CONVERSATION_MESSAGE_SCHEMA_VERSION,
                    CONVERSATION_SCHEMA_VERSION, GRAPH_EDGE_SCHEMA_VERSION,
-                   GRAPH_NODE_SCHEMA_VERSION, HIVE_VISIBLE, KNOWLEDGE_SCHEMA_VERSION, LEARNING_SCHEMA_VERSION, RELATION_TYPES,
+                   GRAPH_NODE_SCHEMA_VERSION, HIVE_VISIBLE, KNOWLEDGE_SCHEMA_VERSION, PRIVACY_LEVELS, LEARNING_SCHEMA_VERSION, RELATION_TYPES,
                    KNOWLEDGE_VERIFICATION_STATUSES, MEMORY_SCHEMA_VERSION, MISSION_SCHEMA_VERSION, MISSION_STATUSES,
                    EVOLUTION_SCHEMA_VERSION, EVOLUTION_STATUSES,
                    SELF_MODEL_PRIMARY_ID, SELF_MODEL_SCHEMA_VERSION,
@@ -1999,26 +1999,40 @@ class PersistenceService:
         if current is None:
             raise NotFoundError(knowledge_id)
         clean = validate_knowledge(changes, partial=True)
+        if "privacy_level" in clean and clean["privacy_level"] != current.get("privacy_level"):
+            raise ValidationError("explicit_hive_privacy_transition_required")
         if "related_nodes" in clean:
             clean["related_nodes"] = self._validate_knowledge_related_nodes(
                 clean["related_nodes"], owner_scope=owner_scope or current.get("owner_scope")
             )
         current_status = current.get("verification_status") or "unknown"
-        factual_fields = {"concept", "content", "domain", "source", "source_id", "source_reference", "confidence", "related_nodes"}
-        if current_status == "verified" and factual_fields.intersection(clean):
-            # Cambiar el contenido de un knowledge verificado invalida su evidencia anterior.
-            # Debe volver a quedar parcialmente verificado hasta aportar nueva evidencia.
-            if clean.get("verification_status") not in (None, "partially_verified", "verified"):
+        factual_fields = {
+            "concept", "content", "domain", "source", "source_id",
+            "source_reference", "confidence", "related_nodes",
+        }
+        factual_change = bool(factual_fields.intersection(clean))
+
+        # A record can never become visible in the shareable export again just
+        # because someone later re-verifies it. Material edits and status changes
+        # revoke the old consent in the same versioned update.
+        status_change = "status" in clean and clean["status"] != current.get("status")
+        share_consent_revoked = (
+            current.get("privacy_level") == "SHAREABLE"
+            and (factual_change or status_change)
+        )
+        if share_consent_revoked:
+            clean["privacy_level"] = "PRIVATE"
+
+        if current_status == "verified" and factual_change:
+            # Changing facts invalidates the old evidence. Reverification must be
+            # a separate explicit operation with fresh evidence after the edit.
+            if clean.get("verification_status") == "verified":
+                raise ValidationError("knowledge factual change requires reverification separately")
+            if clean.get("verification_status") not in (None, "partially_verified"):
                 raise ValidationError("knowledge verified no admite degradacion implicita incompatible")
-            if clean.get("verification_status") is None:
-                clean["verification_status"] = "partially_verified"
-            if clean["verification_status"] == "verified":
-                evidence = clean.get("evidence", current.get("evidence") or [])
-                if not evidence:
-                    raise ValidationError("knowledge verified requiere evidencia")
-            else:
-                clean["last_verified_at"] = None
-                clean["verified_by"] = None
+            clean["verification_status"] = "partially_verified"
+            clean["last_verified_at"] = None
+            clean["verified_by"] = None
         if "verification_status" in clean:
             next_status = clean["verification_status"]
             transitions = {
@@ -2055,7 +2069,13 @@ class PersistenceService:
                     "resource": "knowledge_records",
                     "resource_id": knowledge_id,
                     "status": "success",
-                    "detail": {"fields": sorted(clean), "new_version": updated["version"]},
+                    "detail": {
+                        "fields": sorted(clean),
+                        "new_version": updated["version"],
+                        "previous_privacy_level": current.get("privacy_level"),
+                        "new_privacy_level": updated.get("privacy_level"),
+                        "share_consent_revoked_due_to_material_change": share_consent_revoked,
+                    },
                 })
             except PersistenceError:
                 raise
@@ -2110,6 +2130,130 @@ class PersistenceService:
             actor=actor,
             owner_scope=owner_scope,
         )
+
+    def list_hive_knowledge(self, owner_scope, limit=50):
+        """Owner-scoped export view: only verified SHAREABLE knowledge; no cross-owner propagation."""
+        scope = str(owner_scope or "").strip()
+        if not scope:
+            raise ValidationError("owner_scope requerido")
+        try:
+            bounded_limit = max(1, min(int(limit), 200))
+        except (TypeError, ValueError) as exc:
+            raise ValidationError("limit invalido") from exc
+        return self.search_knowledge(
+            filters={
+                "status": "active",
+                "privacy_level": "SHAREABLE",
+                "verification_status": "verified",
+            },
+            limit=bounded_limit,
+            owner_scope=scope,
+            order_by="updated_at",
+            descending=True,
+        )
+
+    def transition_knowledge_privacy(
+        self,
+        knowledge_id,
+        target_privacy_level,
+        expected_version,
+        confirmed=False,
+        actor="system",
+        owner_scope=None,
+    ):
+        """Explicit, audited F15 privacy gate. Never performs external propagation."""
+        if confirmed is not True:
+            raise ValidationError("explicit_share_confirmation_required")
+        scope = str(owner_scope or "").strip()
+        if not scope:
+            raise ValidationError("owner_scope requerido")
+        if isinstance(expected_version, bool) or not isinstance(expected_version, int) or expected_version < 1:
+            raise ValidationError("expected_version debe ser un entero >= 1")
+        if target_privacy_level not in PRIVACY_LEVELS:
+            raise ValidationError("privacy_level invalido")
+        if target_privacy_level == "COLLECTIVE":
+            raise ValidationError("collective_sync_not_configured")
+
+        # Deliberately require exact stored ownership. The legacy 'owner' compatibility
+        # fallback used by ordinary reads is NOT an authorization to publish a record.
+        current = self.repo.get("knowledge_records", knowledge_id)
+        if current is None or str(current.get("owner_scope") or "").strip() != scope:
+            raise NotFoundError(knowledge_id)
+        if current.get("status") != "active":
+            raise NotFoundError(knowledge_id)
+        if current.get("version") != expected_version:
+            raise ConflictError("version conflict")
+
+        previous = str(current.get("privacy_level") or "")
+        if previous not in PRIVACY_LEVELS:
+            raise ValidationError("stored_privacy_level_invalid")
+        if target_privacy_level == previous:
+            return current
+
+        if target_privacy_level == "SHAREABLE":
+            if previous == "SENSITIVE":
+                raise ValidationError("sensitive_knowledge_requires_redaction")
+            if previous != "PRIVATE":
+                raise ValidationError("invalid_privacy_transition")
+            if current.get("verification_status") != "verified":
+                raise ValidationError("verified_knowledge_required_for_share")
+            if not (str(current.get("source_reference") or "").strip()
+                    or str(current.get("source_id") or "").strip()):
+                raise ValidationError("share_provenance_required")
+            if not current.get("evidence"):
+                raise ValidationError("share_evidence_required")
+
+        if target_privacy_level not in {"PRIVATE", "SENSITIVE", "SHAREABLE"}:
+            raise ValidationError("invalid_privacy_transition")
+
+        action = (
+            "hive.knowledge.share"
+            if target_privacy_level == "SHAREABLE"
+            else "hive.knowledge.revoke"
+            if previous in HIVE_VISIBLE
+            else "hive.knowledge.privacy_change"
+        )
+        try:
+            with self.repo.transaction() as tx:
+                updated = tx.update(
+                    "knowledge_records",
+                    knowledge_id,
+                    {"privacy_level": target_privacy_level},
+                    expected_version,
+                )
+                tx.append_audit({
+                    "actor": actor,
+                    "action": action,
+                    "resource": "knowledge_records",
+                    "resource_id": knowledge_id,
+                    "status": "success",
+                    "detail": {
+                        "contract": "hive_knowledge_sharing.v1",
+                        "owner_scope": scope,
+                        "from_privacy_level": previous,
+                        "to_privacy_level": target_privacy_level,
+                        "previous_version": expected_version,
+                        "new_version": updated.get("version"),
+                        "explicit_confirmation": True,
+                        "source_id": current.get("source_id"),
+                        "source_reference": current.get("source_reference"),
+                        "propagation_performed": False,
+                    },
+                })
+        except PersistenceError:
+            raise
+        except Exception as exc:
+            raise StorageError(type(exc).__name__) from exc
+
+        reread = self.repo.get("knowledge_records", knowledge_id)
+        if (
+            reread is None
+            or str(reread.get("owner_scope") or "").strip() != scope
+            or reread.get("version") != expected_version + 1
+            or reread.get("privacy_level") != target_privacy_level
+        ):
+            raise VerificationError("transicion de privacidad no confirmada al releer")
+        return reread
 
     def create_node(self, data, actor="system", idempotency_key=None):
         fields = validate_graph_node(data)
