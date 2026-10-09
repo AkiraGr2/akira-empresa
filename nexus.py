@@ -2400,6 +2400,11 @@ def v8_knowledge_update(request: Request, knowledge_id: str, payload: dict):
     changes = dict(payload.get("changes") or payload)
     changes.pop("owner_scope", None)
     changes.pop("created_by", None)
+    if "privacy_level" in changes:
+        return JSONResponse(
+            {"ok": False, "reason": "explicit_hive_privacy_transition_required"},
+            status_code=409,
+        )
     expected_version = payload.get("expected_version")
     if not isinstance(expected_version, int) or expected_version < 1:
         return JSONResponse({"ok": False, "reason": "expected_version_required"}, status_code=400)
@@ -2475,6 +2480,114 @@ def v8_knowledge_archive(request: Request, knowledge_id: str, payload: dict | No
         return JSONResponse({"ok": False, "reason": "conflict"}, status_code=409)
     except ValidationError as e:
         return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+
+
+@app.get("/api/v8/hive/status")
+def v8_hive_status(request: Request):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None:
+        return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    rows = service.list_capabilities(filters={"name": "hive_knowledge_sharing_v1"}, limit=1)
+    capability = rows[0] if rows else None
+    return {
+        "ok": True,
+        "contract": "hive_knowledge_sharing.v1",
+        "scope_mode": "owner_scoped_export_view",
+        "capability": {
+            "name": "hive_knowledge_sharing_v1",
+            "implementation_state": capability.get("implementation_state") if capability else "not_registered",
+            "verification_state": capability.get("verification_state") if capability else "unverified",
+            "availability_state": capability.get("availability_state") if capability else "unavailable",
+        },
+        "cross_owner_propagation": False,
+        "collective_sync_available": False,
+        "conflict_resolution_available": False,
+        "local_agent_available": False,
+    }
+
+
+@app.get("/api/v8/hive/knowledge")
+def v8_hive_knowledge(request: Request, limit: int = 50):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None:
+        return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    try:
+        rows = service.list_hive_knowledge(owner_scope=s["owner_scope"], limit=limit)
+        return {
+            "ok": True,
+            "scope_mode": "owner_scoped_export_view",
+            "count": len(rows),
+            "knowledge": rows,
+            "propagation_performed": False,
+        }
+    except ValidationError as e:
+        return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
+    except PersistenceError as e:
+        return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+
+
+@app.post("/api/v8/hive/knowledge/{knowledge_id}/privacy")
+def v8_hive_knowledge_privacy(request: Request, knowledge_id: str, payload: dict):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None:
+        return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    if not isinstance(payload, dict):
+        return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
+    if payload.get("confirmed") is not True:
+        return JSONResponse({"ok": False, "reason": "explicit_share_confirmation_required"}, status_code=400)
+    expected_version = payload.get("expected_version")
+    if isinstance(expected_version, bool) or not isinstance(expected_version, int) or expected_version < 1:
+        return JSONResponse({"ok": False, "reason": "expected_version_required"}, status_code=400)
+    try:
+        record = service.transition_knowledge_privacy(
+            knowledge_id,
+            target_privacy_level=payload.get("privacy_level"),
+            expected_version=expected_version,
+            confirmed=payload.get("confirmed"),
+            actor=s["email"],
+            owner_scope=s["owner_scope"],
+        )
+        return {
+            "ok": True,
+            "knowledge": record,
+            "propagation_performed": False,
+            "scope_mode": "owner_scoped_export_view",
+        }
+    except NotFoundError:
+        return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
+    except ConflictError:
+        return JSONResponse({"ok": False, "reason": "conflict"}, status_code=409)
+    except ValidationError as e:
+        reason = str(e)
+        status_code = 409 if reason == "collective_sync_not_configured" else 400
+        return JSONResponse(
+            {"ok": False, "reason": reason if reason in {
+                "collective_sync_not_configured",
+                "explicit_share_confirmation_required",
+                "verified_knowledge_required_for_share",
+                "share_provenance_required",
+                "share_evidence_required",
+                "invalid_privacy_transition",
+                "privacy_level invalido",
+                "expected_version debe ser un entero >= 1",
+            } else "validation", "error_type": type(e).__name__},
+            status_code=status_code,
+        )
     except PersistenceError as e:
         return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
     except Exception as e:
