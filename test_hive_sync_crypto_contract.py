@@ -105,6 +105,17 @@ class HiveSyncCanonicalizationContractTests(unittest.TestCase):
         with self.assertRaises(HiveSyncEnvelopeError):
             canonical_json_bytes({"blob": "x" * (1024 * 1024)})
 
+    def test_extreme_nesting_is_rejected_before_recursive_processing(self):
+        value = "leaf"
+        for _ in range(100):
+            value = [value]
+        with self.assertRaises(HiveSyncEnvelopeError):
+            canonical_json_bytes({"nested": value})
+
+    def test_excessive_node_count_is_rejected(self):
+        with self.assertRaises(HiveSyncEnvelopeError):
+            canonical_json_bytes({"items": [None] * 100_001})
+
 
 class HiveSyncSignatureContractTests(unittest.TestCase):
     def setUp(self):
