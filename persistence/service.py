@@ -2010,8 +2010,7 @@ class PersistenceService:
             "concept", "content", "domain", "source", "source_id",
             "source_reference", "confidence", "related_nodes",
         }
-        evidence_fields = factual_fields | {"evidence"}
-        factual_change = bool(evidence_fields.intersection(clean))
+        factual_change = bool(factual_fields.intersection(clean))
 
         # A record can never become visible in the shareable export again just
         # because someone later re-verifies it. Any material edit revokes its
