@@ -137,6 +137,14 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
         with self.assertRaises(HiveSyncSignatureError):
             verify_envelope(signed, {self.key_id: self.public_key})
 
+    def test_malformed_content_hash_type_fails_closed(self):
+        for bad_hash in (None, 123, [], {"hash": "abc"}):
+            with self.subTest(content_hash=bad_hash):
+                envelope = make_envelope()
+                envelope["content_hash"] = bad_hash
+                with self.assertRaises(HiveSyncEnvelopeError):
+                    sign_envelope(envelope, self.private_key, self.key_id)
+
     def test_snapshot_content_hash_mismatch_is_rejected(self):
         signed = sign_envelope(make_envelope(), self.private_key, self.key_id)
         signed["snapshot"]["content"] = "tampered"
