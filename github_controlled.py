@@ -546,7 +546,11 @@ def controlled_apply(
             )
         else:
             current = fetch_text_file(repo, path, branch)
-            new_content = apply_unified_patch(current["content"], change["patch"], path, "modify")
+            # validate_change trims patch text, which can remove the final newline from
+            # a context line. Re-canonicalize against the exact branch contents before
+            # applying so the patch context and sandbox result remain byte-consistent.
+            canonical_patch = canonicalize_modify_patch(path, current["content"], change["patch"])
+            new_content = apply_unified_patch(current["content"], canonical_patch, path, "modify")
             digest = hashlib.sha256(new_content.encode("utf-8")).hexdigest()
             if digest != expected_hashes.get(path):
                 raise ControlledGitHubError(f"sandbox_hash_mismatch:{path}")
