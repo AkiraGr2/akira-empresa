@@ -128,6 +128,19 @@ class HiveSyncCanonicalizationContractTests(unittest.TestCase):
         with self.assertRaises(HiveSyncEnvelopeError):
             canonical_json_bytes({"items": [None] * 100_001})
 
+    def test_cyclic_python_object_graph_is_rejected(self):
+        cyclic = []
+        cyclic.append(cyclic)
+        with self.assertRaises(HiveSyncEnvelopeError):
+            canonical_json_bytes({"cycle": cyclic})
+
+    def test_repeated_but_acyclic_subobject_is_allowed(self):
+        shared = {"safe": "value"}
+        self.assertEqual(
+            canonical_json_bytes({"first": shared, "second": shared}),
+            b'{"first":{"safe":"value"},"second":{"safe":"value"}}',
+        )
+
     def test_invalid_unicode_is_rejected_with_contract_error(self):
         with self.assertRaises(HiveSyncEnvelopeError):
             canonical_json_bytes({"invalid": chr(0xD800)})
@@ -164,6 +177,14 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
         snapshot["evidence"] = [{"metadata": {"access_token": "synthetic-secret"}}]
         with self.assertRaises(HiveSyncEnvelopeError):
             sign_envelope(make_envelope(snapshot), self.private_key, self.key_id)
+
+    def test_cyclic_snapshot_is_rejected_before_sensitive_metadata_scan(self):
+        envelope = make_envelope()
+        cyclic = []
+        cyclic.append(cyclic)
+        envelope["snapshot"]["evidence"] = cyclic
+        with self.assertRaises(HiveSyncEnvelopeError):
+            sign_envelope(envelope, self.private_key, self.key_id)
 
     def test_revocation_rejects_knowledge_payload_metadata(self):
         envelope = {
