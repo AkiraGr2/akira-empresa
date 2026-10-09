@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import json
 import math
 import os
 import re
@@ -160,6 +161,70 @@ def _preflight_json_value(value: Any) -> None:
         if estimated_bytes > MAX_CANONICAL_JSON_BYTES:
             raise HiveSyncEnvelopeError("canonical_json_payload_too_large")
 
+
+def strict_json_object_loads(payload: bytes | str) -> dict[str, Any]:
+    """Parse a received v1 envelope without losing ambiguous JSON syntax.
+
+    Reject duplicate object keys, lexical negative zero, non-finite numbers, invalid
+    UTF-8/Unicode, non-object roots, and inputs outside canonicalization resource
+    limits. Network receivers should pass raw request bytes to verify_envelope rather
+    than a framework-parsed dictionary.
+    """
+    if isinstance(payload, bytes):
+        if len(payload) > MAX_CANONICAL_JSON_BYTES:
+            raise HiveSyncEnvelopeError("canonical_json_payload_too_large")
+        try:
+            text = payload.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as exc:
+            raise HiveSyncEnvelopeError("json_utf8_invalid") from exc
+    elif isinstance(payload, str):
+        if _utf8_size(payload) > MAX_CANONICAL_JSON_BYTES:
+            raise HiveSyncEnvelopeError("canonical_json_payload_too_large")
+        text = payload
+    else:
+        raise HiveSyncEnvelopeError("json_payload_must_be_bytes_or_string")
+
+    def parse_integer(raw: str) -> int:
+        if raw == "-0":
+            raise HiveSyncEnvelopeError("negative_zero_not_allowed")
+        return int(raw)
+
+    def parse_float(raw: str) -> float:
+        value = float(raw)
+        if not math.isfinite(value):
+            raise HiveSyncEnvelopeError("json_non_finite_number_not_allowed")
+        if value == 0.0 and raw.startswith('-'):
+            raise HiveSyncEnvelopeError("negative_zero_not_allowed")
+        return value
+
+    def reject_constant(_raw: str) -> Any:
+        raise HiveSyncEnvelopeError("json_non_finite_number_not_allowed")
+
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise HiveSyncEnvelopeError("json_duplicate_object_key")
+            result[key] = value
+        return result
+
+    try:
+        parsed = json.loads(
+            text,
+            parse_int=parse_integer,
+            parse_float=parse_float,
+            parse_constant=reject_constant,
+            object_pairs_hook=reject_duplicate_keys,
+        )
+    except HiveSyncEnvelopeError:
+        raise
+    except (json.JSONDecodeError, RecursionError, ValueError) as exc:
+        raise HiveSyncEnvelopeError("json_parse_failed") from exc
+
+    if not isinstance(parsed, dict):
+        raise HiveSyncEnvelopeError("json_root_must_be_object")
+    _preflight_json_value(parsed)
+    return parsed
 
 def _reject_negative_zero(value: Any) -> None:
     """Reject -0.0 before JCS collapses it to the same representation as +0.0."""
@@ -384,13 +449,21 @@ def sign_envelope(
 
 
 def verify_envelope(
-    envelope: Mapping[str, Any],
+    envelope: Mapping[str, Any] | bytes | str,
     trusted_public_keys: Mapping[str, Ed25519PublicKey | bytes],
 ) -> bool:
-    """Verify structure, snapshot hash, key ID and Ed25519 signature."""
-    if not isinstance(envelope, Mapping):
+    """Verify structure, snapshot hash, key ID and Ed25519 signature.
+
+    Pass raw JSON bytes/string for received envelopes so duplicate keys and lexical
+    negative zero are rejected before parsing can erase those distinctions. Mapping
+    inputs remain supported for trusted in-process callers.
+    """
+    if isinstance(envelope, (bytes, str)):
+        signed = strict_json_object_loads(envelope)
+    elif isinstance(envelope, Mapping):
+        signed = dict(envelope)
+    else:
         raise HiveSyncSignatureError("envelope_requires_object")
-    signed = dict(envelope)
     signature_value = signed.pop(SIGNATURE_FIELD, None)
     unsigned = _validate_envelope(signed)
     key_id = unsigned.get("service_key_id")
