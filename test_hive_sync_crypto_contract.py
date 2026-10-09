@@ -121,7 +121,7 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
                     sign_envelope(envelope, self.private_key, self.key_id)
 
     def test_snapshot_projection_rejects_unallowlisted_fields(self):
-        for field in ("owner_scope", "id", "status", "created_at", "verified_by"):
+        for field in ("owner_scope", "id", "status", "created_at", "verified_by", "source_id", "related_nodes"):
             with self.subTest(field=field):
                 snapshot = make_snapshot()
                 snapshot[field] = "must-not-leak"
