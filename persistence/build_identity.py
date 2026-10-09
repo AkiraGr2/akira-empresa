@@ -36,7 +36,7 @@ def runtime_build_ref() -> str:
     )
     for path in paths:
         digest.update(path.relative_to(root).as_posix().encode("utf-8"))
-        digest.update(b"\\0")
+        digest.update(bytes((0,)))
         digest.update(path.read_bytes())
-        digest.update(b"\\0")
+        digest.update(bytes((0,)))
     return "sha256:" + digest.hexdigest()[:48]
