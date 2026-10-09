@@ -96,6 +96,44 @@ class ControlledAutonomyContractTests(unittest.TestCase):
         self.assertEqual(request["base_branch"], "main")
         self.assertEqual(request["paths"], ["persistence/core.py"])
 
+    def test_idempotent_retry_does_not_restart_or_fail_in_progress_run(self):
+        service = FakePersistence()
+        request = {
+            "goal": "Retry an existing bounded F14 run.",
+            "repository": "AkiraGr2/akira-empresa",
+            "base_branch": "main",
+            "paths": ["docs/F14_PRODUCTION_VERIFICATION.md"],
+            "instruction": "Create the bounded verification note.",
+            "tests": ["test_controlled_autonomy_contract"],
+            "idempotency_key": "f14-idempotent-in-progress",
+        }
+        lifecycle = AutonomyService(service)
+        created = lifecycle.create_run(request, actor="owner@example.com", owner_scope="scope:F14")
+        run_id = created["record"]["id"]
+        lifecycle.advance(run_id, "planning", "owner@example.com", "scope:F14", {"base_commit_sha": "a" * 40})
+        lifecycle.advance(run_id, "delegating", "owner@example.com", "scope:F14")
+        lifecycle.advance(run_id, "proposed", "owner@example.com", "scope:F14", {
+            "proposal": {"status": "proposal", "summary": "test", "changes": [{"path": "docs/F14_PRODUCTION_VERIFICATION.md"}]}
+        })
+        lifecycle.advance(run_id, "sandboxed", "owner@example.com", "scope:F14", {
+            "sandbox": {"expected_hashes": {"docs/F14_PRODUCTION_VERIFICATION.md": "b" * 64}}
+        })
+
+        with patch("autonomy_engine.f14_zero_cost_provider_preflight", return_value={"ok": True}), \\
+             patch("autonomy_engine.branch_head") as branch_head:
+            replayed = start_controlled_autonomy(
+                service,
+                request,
+                actor="owner@example.com",
+                owner_scope="scope:F14",
+            )
+
+        branch_head.assert_not_called()
+        self.assertEqual(replayed["id"], run_id)
+        self.assertEqual(replayed["status"], "sandboxed")
+        self.assertEqual(len(service.repo.rows["autonomy_runs"]), 1)
+        self.assertNotEqual(replayed["status"], "failed")
+
     def test_protected_paths_and_repository_are_rejected(self):
         with self.assertRaises(AutonomyContractError):
             validate_path(".github/workflows/ci.yml")
