@@ -124,6 +124,10 @@ jobs:
         run: |
           python -m unittest test_cognitive_runtime_execution -v
 
+      - name: Test runtime build identity contract
+        run: |
+          python -m unittest test_build_identity_contract -v
+
       - name: Test memory embedding ownership contract
         run: |
           python -m unittest test_memory_embedding_ownership -v
