@@ -228,9 +228,9 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
             ("provenance", {"context": {"ownerId": "synthetic-owner"}}),
             ("evidence", [{"credentials": {"user": "synthetic-user"}}]),
             ("evidence", [{"headers": {"clientSecret": "synthetic-secret"}}]),
-            ("provenance", {"transport": {"bearer-token": "synthetic-token"}}]),
+            ("provenance", {"transport": {"bearer-token": "synthetic-token"}}),
             ("evidence", [{"session": {"serviceRoleKey": "synthetic-key"}}]),
-            ("provenance", {"config": {"connection_string": "synthetic-dsn"}}]),
+            ("provenance", {"config": {"connection_string": "synthetic-dsn"}}),
         )
         for field, value in cases:
             with self.subTest(field=field, value=value):
