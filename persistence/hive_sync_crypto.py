@@ -30,6 +30,7 @@ SIGNING_KEY_ID_ENV = "HIVE_SYNC_SIGNING_KEY_ID"
 SIGNATURE_FIELD = "signature"
 SIGNATURE_CONTEXT = b"AKIRA-HIVE-SYNC-V1\n"
 MAX_PRIVATE_KEY_FILE_BYTES = 16 * 1024
+MAX_CANONICAL_JSON_BYTES = 1024 * 1024
 ALLOWED_EVENT_TYPES = frozenset({"KNOWLEDGE_SNAPSHOT", "KNOWLEDGE_REVOCATION"})
 _KEY_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -63,6 +64,8 @@ def canonical_json_bytes(value: Mapping[str, Any]) -> bytes:
         raise HiveSyncEnvelopeError("payload_not_canonicalizable") from exc
     if not isinstance(canonical, bytes):
         raise HiveSyncEnvelopeError("canonicalizer_returned_non_bytes")
+    if len(canonical) > MAX_CANONICAL_JSON_BYTES:
+        raise HiveSyncEnvelopeError("canonical_json_payload_too_large")
     return canonical
 
 
@@ -109,6 +112,10 @@ def _validate_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
         actual_hash = snapshot_sha256(snapshot)
         if actual_hash != result["content_hash"]:
             raise HiveSyncEnvelopeError("snapshot_hash_mismatch")
+    elif "snapshot" in result:
+        # A revocation identifies the previously shared hash; it must not
+        # become a channel for re-sending any knowledge payload.
+        raise HiveSyncEnvelopeError("revocation_must_not_contain_snapshot")
     return result
 
 
