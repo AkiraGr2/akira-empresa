@@ -429,6 +429,85 @@ class AutonomyService:
             raise RuntimeError("autonomy_rejection_not_confirmed")
         return verified
 
+    def recover_capability_verification_failure(
+        self,
+        run_id: str,
+        actor: str,
+        owner_scope: str,
+        evaluation: Mapping[str, Any],
+    ) -> dict:
+        """Complete only a previously applied F14 run whose final capability record failed."""
+        current = self.get_run(run_id, owner_scope=owner_scope)
+        if current is None:
+            raise KeyError(run_id)
+        failure_reason = str(current.get("failure_reason") or "")
+        if current.get("status") != "failed" or not failure_reason.startswith("capability_verification_failed:"):
+            raise AutonomyContractError("recovery_requires_capability_verification_failure")
+        decision = current.get("decision") if isinstance(current.get("decision"), Mapping) else {}
+        if decision.get("status") != "approved" or decision.get("mode") != "human":
+            raise AutonomyContractError("recovery_requires_human_approval")
+        action = current.get("action") if isinstance(current.get("action"), Mapping) else {}
+        if (
+            not action.get("pr_url")
+            or action.get("pr_draft") is not True
+            or action.get("merged") is not False
+            or not str(current.get("learning_reference") or "").strip()
+        ):
+            raise AutonomyContractError("recovery_existing_action_or_learning_missing")
+        if not isinstance(evaluation, Mapping):
+            raise AutonomyContractError("recovery_evaluation_invalid")
+        external = evaluation.get("external_verification") if isinstance(evaluation.get("external_verification"), Mapping) else {}
+        if (
+            evaluation.get("external_action_verified") is not True
+            or external.get("branch_head_matches") is not True
+            or external.get("draft_pr") is not True
+            or external.get("merged") is not False
+            or external.get("base_branch") is not True
+            or evaluation.get("capability_effective_state") != "verified"
+            or not str(evaluation.get("capability_verification_id") or "").strip()
+        ):
+            raise AutonomyContractError("recovery_final_evidence_incomplete")
+
+        merged_evaluation = dict(current.get("evaluation") or {})
+        merged_evaluation.update(dict(evaluation))
+        merged_evaluation["recovery"] = {
+            "method": "capability_verification_retry",
+            "previous_failure_reason": failure_reason,
+            "external_write_repeated": False,
+            "recovered_at": now_iso(),
+        }
+        changes = {
+            "status": "completed",
+            "evaluation": merged_evaluation,
+            "failure_reason": "",
+            "completed_at": now_iso(),
+        }
+        with self.repo.transaction() as tx:
+            updated = tx.update("autonomy_runs", run_id, changes, current["version"])
+            tx.append_audit({
+                "actor": _text("actor", actor, 256),
+                "action": "autonomy.capability_verification_recovery",
+                "resource": "autonomy_runs",
+                "resource_id": run_id,
+                "status": "success",
+                "detail": {
+                    "from": "failed",
+                    "to": "completed",
+                    "previous_failure_reason": failure_reason,
+                    "capability_verification_id": merged_evaluation["capability_verification_id"],
+                    "external_write_repeated": False,
+                },
+            })
+        verified = self.get_run(run_id, owner_scope=owner_scope)
+        if (
+            verified is None
+            or verified.get("status") != "completed"
+            or verified.get("evaluation", {}).get("capability_effective_state") != "verified"
+            or verified.get("failure_reason") != ""
+        ):
+            raise RuntimeError("autonomy_capability_recovery_not_confirmed")
+        return verified
+
     def record_failure(self, run_id: str, reason: str, actor: str, owner_scope: str) -> dict:
         current = self.get_run(run_id, owner_scope=owner_scope)
         if current is None:

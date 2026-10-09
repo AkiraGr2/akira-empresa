@@ -189,6 +189,54 @@ def branch_head(repository: str, branch: str) -> str:
     return sha.lower()
 
 
+def verify_existing_draft_action(repository: str, action: Mapping[str, Any]) -> dict[str, Any]:
+    """Re-verify a previously created F14 branch/PR without writing to GitHub."""
+    repo = validate_repository(repository)
+    if not isinstance(action, Mapping) or action.get("repository") != repo:
+        raise ControlledGitHubError("existing_action_repository_mismatch")
+    if action.get("base_branch") != AUTONOMY_BASE_BRANCH or action.get("merged") is not False:
+        raise ControlledGitHubError("existing_action_safety_metadata_invalid")
+    branch = _validate_branch_name(action.get("branch_name"))
+    expected_head = str(action.get("branch_head") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", expected_head):
+        raise ControlledGitHubError("existing_action_head_missing")
+    current_head = branch_head(repo, branch)
+    if current_head != expected_head:
+        raise ControlledGitHubError("existing_branch_head_mismatch")
+
+    pr_number = action.get("pr_number")
+    try:
+        pr_number = int(pr_number)
+    except (TypeError, ValueError) as exc:
+        raise ControlledGitHubError("existing_action_pr_number_invalid") from exc
+    if pr_number <= 0:
+        raise ControlledGitHubError("existing_action_pr_number_invalid")
+    pr = _request("GET", f"{API_ROOT}/repos/{repo}/pulls/{pr_number}")
+    if not isinstance(pr, Mapping):
+        raise ControlledGitHubError("existing_pr_verification_invalid")
+    base = pr.get("base") if isinstance(pr.get("base"), Mapping) else {}
+    head = pr.get("head") if isinstance(pr.get("head"), Mapping) else {}
+    pr_url = str(action.get("pr_url") or "").strip()
+    if (
+        str(pr.get("html_url") or "").strip() != pr_url
+        or str(pr.get("state") or "") != "open"
+        or pr.get("draft") is not True
+        or pr.get("merged") is not False
+        or str(base.get("ref") or "") != AUTONOMY_BASE_BRANCH
+        or str(head.get("ref") or "") != branch
+        or str(head.get("sha") or "").lower() != current_head
+    ):
+        raise ControlledGitHubError("existing_draft_pr_safety_invariant_failed")
+    return {
+        "branch_head_matches": True,
+        "draft_pr": True,
+        "merged": False,
+        "base_branch": True,
+        "pr_number": pr_number,
+        "pr_url": pr_url,
+    }
+
+
 def fetch_text_file(repository: str, path: str, branch: str) -> dict[str, str]:
     repo = validate_repository(repository)
     path = validate_path(path)

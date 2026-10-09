@@ -30,6 +30,7 @@ from github_controlled import (
     controlled_apply,
     fetch_text_file,
     sandbox_changes,
+    verify_existing_draft_action,
 )
 from persistence.build_identity import runtime_build_ref
 from persistence.core import ValidationError
@@ -317,7 +318,6 @@ def _record_controlled_autonomy_verification(service, run, action):
             "runtime_version": "controlled_autonomy_v1",
             "build_ref": runtime_build_ref(),
             "actor": str(run.get("created_by") or "owner"), "executor": "controlled_autonomy", "evaluator": "system",
-            "observed_availability_state": "available",
         },
         actor=str(run.get("created_by") or "owner"),
         idempotency_key=f"f14:e2e:{run_id}",
@@ -362,99 +362,125 @@ def apply_approved_controlled_autonomy(
     run = a.get_run(run_id, owner_scope=owner_scope)
     if run is None:
         raise ControlledAutonomyError("autonomy_run_not_found")
-    if run.get("status") != "acting":
+
+    failure_reason = str(run.get("failure_reason") or "")
+    stored_evaluation = dict(run.get("evaluation") or {})
+    is_recovery = (
+        run.get("status") == "failed"
+        and failure_reason.startswith("capability_verification_failed:")
+        and isinstance(run.get("action"), dict)
+        and bool(run["action"].get("pr_url"))
+        and bool(str(run.get("learning_reference") or "").strip())
+        and stored_evaluation.get("external_action_verified") is True
+    )
+    if run.get("status") != "acting" and not is_recovery:
         raise ControlledAutonomyError("autonomy_run_requires_explicit_approval")
     decision = run.get("decision") if isinstance(run.get("decision"), dict) else {}
     if decision.get("status") != "approved" or decision.get("mode") != "human":
         raise ControlledAutonomyError("human_approval_evidence_missing")
     if not isinstance(run.get("proposal"), dict) or not run["proposal"].get("changes"):
         raise ControlledAutonomyError("proposal_missing")
-    approval = run
-    proposal = run["proposal"]
     sandbox = run.get("sandbox") if isinstance(run.get("sandbox"), dict) else {}
     expected_hashes = sandbox.get("expected_hashes") if isinstance(sandbox.get("expected_hashes"), dict) else {}
     if not expected_hashes:
         raise ControlledAutonomyError("sandbox_hash_evidence_missing")
 
-    try:
-        action = controlled_apply(
-            repository=run["repository"],
-            base_sha=run["base_commit_sha"],
-            run_id=run_id,
-            changes=proposal["changes"],
-            title=f"Akira F14: {proposal.get('summary') or run['goal']}",
-            body=(
-                "Controlled Autonomy v1\n\n"
-                f"Run: {run_id}\n"
-                f"Base SHA: {run['base_commit_sha']}\n"
-                "Safety: branch-only, serial content writes, Draft PR, no merge.\n"
-                f"Approved by: {approval['decision']['approved_by']}\n"
-            ),
-            expected_hashes=expected_hashes,
-        )
-    except Exception as exc:
+    if is_recovery:
+        # The approved external write already happened. Verify it again, but never create
+        # another branch/commit/PR while reconciling only the final capability evidence.
+        action = run["action"]
         try:
-            a.record_failure(run_id, str(exc)[:1500], actor, owner_scope)
-        except Exception:
-            pass
-        raise ControlledAutonomyError(str(exc)[:1500]) from exc
-
-    _advance(
-        a, run_id, "external_applied", actor, owner_scope,
-        {
-            "action": action,
-            "branch_name": action["branch_name"],
-            "base_commit_sha": action["base_sha"],
-        },
-    )
-
-    current_head = branch_head(run["repository"], action["branch_name"])
-    verified = {
-        "branch_head_matches": current_head == action["branch_head"],
-        "draft_pr": action.get("pr_draft") is True,
-        "merged": action.get("merged") is False,
-        "base_branch": action.get("base_branch") == "main",
-        "pr_number": action.get("pr_number"),
-        "pr_url": action.get("pr_url"),
-    }
-    if not all(verified.values()):
-        a.record_failure(run_id, "external_verification_failed", actor, owner_scope)
-        raise ControlledAutonomyError("external_verification_failed")
-
-    evaluation = dict(run.get("evaluation") or {})
-    evaluation.update({
-        "external_action_verified": True,
-        "external_verification": verified,
-        "verified_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
-    })
-    _advance(a, run_id, "evaluated", actor, owner_scope, {"evaluation": evaluation})
-
-    learning_reference = ""
-    try:
-        learning = service.save_learning(
-            _build_f14_learning_event(run, action),
-            actor=actor,
-            owner_scope=owner_scope,
-            idempotency_key=f"f14:learning:{run_id}",
-        )
-        learning_reference = str(learning["record"]["id"]).strip()
-        if not learning_reference:
-            raise ControlledAutonomyError("learning_reference_missing")
-        _advance(
-            a, run_id, "learned", actor, owner_scope,
-            {"learning_reference": learning_reference},
-        )
-    except Exception as exc:
+            verified = verify_existing_draft_action(run["repository"], action)
+        except Exception as exc:
+            raise ControlledAutonomyError(
+                f"f14_recovery_external_verification_failed:{type(exc).__name__}"
+            ) from exc
+        evaluation = dict(run.get("evaluation") or {})
+        evaluation.update({
+            "external_action_verified": True,
+            "external_verification": verified,
+            "recovery_verified_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+        })
+    else:
+        approval = run
         try:
-            a.record_failure(
-                run_id,
-                f"learning_persistence_failed:{type(exc).__name__}",
-                actor,
-                owner_scope,
+            action = controlled_apply(
+                repository=run["repository"],
+                base_sha=run["base_commit_sha"],
+                run_id=run_id,
+                changes=run["proposal"]["changes"],
+                title=f"Akira F14: {run['proposal'].get('summary') or run['goal']}",
+                body=(
+                    "Controlled Autonomy v1\n\n"
+                    f"Run: {run_id}\n"
+                    f"Base SHA: {run['base_commit_sha']}\n"
+                    "Safety: branch-only, serial content writes, Draft PR, no merge.\n"
+                    f"Approved by: {approval['decision']['approved_by']}\n"
+                ),
+                expected_hashes=expected_hashes,
             )
-        except Exception:
-            pass
-        raise ControlledAutonomyError("learning_persistence_failed") from exc
+        except Exception as exc:
+            try:
+                a.record_failure(run_id, str(exc)[:1500], actor, owner_scope)
+            except Exception:
+                pass
+            raise ControlledAutonomyError(str(exc)[:1500]) from exc
+
+        _advance(
+            a, run_id, "external_applied", actor, owner_scope,
+            {
+                "action": action,
+                "branch_name": action["branch_name"],
+                "base_commit_sha": action["base_sha"],
+            },
+        )
+
+        current_head = branch_head(run["repository"], action["branch_name"])
+        verified = {
+            "branch_head_matches": current_head == action["branch_head"],
+            "draft_pr": action.get("pr_draft") is True,
+            "merged": action.get("merged") is False,
+            "base_branch": action.get("base_branch") == "main",
+            "pr_number": action.get("pr_number"),
+            "pr_url": action.get("pr_url"),
+        }
+        if not all(verified.values()):
+            a.record_failure(run_id, "external_verification_failed", actor, owner_scope)
+            raise ControlledAutonomyError("external_verification_failed")
+
+        evaluation = dict(run.get("evaluation") or {})
+        evaluation.update({
+            "external_action_verified": True,
+            "external_verification": verified,
+            "verified_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+        })
+        _advance(a, run_id, "evaluated", actor, owner_scope, {"evaluation": evaluation})
+
+        try:
+            learning = service.save_learning(
+                _build_f14_learning_event(run, action),
+                actor=actor,
+                owner_scope=owner_scope,
+                idempotency_key=f"f14:learning:{run_id}",
+            )
+            learning_reference = str(learning["record"]["id"]).strip()
+            if not learning_reference:
+                raise ControlledAutonomyError("learning_reference_missing")
+            _advance(
+                a, run_id, "learned", actor, owner_scope,
+                {"learning_reference": learning_reference},
+            )
+        except Exception as exc:
+            try:
+                a.record_failure(
+                    run_id,
+                    f"learning_persistence_failed:{type(exc).__name__}",
+                    actor,
+                    owner_scope,
+                )
+            except Exception:
+                pass
+            raise ControlledAutonomyError("learning_persistence_failed") from exc
 
     try:
         capability_verification = _record_controlled_autonomy_verification(service, run, action)
@@ -464,21 +490,31 @@ def apply_approved_controlled_autonomy(
         evaluation["capability_verification_id"] = capability_verification["record"]["id"]
         evaluation["capability_effective_state"] = effective_state
     except Exception as exc:
-        try:
-            a.record_failure(
-                run_id,
-                f"capability_verification_failed:{type(exc).__name__}",
-                actor,
-                owner_scope,
-            )
-        except Exception:
-            pass
+        if not is_recovery:
+            try:
+                a.record_failure(
+                    run_id,
+                    f"capability_verification_failed:{type(exc).__name__}",
+                    actor,
+                    owner_scope,
+                )
+            except Exception:
+                pass
         raise ControlledAutonomyError("capability_verification_failed") from exc
+
+    if is_recovery:
+        try:
+            return a.recover_capability_verification_failure(
+                run_id, actor, owner_scope, evaluation
+            )
+        except Exception as exc:
+            raise ControlledAutonomyError(
+                f"capability_verification_recovery_failed:{type(exc).__name__}"
+            ) from exc
 
     final = _advance(
         a, run_id, "completed", actor, owner_scope,
         {"evaluation": evaluation},
     )
     return final
-
 
