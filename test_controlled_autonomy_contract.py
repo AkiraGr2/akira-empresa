@@ -22,6 +22,7 @@ from autonomy_engine import (
     _build_f14_learning_event,
     _record_controlled_autonomy_verification,
     apply_approved_controlled_autonomy,
+    start_controlled_autonomy,
 )
 from unittest.mock import Mock, patch
 from github_readonly import GitHubReadUpstreamError
@@ -113,6 +114,66 @@ class ControlledAutonomyContractTests(unittest.TestCase):
             validate_transition("evaluated", "completed")
         with self.assertRaises(AutonomyContractError):
             validate_transition("completed", "acting")
+
+    def test_f14_reviewer_rejection_persists_diagnostics_and_fails_closed(self):
+        service = FakePersistence()
+        path = "docs/F14_PRODUCTION_VERIFICATION.md"
+        patch_text = "--- /dev/null\n+++ b/docs/F14_PRODUCTION_VERIFICATION.md\n@@ -0,0 +1,3 @@\n+# Production Verification\n+\n+Human approval was required.\n"
+        proposal = {
+            "status": "proposal",
+            "summary": "Create only the bounded verification note.",
+            "changes": [{
+                "path": path,
+                "operation": "create",
+                "reason": "production verification evidence",
+                "patch": patch_text,
+            }],
+            "requires_human_approval": True,
+            "write_performed": False,
+        }
+        review = {
+            "verdict": "request_changes",
+            "summary": "The proposal needs a clearer validation note.",
+            "findings": [{
+                "severity": "medium",
+                "path": path,
+                "message": "The note does not identify the runtime build.",
+            }],
+            "required_tests": ["confirm the runtime identity is recorded"],
+            "write_performed": False,
+        }
+        with __import__("contextlib").ExitStack() as stack:
+            stack.enter_context(patch("autonomy_engine.f14_zero_cost_provider_preflight", return_value={"ok": True}))
+            stack.enter_context(patch("autonomy_engine.branch_head", return_value="a" * 40))
+            stack.enter_context(patch("autonomy_engine.propose_code_change", return_value=proposal))
+            stack.enter_context(patch("autonomy_engine.validate_proposal", side_effect=lambda value: value))
+            stack.enter_context(patch("autonomy_engine._canonicalize_proposal_against_base", side_effect=lambda p, _repo, _sha: p))
+            stack.enter_context(patch("autonomy_engine.sandbox_changes", return_value={"files": [{"path": path, "sha256": "b" * 64}]}))
+            stack.enter_context(patch("autonomy_engine._run_sandbox_tests_from_existing_archive", return_value={"status": "passed", "tests": [{"status": "passed"}]}))
+            stack.enter_context(patch("autonomy_engine.review_code_change", return_value=review))
+            run = start_controlled_autonomy(
+                service,
+                {
+                    "goal": "Check review diagnostics.",
+                    "repository": "AkiraGr2/akira-empresa",
+                    "base_branch": "main",
+                    "paths": [path],
+                    "instruction": "Create only the verification note.",
+                    "queries": [path],
+                    "tests": ["test_controlled_autonomy_contract"],
+                    "idempotency_key": "f14-review-rejection-diagnostics",
+                },
+                actor="owner@example.com",
+                owner_scope="scope:A",
+            )
+
+        self.assertEqual(run["status"], "failed")
+        self.assertEqual(run["failure_reason"], "review_not_approved:request_changes")
+        self.assertEqual(run["evaluation"]["review_verdict"], "request_changes")
+        self.assertIn("runtime build", run["evaluation"]["review_findings"][0]["message"])
+        self.assertEqual(run["evaluation"]["review_required_tests"], ["confirm the runtime identity is recorded"])
+        self.assertFalse(run["evaluation"]["review_write_performed"])
+        self.assertFalse(run["evaluation"]["external_write_allowed"])
 
     def test_proposal_requires_real_unified_patch(self):
         with self.assertRaises(AutonomyContractError):
