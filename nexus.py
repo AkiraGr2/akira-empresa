@@ -56,7 +56,7 @@ from persistence.absorption import (
 from identity_root import IDENTITY_ROOT_VERSION, PUBLIC_IDENTITY, get_identity_root
 from persistence.memory_recall import recall_memories as _recall_memories_impl
 from persistence.model_registry import (PRIMARY_CHAT_MODEL, GEMINI_REASONING_MODEL, GEMINI_CHAT_FALLBACK_VARIANT, GROQ_FALLBACK_MODELS, OPENROUTER_MODEL_ROUTE, MISTRAL_MODEL_ROUTE, MEMORY_EMBEDDING_MODEL)
-from persistence.core import PersistenceError, ValidationError, validate_tool_inputs
+from persistence.core import ConflictError, NotFoundError, PersistenceError, ValidationError, validate_tool_inputs
 from tool_audit import TOOL_ORDER, run_tool_audit
 from agent_audit import EXPECTED_AGENT_CAPABILITY_CASES, PRODUCTION_AGENT_ORDER, run_agent_audit
 
