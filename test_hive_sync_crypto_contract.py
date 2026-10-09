@@ -116,6 +116,14 @@ class HiveSyncCanonicalizationContractTests(unittest.TestCase):
         with self.assertRaises(HiveSyncEnvelopeError):
             canonical_json_bytes({"items": [None] * 100_001})
 
+    def test_invalid_unicode_is_rejected_with_contract_error(self):
+        with self.assertRaises(HiveSyncEnvelopeError):
+            canonical_json_bytes({"invalid": "\\ud800"})
+
+    def test_unsupported_python_objects_are_rejected_before_serialization(self):
+        with self.assertRaises(HiveSyncEnvelopeError):
+            canonical_json_bytes({"unexpected": object()})
+
 
 class HiveSyncSignatureContractTests(unittest.TestCase):
     def setUp(self):
