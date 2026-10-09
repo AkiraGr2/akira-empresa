@@ -70,5 +70,41 @@ class GitHubReadonlyGatewayTests(unittest.TestCase):
         )
 
 
+    def test_reads_moderately_oversized_source_as_full_file_within_total_budget(self):
+        path = "test_controlled_autonomy_contract.py"
+        source = "x" * 45_000
+        fake_file = {
+            "type": "file",
+            "name": path,
+            "path": path,
+            "size": len(source.encode("utf-8")),
+            "content": base64.b64encode(source.encode("utf-8")).decode("ascii"),
+        }
+        root = [{"name": path, "path": path, "type": "file", "size": len(source)}]
+
+        def fake_get(url):
+            if url.endswith("/git/ref/heads/main"):
+                return {"object": {"sha": "a" * 40}}
+            if url.endswith("/contents?ref=main"):
+                return root
+            if url.endswith(f"/contents/{path}?ref=main"):
+                return fake_file
+            raise AssertionError(f"Unexpected GitHub URL: {url}")
+
+        with patch("github_readonly._get_json", side_effect=fake_get):
+            result = inspect_repository(
+                "AkiraGr2/akira-empresa",
+                paths=[path],
+                max_files=1,
+            )
+
+        self.assertTrue(result["read_only"])
+        self.assertEqual(result["files"][0]["status"], "ok")
+        self.assertEqual(result["files"][0]["mode"], "full_file")
+        self.assertEqual(result["files"][0]["content"], source)
+        self.assertEqual(result["total_bytes"], len(source.encode("utf-8")))
+        self.assertLessEqual(result["total_bytes"], result["limits"]["max_total_bytes"])
+
+
 if __name__ == "__main__":
     unittest.main()
