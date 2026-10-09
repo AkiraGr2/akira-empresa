@@ -18,6 +18,7 @@
 # Sub-fase 1.8: contrato de capacidades + endurecimiento de endpoints multimedia en modo gratuito.
 # Sub-fase 1.9: imagen experimental protegida por doble opt-in y proxy seguro del servidor.
 import os, json, datetime, threading, time, hashlib, base64, math, asyncio, random, re, uuid
+import contextvars
 from contextlib import asynccontextmanager
 from pathlib import Path
 from collections import defaultdict
@@ -62,6 +63,7 @@ from agent_audit import EXPECTED_AGENT_CAPABILITY_CASES, PRODUCTION_AGENT_ORDER,
 VERSION="V7.3"
 MODEL="external-inference-runtime"
 BACKEND_BUILD_MARKER="learning-graph-memory-v3-runtime-2026-10-04.1"
+_F7_ZERO_COST_COGNITIVE_CYCLE = contextvars.ContextVar("akira_f7_zero_cost_cognitive_cycle", default=False)
 OWNER_EMAILS=["bjhon9161@gmail.com"]
 CHAT_ACTION_INTEGRITY_RULE = """
 ACCIONES Y PERSISTENCIA: No afirmes que creaste, registraste, verificaste, consolidaste,
@@ -4308,6 +4310,16 @@ def v8_graph_cleanup_tests(request: Request):
 
 def _run_reason_stage(message, memories):
     recall_block = _format_recall_block(memories)
+    # F7 production revalidation and F8 tool audit are explicitly Groq-only.
+    # If Groq is unavailable, fail closed; never fall back to Gemini on this path.
+    if _F7_ZERO_COST_COGNITIVE_CYCLE.get() or f8_zero_cost_audit_active():
+        try:
+            answer = get_groq_fallback(message, recall_block)
+        except Exception as e:
+            print(f"[cycle] Groq-only inference failed: {type(e).__name__}")
+            answer = None
+        return answer, ("groq" if answer else "none")
+
     gemini_keys = _pick_gemini_keys()
     answer = None; model_used = "none"
     if gemini_keys:
@@ -4531,11 +4543,28 @@ def v8_cognitive_cycle(request: Request, payload: dict):
     trigger = str(payload.get("trigger") or "manual")[:64]
     input_data = payload.get("input") or {}
     if not isinstance(input_data, dict): return JSONResponse({"ok": False, "reason": "input_must_be_object"}, status_code=400)
+
+    # The authenticated F7 cycle endpoint is always no-charge: require the existing
+    # explicit Groq free-plan gate before starting persistence, and never try Gemini.
+    provider_gate = f8_audit_provider_preflight()
+    if not provider_gate["ok"]:
+        return JSONResponse({
+            "ok": False,
+            "reason": "zero_cost_provider_not_confirmed",
+            "detail": provider_gate["reason"],
+            "provider": provider_gate.get("provider", "groq"),
+            "cycle_started": False,
+        }, status_code=409)
+
+    token = _F7_ZERO_COST_COGNITIVE_CYCLE.set(True)
     try:
-        result = _execute_cognitive_cycle(service, trigger, input_data, actor=s["email"], owner_scope=s["owner_scope"])
-    except Exception as e:
-        return JSONResponse({"ok": False, "reason": "cycle_failed", "error_type": type(e).__name__,
-                             "detail": str(e)[:200]}, status_code=500)
+        try:
+            result = _execute_cognitive_cycle(service, trigger, input_data, actor=s["email"], owner_scope=s["owner_scope"])
+        except Exception as e:
+            return JSONResponse({"ok": False, "reason": "cycle_failed", "error_type": type(e).__name__,
+                                 "detail": str(e)[:200]}, status_code=500)
+    finally:
+        _F7_ZERO_COST_COGNITIVE_CYCLE.reset(token)
     return {"ok": True, "cycle_id": result["cycle"]["id"], "cycle": result["cycle"],
             "events": result["events"], "events_count": len(result["events"]),
             "answer": result["answer"], "learning_id": result.get("learning_id"),
