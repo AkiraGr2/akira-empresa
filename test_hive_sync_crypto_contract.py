@@ -173,7 +173,7 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
     def test_v1_identifiers_must_be_canonical_uuids(self):
         for field, bad_value in (
             ("event_id", "evt-not-a-uuid"),
-            ("collective_id", "20000000-0000-4000-8000-000000000001".upper()),
+            ("collective_id", "a0000000-0000-4000-8000-000000000001".upper()),
             ("recipient_membership_id", "not-a-membership-uuid"),
         ):
             with self.subTest(field=field, bad_value=bad_value):
