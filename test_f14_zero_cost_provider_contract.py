@@ -72,7 +72,15 @@ class F14ZeroCostProviderContractTests(unittest.TestCase):
             function.index("f14_zero_cost_provider_preflight()"),
             function.index("created = a.create_run"),
         )
-        self.assertEqual(function.count("with f14_zero_cost_autonomy_scope():"), 2)
+        self.assertEqual(function.count("with f14_zero_cost_autonomy_scope():"), 1)
+
+        proposal_start = source.index("def _prepare_controlled_proposal(")
+        proposal_end = source.index("\ndef _enforce_f14_production_verification_contract(", proposal_start)
+        proposal_helper = source[proposal_start:proposal_end]
+        self.assertEqual(
+            proposal_helper.count("with f14_zero_cost_autonomy_scope():"),
+            1,
+        )
 
 
 if __name__ == "__main__":
