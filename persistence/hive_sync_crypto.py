@@ -81,6 +81,14 @@ class HiveSyncSignatureError(HiveSyncCryptoError):
     """An envelope signature is missing, untrusted, malformed, or invalid."""
 
 
+def _utf8_size(value: str) -> int:
+    """Return strict UTF-8 size, translating invalid surrogate input to a safe error."""
+    try:
+        return len(value.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise HiveSyncEnvelopeError("canonical_json_string_not_valid_unicode") from exc
+
+
 def _preflight_json_value(value: Any) -> None:
     """Bound and validate a JSON-like tree before recursive checks or serialization.
 
@@ -105,7 +113,7 @@ def _preflight_json_value(value: Any) -> None:
                     raise HiveSyncEnvelopeError("canonical_json_object_key_not_string")
                 if len(key) > MAX_CANONICAL_JSON_BYTES:
                     raise HiveSyncEnvelopeError("canonical_json_payload_too_large")
-                estimated_bytes += len(key.encode("utf-8")) + 3
+                estimated_bytes += _utf8_size(key) + 3
                 stack.append((nested, depth + 1))
         elif isinstance(current, (list, tuple)):
             estimated_bytes += 2
@@ -114,7 +122,7 @@ def _preflight_json_value(value: Any) -> None:
         elif isinstance(current, str):
             if len(current) > MAX_CANONICAL_JSON_BYTES:
                 raise HiveSyncEnvelopeError("canonical_json_payload_too_large")
-            estimated_bytes += len(current.encode("utf-8")) + 2
+            estimated_bytes += _utf8_size(current) + 2
         elif current is None or isinstance(current, bool):
             estimated_bytes += 5
         elif isinstance(current, int):
