@@ -37,9 +37,20 @@ def make_envelope(snapshot=None):
         "event_id": "10000000-0000-4000-8000-000000000001",
         "collective_id": "20000000-0000-4000-8000-000000000001",
         "recipient_membership_id": "30000000-0000-4000-8000-000000000001",
+        "publication_id": "40000000-0000-4000-8000-000000000001",
+        "sender_owner_ref": "owner-ref-test",
+        "membership_generation": 1,
+        "sender_sequence": 1,
+        "knowledge_lineage_id": "lineage-test-01",
+        "revision_id": "revision-test-01",
+        "parent_revision_ids": [],
+        "audience_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "issued_at": "2026-10-09T00:00:00Z",
         "consent_id": "consent-test-03",
         "content_hash": snapshot_sha256(snapshot),
         "snapshot": snapshot,
+        "evidence": [{"reference": "https://example.invalid/evidence/1"}],
+        "provenance": {"source_reference": "https://example.invalid/evidence/1"},
         "privacy_level": "SHAREABLE",
         "verification_status": "verified",
     }
@@ -162,6 +173,15 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
             "event_id": "10000000-0000-4000-8000-000000000005",
             "collective_id": "20000000-0000-4000-8000-000000000001",
             "recipient_membership_id": "30000000-0000-4000-8000-000000000001",
+            "publication_id": "40000000-0000-4000-8000-000000000001",
+            "sender_owner_ref": "owner-ref-test",
+            "membership_generation": 1,
+            "sender_sequence": 1,
+            "knowledge_lineage_id": "lineage-test-01",
+            "revision_id": "revision-test-01",
+            "parent_revision_ids": [],
+            "audience_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "issued_at": "2026-10-09T00:00:00Z",
             "consent_id": "consent-test-03",
             "content_hash": snapshot_sha256(make_snapshot()),
             "revocation_generation": 3,
@@ -182,6 +202,58 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
                 envelope["canonicalization"] = bad_value
                 with self.assertRaises(HiveSyncEnvelopeError):
                     sign_envelope(envelope, self.private_key, self.key_id)
+
+    def test_minimum_v1_envelope_fields_are_required(self):
+        required = (
+            "publication_id",
+            "sender_owner_ref",
+            "membership_generation",
+            "sender_sequence",
+            "knowledge_lineage_id",
+            "revision_id",
+            "parent_revision_ids",
+            "audience_hash",
+            "issued_at",
+            "evidence",
+            "provenance",
+        )
+        for field in required:
+            with self.subTest(field=field):
+                envelope = make_envelope()
+                envelope.pop(field)
+                with self.assertRaises(HiveSyncEnvelopeError):
+                    sign_envelope(envelope, self.private_key, self.key_id)
+
+    def test_generation_sequence_audience_hash_and_parents_are_validated(self):
+        for field in ("membership_generation", "sender_sequence"):
+            for value in (0, -1, True, "1", None):
+                with self.subTest(field=field, value=value):
+                    envelope = make_envelope()
+                    envelope[field] = value
+                    with self.assertRaises(HiveSyncEnvelopeError):
+                        sign_envelope(envelope, self.private_key, self.key_id)
+
+        for value in ("short", "g" * 64, None):
+            with self.subTest(audience_hash=value):
+                envelope = make_envelope()
+                envelope["audience_hash"] = value
+                with self.assertRaises(HiveSyncEnvelopeError):
+                    sign_envelope(envelope, self.private_key, self.key_id)
+
+        for value in ("not-an-array", [1], ["revision", ""], ["revision", "revision"]):
+            with self.subTest(parent_revision_ids=value):
+                envelope = make_envelope()
+                envelope["parent_revision_ids"] = value
+                with self.assertRaises(HiveSyncEnvelopeError):
+                    sign_envelope(envelope, self.private_key, self.key_id)
+
+    def test_snapshot_requires_concept_and_content(self):
+        for field in ("concept", "content"):
+            with self.subTest(field=field):
+                snapshot = make_snapshot()
+                snapshot.pop(field)
+                with self.assertRaises(HiveSyncEnvelopeError):
+                    sign_envelope(make_envelope(snapshot), self.private_key, self.key_id)
 
     def test_sign_and_verify_snapshot_event(self):
         unsigned = make_envelope()
@@ -269,6 +341,15 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
             "event_id": "10000000-0000-4000-8000-000000000004",
             "collective_id": "20000000-0000-4000-8000-000000000001",
             "recipient_membership_id": "30000000-0000-4000-8000-000000000001",
+            "publication_id": "40000000-0000-4000-8000-000000000001",
+            "sender_owner_ref": "owner-ref-test",
+            "membership_generation": 1,
+            "sender_sequence": 1,
+            "knowledge_lineage_id": "lineage-test-01",
+            "revision_id": "revision-test-01",
+            "parent_revision_ids": [],
+            "audience_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "issued_at": "2026-10-09T00:00:00Z",
             "consent_id": "consent-test-03",
             "content_hash": snapshot_sha256(make_snapshot()),
         }
@@ -320,6 +401,15 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
             "event_id": "10000000-0000-4000-8000-000000000002",
             "collective_id": "20000000-0000-4000-8000-000000000001",
             "recipient_membership_id": "30000000-0000-4000-8000-000000000001",
+            "publication_id": "40000000-0000-4000-8000-000000000001",
+            "sender_owner_ref": "owner-ref-test",
+            "membership_generation": 1,
+            "sender_sequence": 1,
+            "knowledge_lineage_id": "lineage-test-01",
+            "revision_id": "revision-test-01",
+            "parent_revision_ids": [],
+            "audience_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "issued_at": "2026-10-09T00:00:00Z",
             "consent_id": "consent-test-03",
             "content_hash": snapshot_sha256(make_snapshot()),
             "revocation_generation": 2,
@@ -335,6 +425,15 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
             "event_id": "10000000-0000-4000-8000-000000000003",
             "collective_id": "20000000-0000-4000-8000-000000000001",
             "recipient_membership_id": "30000000-0000-4000-8000-000000000001",
+            "publication_id": "40000000-0000-4000-8000-000000000001",
+            "sender_owner_ref": "owner-ref-test",
+            "membership_generation": 1,
+            "sender_sequence": 1,
+            "knowledge_lineage_id": "lineage-test-01",
+            "revision_id": "revision-test-01",
+            "parent_revision_ids": [],
+            "audience_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "issued_at": "2026-10-09T00:00:00Z",
             "consent_id": "consent-test-03",
             "content_hash": snapshot_sha256(make_snapshot()),
             "snapshot": make_snapshot(),
