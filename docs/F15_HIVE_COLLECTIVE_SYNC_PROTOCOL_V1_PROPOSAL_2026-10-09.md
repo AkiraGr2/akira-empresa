@@ -19,67 +19,82 @@ La secuencia de producto se mantiene: conocimiento privado → autorización exp
 
 ## 2. Modelo de identidad y autorización
 
-### 2.1 Principales y pares
+### 2.0 Topología elegida para la propuesta v1
 
-- **Owner principal:** identidad autenticada por el mecanismo de sesión del backend. El servidor deriva el propietario a partir de la sesión; nunca acepta un `owner_scope`, `owner_id`, `is_owner` ni rol del cuerpo JSON como autoridad.
-- **Peer:** instalación/dispositivo con `peer_id` asignado por el servidor, asociado a un owner autenticado y a una clave pública. Una sesión de navegador no es por sí sola prueba de identidad de otro peer.
-- **Collective:** espacio de intercambio identificado por UUID. Tiene un creador owner y una política de membresía. La autorización se evalúa tanto para el principal autenticado como para el peer que firma el evento.
-- **Miembro:** owner que aceptó una invitación. Las instalaciones de ese owner no obtienen automáticamente privilegios hasta registrar/emparejar su propia clave y estar activas.
+La propuesta v1 es **mediada por el backend**: el servicio autentica la acción de origen, valida membresías, crea envelopes, administra outbox/inbox y registra recibos. No hay conexión directa browser-a-browser ni peer-to-peer, y no se acepta un envelope arbitrario a través de una ruta pública. La entrega se procesa a través de servicios internos confiables y persistencia durable.
 
-La membresía es **por invitación, con aceptación explícita y caducidad**. Un token de invitación debe tener entropía criptográfica, almacenarse como hash, ser de un solo uso, estar ligado a la colectiva y al destinatario previsto cuando exista ese dato, y expirar. Invitar no equivale a activar. El backend debe denegar por defecto y no revelar si un principal ajeno existe.
+En este contrato, «par» significa otro owner autenticado miembro de la colectiva, no una instalación local. La identidad de dispositivo, pairing y claves de Local Agent son otro contrato. Si en el futuro se requiere transferencia directa entre instancias, será una versión/capacidad distinta, no un cambio implícito de transporte dentro de v1.
 
-Estados de membresía propuestos: `INVITED`, `ACTIVE`, `SUSPENDED`, `REVOKED`, con transiciones auditadas. `REVOKED` no vuelve a `ACTIVE` mediante reintento; se requiere nueva invitación/aceptación.
+### 2.1 Principales, colectivas y membresía
 
-### 2.2 Claves y firmas
+- **Owner principal:** identidad autenticada por el mecanismo de sesión del backend. El servidor deriva al owner desde la sesión; nunca acepta `owner_scope`, `owner_id`, `is_owner` ni roles del JSON como autoridad.
+- **Collective:** espacio de intercambio identificado por UUID, con owner creador y política de membresía.
+- **Miembro:** owner principal que aceptó explícitamente una invitación y tiene membresía activa. Las sesiones o dispositivos de ese owner no son miembros adicionales.
+- **Peer receptor:** destino autorizado por una membresía concreta. `collective_id` no es una credencial ni concede acceso por sí solo.
 
-- Cada peer registrado tiene una clave de firma Ed25519; la clave privada permanece en el dispositivo que la controla. El servidor vincula la clave pública a `peer_id`, owner autenticado, fecha de alta y estado.
-- Los envelopes usan JSON canónico conforme a RFC 8785, SHA-256 sobre los bytes canónicos y firma Ed25519 sobre el hash/contexto definido por la implementación.
-- El `key_id` permite rotación explícita. Revocar una clave bloquea nuevos eventos firmados con ella. La rotación conserva el registro histórico y no revalida eventos previamente rechazados.
-- El servidor verifica sesión, estado de peer, pertenencia activa, firma y elegibilidad en cada operación de escritura. Una firma válida no sustituye la autorización de aplicación.
-- Las claves del servidor para firmar recibos se separan de las claves de peer. El almacenamiento y rotación de esas claves debe acordarse con las capacidades reales de deployment antes de implementarlas; no se permite hardcodear secretos en el repositorio o frontend.
+La membresía es **por invitación, con aceptación explícita y caducidad**. Un token de invitación debe tener entropía criptográfica, almacenarse como hash, ser de un solo uso, estar ligado a la colectiva y al destinatario previsto cuando aplique, y expirar. Invitar no equivale a activar. Estados propuestos: `INVITED`, `ACTIVE`, `SUSPENDED`, `REVOKED`, con transiciones auditadas. `REVOKED` no vuelve a `ACTIVE` por reintento; se requiere una invitación nueva.
 
-**Puerta de implementación:** antes de habilitar transferencias, una prueba de desafío debe demostrar posesión de clave del peer y su vínculo con la sesión/owner. Hasta entonces, el estado de cualquier peer es no verificado.
+Toda escritura comprueba sesión, ownership y membresía vigente en el servidor. Para recursos ajenos se usan respuestas opacas, sin confirmar si existen. Una baja o suspensión de membresía bloquea nuevas publicaciones y recepciones/aceptaciones según el contrato; no se puede eludir pasando otro `owner_scope` o un ID de cuenta en el cuerpo.
+
+### 2.2 Firma del servicio y canonicalización
+
+Como v1 es mediada por el backend, **el servicio firma los envelopes de distribución**; no se exige que el navegador o Local Agent firme los eventos de colectiva. El backend solo genera un envelope después de validar la sesión, el consentimiento registrado y las membresías. La firma del servicio protege la integridad y el emisor técnico del envelope; no sustituye el consentimiento humano ni, por sí sola, prueba que el owner lo aprobó.
+
+Contrato criptográfico candidato:
+
+- JSON canónico conforme a RFC 8785 (JCS); hash del snapshot: `SHA-256(JCS(snapshot))`.
+- Firma Ed25519 del envelope sin el campo `signature`: el mensaje firmado son los bytes UTF-8 de `AKIRA-HIVE-SYNC-V1\n` seguidos de `JCS(envelope_without_signature)`.
+- Cada firma incluye `service_key_id`; el backend receptor valida firma, algoritmo y estado de la clave antes de aplicar el evento.
+- La clave privada del servicio debe estar protegida en un mecanismo operativo aprobado (por ejemplo, gestor de claves/secretos con rotación y acceso restringido). No se hardcodean claves ni se almacenan en frontend o en Knowledge.
+- La acción del owner se acredita mediante consentimiento persistido y auditoría transaccional. La firma del servicio no se usa como sustituto de esa fila.
+
+Este algoritmo es una **propuesta**, no una implementación verificada. `requirements.txt` no declara explícitamente una dependencia dedicada para Ed25519/JCS, y no se ha demostrado que Render tenga una clave de firma gestionada/configurada para este fin. Esos dos puntos son gates de implementación: elegir y fijar las librerías, validar interoperabilidad con vectores de prueba y resolver key management antes de crear endpoints o activar la entrega. Si el despliegue no puede proteger/rotar la clave, la sincronización no se habilita.
+
+El contrato no registra claves de dispositivos ni crea pairing. Local Agent deberá disponer de identidad, desafío firmado y permisos propios en su ciclo separado.
 
 ## 3. Privacidad, consentimiento y semántica de «COLLECTIVE»
 
-Para evitar romper el esquema existente y mezclar conceptos:
+La secuencia de producto continúa siendo: conocimiento privado → autorización explícita para compartir → relación de conocimiento aceptada en una colectiva. No se debe convertir una marca de privacidad en prueba de transporte, membresía o aceptación.
 
-- `privacy_level` mantiene el significado de privacidad del registro (`PRIVATE`, `SHAREABLE`, `SENSITIVE`). No se usará una actualización genérica para hacer aparecer una publicación colectiva.
-- La relación con la colectiva y su estado de distribución se modelan por separado. La UI puede mostrar **COLLECTIVE** cuando un snapshot fue aceptado y existe una relación activa, pero esto no crea permiso implícito para redistribuirlo.
-- `PRIVATE` y `SENSITIVE` son inexportables. `SHAREABLE` permite considerar un snapshot para publicación, pero por sí solo no autoriza una transferencia.
-- Cada consentimiento MUST incluir al menos owner actor, colectiva destino, ID de registro, versión de Knowledge, hash del snapshot exportable, versión del contrato, política de redacción, timestamp, y estado de revocación/generación. El consentimiento no se reutiliza para otro hash, colectiva o revisión.
-- Cualquier cambio material invalida el consentimiento anterior. La re-publicación exige guardar una nueva versión verificable y una nueva confirmación explícita. La verificación nueva no vuelve a habilitar el envío automáticamente.
-- El snapshot exportable es una proyección permitida por lista positiva; no incluye sesiones, tokens, owner scope privado, prompt/contexto interno, datos de otros propietarios ni metadatos que no hagan falta para la procedencia.
+**Compatibilidad comprobada:** la migración existente `049_knowledge_first_class_and_graph_fk` permite el literal `COLLECTIVE` en el CHECK de `knowledge_records.privacy_level`; aun así, el servicio de Share Gate rechaza la transición a `COLLECTIVE` con `collective_sync_not_configured`. El valor existente no crea una colectiva, una membresía, consentimiento, un inbox ni una entrega. Esta propuesta no modifica ese CHECK ni propone establecer `privacy_level='COLLECTIVE'` como atajo: la relación de distribución debe tener su propio estado durable y explícito. La compatibilidad completa exige revisar los lectores/escritores de ese campo antes de cualquier implementación.
 
-La aceptación de un elemento entrante crea una **relación local con el snapshot y su procedencia**, no permiso de reexportación. Si el receptor desea compartirlo con una segunda colectiva, debe revisarlo y otorgar su propio consentimiento sobre un snapshot nuevo bajo su propio owner. No hay propagación transitiva implícita.
+- `PRIVATE` y `SENSITIVE` son inexportables.
+- `SHAREABLE` hace que un snapshot pueda considerarse para publicar, pero no autoriza por sí solo una transferencia.
+- La relación con una colectiva y el estado de distribución se modelan por separado. Office puede presentar el estado de relación **COLLECTIVE** solo cuando el snapshot fue aceptado y la relación activa sigue vigente.
+- El registro fuente conserva el significado de privacidad del conocimiento; una relación colectiva activa no es un permiso implícito para redistribuir. El receptor que acepta un snapshot crea una relación/proyección local con procedencia; una copia recibida no se reexporta sin revisión y consentimiento propios.
+- Cada consentimiento incluye como mínimo owner actor derivado de sesión, colectiva destino, ID de Knowledge, versión, hash del snapshot exportable, versión del contrato, política de redacción, timestamp, generación de revocación y conjunto exacto de membresías destinatarias activas (o su hash determinista). El consentimiento se limita a esa revisión y audiencia; no se reutiliza para otro hash, colectiva o conjunto de destinatarios.
+- Antes de confirmar, el servidor calcula la audiencia. Una nueva membresía no recibe retroactivamente publicaciones anteriores. Para sumar destinatarios, hace falta nuevo consentimiento explícito sobre la audiencia actual.
+- Un cambio material invalida el consentimiento anterior. Re-publicar exige versión nueva, verificación fresca y confirmación nueva. Re-verificar no habilita envío automáticamente.
+- El snapshot exportable es una proyección por lista positiva; no incluye sesiones, tokens, owner scope privado, prompts/contexto interno, datos de otros owners ni metadatos que no hagan falta para la procedencia.
 
 ## 4. Envelope del protocolo
 
-Cada evento de transferencia candidato v1 incluye como mínimo:
+Cada entrega destinada a un miembro es un envelope de servicio con mínimo:
 
-- `protocol_version` (literal `hive-sync/1`) y `event_type`;
-- `event_id` UUID, `collective_id`, `sender_peer_id`, `key_id`;
-- `membership_generation` y `sender_sequence` monotónica por peer/colectiva;
-- `knowledge_lineage_id`, `revision_id`, referencias de revisión padre y `content_hash`;
-- snapshot mínimo sanitizado, nivel de privacidad y estado de verificación del snapshot;
+- `protocol_version` literal `hive-sync/1` y `event_type`;
+- `publication_id` para agrupar los envíos de una publicación y `event_id` UUID único para esa entrega a un destinatario;
+- `collective_id`, referencia opaca estable del owner emisor, `recipient_membership_id`, generación de membresía autorizada y `sender_sequence` monotónica por colectiva/owner;
+- `knowledge_lineage_id`, `revision_id`, revisión(es) padre y `content_hash`;
+- snapshot mínimo sanitizado, clasificación de privacidad y estado de verificación de ese snapshot;
 - procedencia/evidencia asociada al mismo hash, en la proyección permitida;
-- identificador y prueba del consentimiento que autoriza exactamente ese snapshot y destino;
-- timestamp del emisor solo como dato de auditoría, nunca como autoridad para sobrescribir versiones;
-- hash, firma y versión de formato/canonicalización.
+- ID del consentimiento y resumen determinista de la audiencia que se autorizó;
+- timestamp del servicio para auditoría; no es una autoridad para ordenar hechos;
+- `service_key_id`, firma Ed25519 y la versión de canonicalización.
 
-Tipos iniciales permitidos: `KNOWLEDGE_SNAPSHOT` y `KNOWLEDGE_REVOCATION`. Los eventos de membresía se administran por el servicio de membresía y se verifican contra el estado durable; un sobre no puede autoproclamarse miembro. Versiones o tipos desconocidos se rechazan de forma cerrada y auditable.
+El payload `signature` queda fuera de `envelope_without_signature`; la firma cubre el resto de los campos, incluido `content_hash`, destinatario y consentimiento. Los tipos iniciales permitidos son `KNOWLEDGE_SNAPSHOT` y `KNOWLEDGE_REVOCATION`. Los eventos se crean/aplican por servicios internos; no existe endpoint público para que un cliente se atribuya un emisor o inyecte eventos firmados.
 
-Los campos exactos de evidencia/procedencia se deben cotejar contra el schema actual antes de codificarlos; el esquema no autoriza a filtrar evidencia privada por conveniencia de serialización.
+La lista definitiva de campos de evidencia/procedencia debe cotejarse contra el schema real antes de codificarse. El esquema no autoriza a filtrar evidencia privada por conveniencia de serialización.
 
 ## 5. Idempotencia, orden y entrega durable
 
-- La outbox se guarda en la misma transacción que el consentimiento y la revisión exportable. No se confirma publicación si no quedó persistida la intención de entrega.
-- La clave de deduplicación propuesta es `(collective_id, event_id)`; se guarda también el hash del envelope.
-- Repetir el mismo ID con el mismo hash devuelve el recibo/idempotency result anterior sin nuevas revisiones ni auditorías duplicadas. Reutilizar el mismo ID con un hash diferente se trata como error de integridad, se pone en cuarentena y se registra.
-- `sender_sequence` permite detectar huecos y reordenamiento; no se usa como reloj factual ni como criterio last-write-wins. Un evento recibido fuera de orden puede persistirse en inbox, pero no debe reemplazar un estado más reciente ni saltarse validaciones.
-- Los eventos normales requieren el peer y la membresía vigentes al validarse. Los eventos de revocación llevan una generación de consentimiento monotónica y no pueden ser revertidos por un snapshot antiguo.
-- La entrega es como máximo reintentable; la aplicación de evento debe ser idempotente. Los estados `PENDING`, `DELIVERED`, `ACKNOWLEDGED`, `FAILED` son hechos persistidos, no estimaciones del navegador. «Entregado» no es sinónimo de «aceptado».
-- Si el proceso cae tras guardar outbox y antes de enviar, una recuperación puede reintentar el evento con el mismo ID. La persistencia del inbox/recibo debe confirmarse mediante una lectura nueva antes de mostrar éxito final en Office.
+- La outbox y las filas de entrega a destinatarios se guardan en la misma transacción que el consentimiento y la revisión exportable. No se confirma publicación si no quedó persistida la intención de entrega.
+- Cada entrega por destinatario tiene un `event_id` propio y una clave de deduplicación durable, propuesta como `(recipient_membership_id, event_id)`; `publication_id` agrupa las entregas creadas por una confirmación. Se conserva el hash del envelope.
+- Repetir el mismo ID con el mismo hash devuelve el resultado/recibo idempotente anterior sin nuevas revisiones o efectos. Reutilizar el ID con hash diferente es error de integridad, se pone en cuarentena y se audita.
+- `sender_sequence` detecta huecos y reordenamiento; no es reloj factual ni criterio last-write-wins. Un evento fuera de orden puede persistirse en inbox, pero no sobrescribe un estado más reciente ni salta validaciones.
+- Antes de entregar y de aceptar, el servidor revalida membresía, consentimiento, hash y generación. Si un receptor fue revocado antes de entregar, su fila pendiente no se envía. Una membresía nueva no entra en la audiencia histórica por defecto.
+- Los eventos normales requieren membresía vigente. Los de revocación llevan generación de consentimiento monotónica y no pueden ser revertidos por snapshot antiguo.
+- Los estados `PENDING`, `DELIVERED`, `ACKNOWLEDGED`, `FAILED` describen hechos persistidos: `DELIVERED` = el inbox del destinatario fue persistido; `ACKNOWLEDGED` = el destinatario registró la recepción/validación según el contrato; ninguno significa que el owner aceptó el conocimiento. La aceptación del contenido es un estado separado.
+- Si el proceso cae tras guardar outbox y antes de materializar inbox, la recuperación puede reintentar con el mismo ID. Debe confirmarse el estado mediante lectura desde conexión nueva antes de mostrar éxito final en Office.
 
 ## 6. Recepción y aceptación local
 
@@ -119,42 +134,42 @@ Revocar significa cancelar el consentimiento para nuevas entregas y hacer que la
 
 Entidades aditivas candidatas (nombres ilustrativos hasta revisar convenciones de migración):
 
-- `hive_peers`: owner derivado en servidor, `peer_id`, clave pública/`key_id`, estado, timestamps de revocación.
 - `hive_collectives` y `hive_collective_memberships`: owner creador, política, estado de invitación/membresía y generación.
-- `hive_share_consents`: revisión/hash exactos, actor y colectiva destino, versión de política y revocación.
-- `hive_sync_outbox`: envelope/hash, estado, intento, recibo y timestamps.
-- `hive_sync_inbox`: peer emisor, evento/hash, estado de validación/decisión y recibo.
+- `hive_share_consents`: revisión/hash exactos, actor, colectiva destino, conjunto destinatario autorizado, versión de política y revocación.
+- `hive_sync_outbox` y filas de entrega por destinatario: envelope/hash, estado, secuencia, intento, recibo y timestamps.
+- `hive_sync_inbox`: owner/membresía receptora, evento/hash, estado de validación/decisión y recibo.
 - `hive_collective_revisions`, `hive_collective_conflicts` y `hive_revocation_tombstones`: historial inmutable, conflictos y generaciones de revocación.
+- Registro público de `service_key_id` y estado/validez para validar firmas; **la clave privada no va a Postgres ni al repositorio**. La ubicación de clave privada/rotación se decide con el mecanismo de secretos real.
 
-Restricciones mínimas propuestas: índices únicos de deduplicación para eventos; FK/ownership verificable; transiciones de estado condicionadas por versión esperada; timestamps UTC; payload size limit; límites de retención documentados; índices para outbox pendiente, inbox pendiente, conflictos y tombstones. La migración debe ser aditiva y reversible en el sentido operativo disponible; no se modifica una tabla/enum compartida sin buscar todos los lectores/escritores primero.
+No se proponen tablas de pares de dispositivos en Sync v1; eso pertenece al contrato Local Agent. Restricciones mínimas: índices únicos para deduplicación; FK/ownership verificable; transiciones por versión esperada; timestamps UTC; tamaño máximo del payload; límites de retención documentados; índices para outbox pendiente, inbox pendiente, conflictos y tombstones. La migración debe ser aditiva. No se edita una migración aplicada y no se cambia el CHECK de `privacy_level` hasta identificar todos sus lectores/escritores.
 
 Transacciones mínimas:
-- consentimiento + revisión/hash validado + outbox + auditoría;
+- consentimiento + revisión/hash validado + snapshot/outbox por audiencia + auditoría;
 - aceptación del inbox + relación colectiva + auditoría;
 - decisión de conflicto + revisión nueva + resolución + auditoría;
 - revocación + incremento de generación + tombstone + cancelación de outbox pendiente + auditoría.
 
-Si cualquier escritura obligatoria falla, se revierte la transacción. La operación nunca devuelve éxito parcial.
+Si cualquier escritura obligatoria falla, se revierte la operación completa. Nunca se devuelve éxito parcial. La implementación debe usar `PostgresRepository.transaction()` y las convenciones existentes; antes de migrar, se inspecciona `persistence/migrations.py`, el registro de entidades y todos los lectores/escritores de Knowledge.
 
 ## 10. Superficie API candidata
 
 Los nombres siguientes son una propuesta compatible con el prefijo Hive actual, pendiente de comprobar routers, convenciones, versionado y controles auth reales. No son endpoints existentes:
 
 - `POST /api/v8/hive/collectives` — crear colectiva.
-- `POST /api/v8/hive/collectives/{id}/invitations` y `POST /api/v8/hive/invitations/{token}/accept` — invitar/aceptar.
+- `POST /api/v8/hive/collectives/{collective_id}/invitations` y `POST /api/v8/hive/invitations/{token}/accept` — invitar/aceptar.
 - `GET /api/v8/hive/collectives` — colectivas/membresías visibles para el principal.
-- `POST /api/v8/hive/collectives/{id}/knowledge/{id}/publish` — consentimiento explícito con `expected_version` y `expected_hash`.
-- `GET /api/v8/hive/collectives/{id}/outbox` — estados derivados de persistencia.
-- `POST /api/v8/hive/collectives/{id}/events` — ingresar envelope firmado e idempotente.
-- `GET /api/v8/hive/collectives/{id}/inbox` y acciones explícitas `accept/reject`.
-- `GET /api/v8/hive/collectives/{id}/conflicts` y `POST .../conflicts/{id}/resolve`.
-- `POST /api/v8/hive/collectives/{id}/knowledge/{id}/revoke` — revocación de un consentimiento exacto.
+- `POST /api/v8/hive/collectives/{collective_id}/knowledge/{knowledge_id}/publish` — consentimiento explícito con `expected_version`, `expected_hash` y audiencia que se mostrará antes de confirmar.
+- `GET /api/v8/hive/collectives/{collective_id}/outbox` — estados derivados de persistencia.
+- `GET /api/v8/hive/collectives/{collective_id}/inbox` y acciones explícitas `accept/reject` por `event_id`.
+- `GET /api/v8/hive/collectives/{collective_id}/conflicts` y `POST /api/v8/hive/collectives/{collective_id}/conflicts/{conflict_id}/resolve`.
+- `POST /api/v8/hive/collectives/{collective_id}/knowledge/{knowledge_id}/revoke` — revocación de un consentimiento/revisión exactos.
+- La creación y validación del envelope y su entrega a inbox son funciones internas de servicio/worker, no un endpoint público de ingestión de eventos.
 
-Una llamada de escritura requiere auth de owner/peer, autorización por colectiva, estado vigente y versión/hash cuando cambia un dato. Las respuestas de objetos ajenos no deben distinguir «no existe» de «no autorizado». Códigos propuestos: `401` sin sesión válida, `403` sin autorización donde proceda, `404` opaco para recursos ajenos, `409` versión/conflicto/idempotency mismatch, `410` invitación caducada/usada, `422` firma/payload inválidos y `503` fallo de persistencia/capacidad. El uso final de códigos debe respetar el contrato real del backend.
+Cada escritura requiere auth de owner, autorización por colectiva, estado vigente y versión/hash cuando cambia un dato. Las respuestas para recursos ajenos no deben distinguir «no existe» de «no autorizado». Códigos propuestos: `401` sin sesión válida, `403` sin autorización donde proceda, `404` opaco para recursos ajenos, `409` versión/conflicto/idempotency mismatch, `410` invitación caducada/usada, `422` firma/payload inválidos y `503` fallo de persistencia/capacidad. El uso final debe respetar el contrato real del backend.
 
 ## 11. Criterios de aceptación para la implementación
 
-El siguiente PR de código no debe abrirse hasta revisar este contrato y leer de nuevo los routers, modelos, esquema de Knowledge y mecanismo de auth. Debe incluir como mínimo:
+El siguiente PR de código no debe abrirse hasta revisar este contrato, resolver el key management del servicio y leer de nuevo los routers, modelos, esquema de Knowledge y mecanismo de auth. Debe incluir como mínimo:
 
 1. **Aislamiento de propietarios:** tests de dos owners y dos peers; no leer ni mutar filas ajenas y respuestas opacas para recursos ajenos.
 2. **Identidad:** firma válida/inválida, clave revocada, peer suspendido, membresía revocada y principal incorrecto.
@@ -171,9 +186,10 @@ Todas las pruebas deben ejecutarse en PostgreSQL desechable o fixtures aisladas.
 
 ## 12. Secuencia de trabajo y gates
 
-1. Revisar esta propuesta frente al Handoff Maestro/Pasaporte y resolver los puntos marcados en revisión.
-2. Tras aprobación del contrato, volver a inspeccionar migraciones, auth, schema de Knowledge y convenciones de API.
-3. Abrir un PR de implementación backend separado: modelo/migraciones aditivas, servicios y contratos de transacción; después endpoints, outbox/inbox y tests.
+1. Revisar esta propuesta frente al Handoff Maestro/Pasaporte y aprobar/rechazar explícitamente la topología mediada, la semántica de audiencia y la firma de servicio.
+2. Resolver key management para Render, selección/versionado de dependencias Ed25519/JCS y vectores de interoperabilidad. Sin eso no se habilita sincronización firmada.
+3. Tras aprobación del contrato, volver a inspeccionar migraciones, auth, schema de Knowledge y convenciones de API.
+4. Abrir un PR de implementación backend separado: modelos/migraciones aditivas, servicios y contratos transaccionales; después endpoints, outbox/inbox y tests.
 4. Probar en PostgreSQL desechable con pares sintéticos y lecturas desde conexiones nuevas.
 5. Implementar y probar conflictos y revocaciones antes de conectar controles de Office.
 6. Diseñar Local Agent en un artefacto/PR separado, con emparejamiento, scopes, sandbox, límites de red/FS, approvals y health challenge; no reutilizar el token web como llave maestra.
@@ -182,12 +198,13 @@ Todas las pruebas deben ejecutarse en PostgreSQL desechable o fixtures aisladas.
 
 ## 13. Decisiones propuestas que requieren revisión explícita
 
-- Identidad y firma de peer con Ed25519, JSON canónico y hash SHA-256.
+- Transporte mediado por backend en v1, con envelopes Ed25519 firmados por el servicio, JSON canónico JCS y hash SHA-256; ninguna ruta pública acepta envelopes arbitrarios.
 - Invitación con aceptación explícita; membresía revocable y denegación por defecto.
 - V1 sin merge automático de conocimiento factual.
 - Consentimiento vinculado a una única revisión/hash y a una única colectiva destino.
 - Inbox requiere aceptación del owner receptor; recepción no activa conocimiento por sí sola.
-- Estado `COLLECTIVE` como relación de distribución/aceptación separada de `privacy_level`, evitando ampliar enum sin auditoría global de lectores/escritores.
+- Estado `COLLECTIVE` como relación de distribución/aceptación separada del valor `privacy_level`: el esquema legado ya permite ese literal, pero Share Gate actualmente lo rechaza y el valor aislado no representa membresía/consentimiento. No cambiar su uso sin una auditoría global de lectores/escritores.
+- Consentimiento ligado al hash exacto y al conjunto concreto de membresías destinatarias; las membresías nuevas no heredan publicaciones previas.
 - Revocación como tombstone durable y bloqueo de distribución futura, sin prometer eliminación garantizada de copias externas.
 - Local Agent fuera del alcance de sync v1, separado en contrato y ciclo de release.
 
