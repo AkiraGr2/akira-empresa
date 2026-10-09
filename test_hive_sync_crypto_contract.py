@@ -178,6 +178,19 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
         with self.assertRaises(HiveSyncEnvelopeError):
             sign_envelope(make_envelope(snapshot), self.private_key, self.key_id)
 
+    def test_signed_evidence_and_provenance_reject_sensitive_keys(self):
+        cases = (
+            ("evidence", [{"metadata": {"apiKey": "synthetic-secret"}}]),
+            ("provenance", {"context": {"ownerId": "synthetic-owner"}}),
+            ("evidence", [{"credentials": {"user": "synthetic-user"}}]),
+        )
+        for field, value in cases:
+            with self.subTest(field=field, value=value):
+                envelope = make_envelope()
+                envelope[field] = value
+                with self.assertRaises(HiveSyncEnvelopeError):
+                    sign_envelope(envelope, self.private_key, self.key_id)
+
     def test_cyclic_snapshot_is_rejected_before_sensitive_metadata_scan(self):
         envelope = make_envelope()
         cyclic = []
