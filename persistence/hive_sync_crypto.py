@@ -30,6 +30,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 
 PROTOCOL_VERSION = "hive-sync/1"
+CANONICALIZATION_VERSION = "RFC8785"
 SIGNING_KEY_FILE_ENV = "HIVE_SYNC_SIGNING_KEY_FILE"
 SIGNING_KEY_ID_ENV = "HIVE_SYNC_SIGNING_KEY_ID"
 SIGNATURE_FIELD = "signature"
@@ -196,6 +197,7 @@ def _validate_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
         raise HiveSyncEnvelopeError("envelope_contains_unknown_fields")
     required = (
         "protocol_version",
+        "canonicalization",
         "event_type",
         "event_id",
         "collective_id",
@@ -210,6 +212,8 @@ def _validate_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
 
     if result["protocol_version"] != PROTOCOL_VERSION:
         raise HiveSyncEnvelopeError("unsupported_protocol_version")
+    if result["canonicalization"] != CANONICALIZATION_VERSION:
+        raise HiveSyncEnvelopeError("unsupported_canonicalization")
     event_type = result["event_type"]
     if not isinstance(event_type, str) or event_type not in ALLOWED_EVENT_TYPES:
         raise HiveSyncEnvelopeError("unsupported_event_type")
