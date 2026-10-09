@@ -409,7 +409,7 @@ def apply_approved_controlled_autonomy(
         "external_verification": verified,
         "verified_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
     })
-_advance(a, run_id, "evaluated", actor, owner_scope, {"evaluation": evaluation})
+    _advance(a, run_id, "evaluated", actor, owner_scope, {"evaluation": evaluation})
 
     learning_reference = ""
     try:
