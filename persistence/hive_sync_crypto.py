@@ -114,7 +114,8 @@ def _validate_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
 
     if result["protocol_version"] != PROTOCOL_VERSION:
         raise HiveSyncEnvelopeError("unsupported_protocol_version")
-    if result["event_type"] not in ALLOWED_EVENT_TYPES:
+    event_type = result["event_type"]
+    if not isinstance(event_type, str) or event_type not in ALLOWED_EVENT_TYPES:
         raise HiveSyncEnvelopeError("unsupported_event_type")
     # The v1 contract defines event_id, collective_id and recipient membership
     # identifiers as canonical lowercase UUIDs, not arbitrary client-supplied names.
