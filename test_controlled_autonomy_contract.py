@@ -119,8 +119,7 @@ class ControlledAutonomyContractTests(unittest.TestCase):
             "sandbox": {"expected_hashes": {"docs/F14_PRODUCTION_VERIFICATION.md": "b" * 64}}
         })
 
-        with patch("autonomy_engine.f14_zero_cost_provider_preflight", return_value={"ok": True}), \\
-             patch("autonomy_engine.branch_head") as branch_head:
+        with patch("autonomy_engine.f14_zero_cost_provider_preflight", return_value={"ok": True}), patch("autonomy_engine.branch_head") as branch_head:
             replayed = start_controlled_autonomy(
                 service,
                 request,
