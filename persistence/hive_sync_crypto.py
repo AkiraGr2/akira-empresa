@@ -16,6 +16,7 @@ import hashlib
 import math
 import os
 import re
+from uuid import UUID
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -115,6 +116,15 @@ def _validate_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
         raise HiveSyncEnvelopeError("unsupported_protocol_version")
     if result["event_type"] not in ALLOWED_EVENT_TYPES:
         raise HiveSyncEnvelopeError("unsupported_event_type")
+    # The v1 contract defines event_id, collective_id and recipient membership
+    # identifiers as canonical lowercase UUIDs, not arbitrary client-supplied names.
+    for field in ("event_id", "collective_id", "recipient_membership_id"):
+        try:
+            normalized = str(UUID(result[field]))
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise HiveSyncEnvelopeError("envelope_uuid_invalid:" + field) from exc
+        if normalized != result[field]:
+            raise HiveSyncEnvelopeError("envelope_uuid_not_canonical:" + field)
     if not _HASH_RE.fullmatch(result["content_hash"]):
         raise HiveSyncEnvelopeError("content_hash_invalid")
 
@@ -129,10 +139,14 @@ def _validate_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
         actual_hash = snapshot_sha256(snapshot)
         if actual_hash != result["content_hash"]:
             raise HiveSyncEnvelopeError("snapshot_hash_mismatch")
-    elif "snapshot" in result:
+    else:
         # A revocation identifies the previously shared hash; it must not
         # become a channel for re-sending any knowledge payload.
-        raise HiveSyncEnvelopeError("revocation_must_not_contain_snapshot")
+        if "snapshot" in result:
+            raise HiveSyncEnvelopeError("revocation_must_not_contain_snapshot")
+        generation = result.get("revocation_generation")
+        if isinstance(generation, bool) or not isinstance(generation, int) or generation < 1:
+            raise HiveSyncEnvelopeError("revocation_generation_invalid")
     return result
 
 
