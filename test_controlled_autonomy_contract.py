@@ -9,6 +9,7 @@ from persistence.autonomy import (
     AutonomyContractError,
     AutonomyService,
     AUTONOMY_STATUS_TRANSITIONS,
+    validate_change,
     validate_path,
     validate_proposal,
     validate_request,
