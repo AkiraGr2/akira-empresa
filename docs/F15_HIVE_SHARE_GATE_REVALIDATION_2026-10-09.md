@@ -40,6 +40,8 @@ Arquitectura recuperada para Hive: `PRIVATE → SHAREABLE autorizado → COLLECT
 | HSG-03 | Una transición de privacidad exige confirmación explícita y `expected_version` válido. | Pruebas negativas para confirmación y versión. |
 | HSG-04 | Solo conocimiento activo `PRIVATE`, verificado, con evidencia y procedencia (`source_reference` o `source_id`) puede pasar a `SHAREABLE`. | Pruebas de estado, evidencia y procedencia. |
 | HSG-11 | Un registro `SENSITIVE` no puede pasar directamente a `SHAREABLE`; requiere una copia redactada nueva, verificada y con procedencia propia. | Regresión de servicio + API PostgreSQL + Office UI. |
+| HSG-12 | Una edición material de Knowledge ya compartido revoca el consentimiento anterior en la misma transacción/version; el contenido cambia a `PRIVATE` y su verificación se invalida. | Regresión de servicio + HTTP/ PostgreSQL + auditoría persistida. |
+| HSG-13 | Re-verificar o reactivar un registro no lo vuelve `SHAREABLE` automáticamente. Requiere nueva confirmación explícita del propietario; archivar un registro compartido revoca el consentimiento. | Regresión de edición, re-verificación, archive/reactivation y nueva publicación. |
 | HSG-05 | El cambio de privacidad es versionado y la auditoría se escribe en la misma transacción; relectura confirma el resultado. | Prueba de versión, evento auditado y relectura. |
 | HSG-06 | La vista exportable devuelve únicamente Knowledge `SHAREABLE`, verificado y del scope exacto del solicitante. | Prueba de aislamiento y exclusión de registros privados. |
 | HSG-07 | La ruta genérica de actualización de Knowledge no puede saltarse la compuerta Hive cambiando `privacy_level`. | Prueba de servicio y guardia de API. |
@@ -60,6 +62,8 @@ No se añade tabla ni migración: el primer contrato usa `knowledge_records` y `
 3. **Registro legacy de alcance ambiguo:** coincidencia exacta para la nueva transición, aun cuando lecturas existentes conservan compatibilidad.
 4. **Compartir hechos sin validar:** requerir verificación, evidencia y referencia de procedencia.
 11. **Filtración de contenido sensible:** bloquear la transición directa `SENSITIVE → SHAREABLE` tanto en el servicio como en la interfaz.
+12. **Publicación resucitada por edición/re-verificación:** revocar consentimiento al editar contenido o cambiar el estado de un registro compartido; exigir re-verificación separada y nueva confirmación.
+13. **Reactivación de archivo compartido:** `archive → active` no debe restaurar `SHAREABLE`; permanece `PRIVATE` hasta nuevo consentimiento.
 5. **Doble operación o concurrencia:** versión optimista, conflicto explícito y relectura posterior.
 6. **Éxito de UI sin persistencia:** se exige relectura desde el servicio y evento auditado en la transacción.
 7. **Sincronización simulada:** `propagation_performed=false` y rechazo de `COLLECTIVE`.
@@ -70,10 +74,11 @@ No se añade tabla ni migración: el primer contrato usa `knowledge_records` y `
 ## 7. Estado actual de verificación (2026-10-09, COT)
 
 **Backend — PR #137**
-- Head verificado: `964a29fa419fe872b2f6811dfd4b3abba6e3ab9c`.
-- Backend Syntax Verification: PASS — [run 37955606445](https://github.com/AkiraGr2/akira-empresa/actions/runs/37955606445).
-- PostgreSQL end-to-end: PASS — [run 37955606263](https://github.com/AkiraGr2/akira-empresa/actions/runs/37955606263).
-- La suite PostgreSQL ejercitó las rutas HTTP autenticadas de Hive, el aislamiento de propietario, publicación/revocación, rechazo de `SENSITIVE` sin redacción, bloqueo de `COLLECTIVE`, rechazo de bypass genérico, error controlado 503 ante fallo del registro de capacidad, y lectura de auditoría desde otra conexión.
+- Head de código y regresiones verificado: `1dd9d2dfd1b720e62910cde8c0d8c7ff25751505`.
+- Backend Syntax Verification: PASS — [run 37958332977](https://github.com/AkiraGr2/akira-empresa/actions/runs/37958332977).
+- PostgreSQL end-to-end: PASS — [run 37958333031](https://github.com/AkiraGr2/akira-empresa/actions/runs/37958333031).
+- La suite PostgreSQL ejercitó rutas HTTP autenticadas, aislamiento de propietario, publicación/revocación, rechazo de `SENSITIVE` sin redacción, bloqueo de `COLLECTIVE`, rechazo de bypass genérico, error controlado 503 ante fallo del registro de capacidad y auditoría desde otra conexión.
+- La regresión nueva también demuestra que editar contenido revoca consentimiento y verificación, que una re-verificación posterior no republica el registro, que la auditoría conserva el cambio `SHAREABLE → PRIVATE`, y que archivar/reactivar no restaura la autorización anterior.
 
 **Frontend — PR #89**
 - Head verificado: `bb40bbceb331101a3baa2a73b4c641a32d054acb`.
