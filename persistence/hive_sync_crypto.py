@@ -195,25 +195,47 @@ def _validate_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
     result = dict(envelope)
     if set(result) - ALLOWED_ENVELOPE_FIELDS:
         raise HiveSyncEnvelopeError("envelope_contains_unknown_fields")
-    required = (
+    required_string_fields = (
         "protocol_version",
         "canonicalization",
         "event_type",
         "event_id",
+        "publication_id",
         "collective_id",
+        "sender_owner_ref",
         "recipient_membership_id",
+        "knowledge_lineage_id",
+        "revision_id",
         "consent_id",
+        "audience_hash",
+        "issued_at",
         "content_hash",
     )
-    for field in required:
+    for field in required_string_fields:
         value = result.get(field)
         if not isinstance(value, str) or not value.strip():
             raise HiveSyncEnvelopeError("envelope_field_missing_or_invalid:" + field)
+
+    for field in ("membership_generation", "sender_sequence"):
+        value = result.get(field)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise HiveSyncEnvelopeError("envelope_positive_integer_required:" + field)
+
+    parent_revision_ids = result.get("parent_revision_ids")
+    if not isinstance(parent_revision_ids, list) or any(
+        not isinstance(parent_id, str) or not parent_id.strip()
+        for parent_id in parent_revision_ids
+    ):
+        raise HiveSyncEnvelopeError("parent_revision_ids_invalid")
+    if len(set(parent_revision_ids)) != len(parent_revision_ids):
+        raise HiveSyncEnvelopeError("parent_revision_ids_duplicate")
 
     if result["protocol_version"] != PROTOCOL_VERSION:
         raise HiveSyncEnvelopeError("unsupported_protocol_version")
     if result["canonicalization"] != CANONICALIZATION_VERSION:
         raise HiveSyncEnvelopeError("unsupported_canonicalization")
+    if not _HASH_RE.fullmatch(result["audience_hash"]):
+        raise HiveSyncEnvelopeError("audience_hash_invalid")
     event_type = result["event_type"]
     if not isinstance(event_type, str) or event_type not in ALLOWED_EVENT_TYPES:
         raise HiveSyncEnvelopeError("unsupported_event_type")
@@ -231,9 +253,14 @@ def _validate_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
         raise HiveSyncEnvelopeError("content_hash_invalid")
 
     if result["event_type"] == "KNOWLEDGE_SNAPSHOT":
+        for field in ("evidence", "provenance"):
+            if field not in result or result[field] is None:
+                raise HiveSyncEnvelopeError("envelope_field_missing_or_invalid:" + field)
         snapshot = result.get("snapshot")
         if not isinstance(snapshot, Mapping):
             raise HiveSyncEnvelopeError("snapshot_event_requires_snapshot_object")
+        if not {"concept", "content"}.issubset(snapshot):
+            raise HiveSyncEnvelopeError("snapshot_concept_content_required")
         if result.get("privacy_level") != "SHAREABLE":
             raise HiveSyncEnvelopeError("snapshot_must_be_shareable")
         if result.get("verification_status") != "verified":
