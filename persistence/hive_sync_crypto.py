@@ -63,6 +63,13 @@ FORBIDDEN_NESTED_SNAPSHOT_KEYS = frozenset({
     "idempotency_key", "last_verified_at", "verified_by", "access_token",
     "refresh_token", "authorization", "headers", "session", "private_key",
     "api_key", "password", "secret", "secret_key", "credentials",
+    # Common aliases and provider-specific credential labels; normalization below
+    # ignores case and separators such as "_" and "-".
+    "token", "bearer_token", "session_token", "id_token", "client_secret",
+    "api_secret", "cookie", "set_cookie", "jwt", "service_role_key",
+    "supabase_key", "database_url", "connection_string", "credential",
+    "webhook_secret", "private_key_pem", "signing_key", "authorization_header",
+    "auth_header", "access_key", "secret_access_key",
 })
 _FORBIDDEN_NORMALIZED_KEYS = frozenset(
     re.sub(r"[^a-z0-9]", "", key.casefold())
