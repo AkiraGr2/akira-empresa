@@ -247,6 +247,28 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
                 with self.assertRaises(HiveSyncEnvelopeError):
                     sign_envelope(envelope, self.private_key, self.key_id)
 
+    def test_issued_at_must_be_canonical_utc_timestamp(self):
+        invalid_values = (
+            "",
+            "now",
+            "2026-10-09T00:00:00+00:00",
+            "2026-10-09T01:00:00+01:00",
+            "2026-02-30T00:00:00Z",
+            "2026-10-09 00:00:00Z",
+            "2026-10-09T00:00:00.1234567Z",
+        )
+        for value in invalid_values:
+            with self.subTest(issued_at=value):
+                envelope = make_envelope()
+                envelope["issued_at"] = value
+                with self.assertRaises(HiveSyncEnvelopeError):
+                    sign_envelope(envelope, self.private_key, self.key_id)
+
+        envelope = make_envelope()
+        envelope["issued_at"] = "2026-10-09T00:00:00.123456Z"
+        signed = sign_envelope(envelope, self.private_key, self.key_id)
+        self.assertTrue(verify_envelope(signed, {self.key_id: self.public_key}))
+
     def test_snapshot_requires_concept_and_content(self):
         for field in ("concept", "content"):
             with self.subTest(field=field):
