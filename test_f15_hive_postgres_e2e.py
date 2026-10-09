@@ -256,6 +256,82 @@ class F15HivePostgresE2ETests(unittest.TestCase):
             self.assertEqual(feed_after_foreign.status_code, 200, feed_after_foreign.text)
             self.assertEqual([row["id"] for row in feed_after_foreign.json()["knowledge"]], [shared["id"]])
 
+            # Any material edit revokes previous sharing consent and verification.
+            # Merely marking the edited row verified again must not republish it.
+            false_reverify = client.patch(
+                f"/api/v8/knowledge/{shared['id']}",
+                headers=headers,
+                json={
+                    "expected_version": shared["version"],
+                    "changes": {
+                        "content": "Changed without fresh review",
+                        "verification_status": "verified",
+                    },
+                },
+            )
+            self.assertEqual(false_reverify.status_code, 400, false_reverify.text)
+            unchanged_after_false_reverify = self.fresh_repo.get("knowledge_records", shared["id"])
+            self.assertEqual(unchanged_after_false_reverify["privacy_level"], "SHAREABLE")
+            self.assertEqual(unchanged_after_false_reverify["version"], shared["version"])
+
+            edit_response = client.patch(
+                f"/api/v8/knowledge/{shared['id']}",
+                headers=headers,
+                json={
+                    "expected_version": shared["version"],
+                    "changes": {"content": "Materially edited after sharing consent."},
+                },
+            )
+            self.assertEqual(edit_response.status_code, 200, edit_response.text)
+            edited = edit_response.json()["knowledge"]
+            self.assertEqual(edited["privacy_level"], "PRIVATE")
+            self.assertEqual(edited["verification_status"], "partially_verified")
+            self.assertEqual(edited["version"], shared["version"] + 1)
+            self.assertEqual(
+                client.get("/api/v8/hive/knowledge", headers=headers).json()["knowledge"],
+                [],
+            )
+
+            verify_again = client.post(
+                f"/api/v8/knowledge/{shared['id']}/verify",
+                headers=headers,
+                json={
+                    "expected_version": edited["version"],
+                    "evidence": [{
+                        "type": "manual_verification",
+                        "title": "Fresh review after content update",
+                        "reference": "https://example.test/f15-fresh-after-edit",
+                        "note": "Synthetic evidence independently verifies the edited content.",
+                    }],
+                },
+            )
+            self.assertEqual(verify_again.status_code, 200, verify_again.text)
+            reverified = verify_again.json()["knowledge"]
+            self.assertEqual(reverified["verification_status"], "verified")
+            self.assertEqual(reverified["privacy_level"], "PRIVATE")
+            self.assertEqual(
+                client.get("/api/v8/hive/knowledge", headers=headers).json()["knowledge"],
+                [],
+            )
+
+            # Publication requires a new explicit owner confirmation after re-verification.
+            reshare = client.post(
+                f"/api/v8/hive/knowledge/{shared['id']}/privacy",
+                headers=headers,
+                json={
+                    "privacy_level": "SHAREABLE",
+                    "expected_version": reverified["version"],
+                    "confirmed": True,
+                },
+            )
+            self.assertEqual(reshare.status_code, 200, reshare.text)
+            shared = reshare.json()["knowledge"]
+            self.assertEqual(shared["privacy_level"], "SHAREABLE")
+            self.assertEqual(
+                [row["id"] for row in client.get("/api/v8/hive/knowledge", headers=headers).json()["knowledge"]],
+                [shared["id"]],
+            )
+
             bypass = client.patch(
                 f"/api/v8/knowledge/{shared['id']}",
                 headers=headers,
