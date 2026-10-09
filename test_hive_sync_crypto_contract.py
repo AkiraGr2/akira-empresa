@@ -118,7 +118,7 @@ class HiveSyncCanonicalizationContractTests(unittest.TestCase):
 
     def test_invalid_unicode_is_rejected_with_contract_error(self):
         with self.assertRaises(HiveSyncEnvelopeError):
-            canonical_json_bytes({"invalid": "\\ud800"})
+            canonical_json_bytes({"invalid": chr(0xD800)})
 
     def test_unsupported_python_objects_are_rejected_before_serialization(self):
         with self.assertRaises(HiveSyncEnvelopeError):
