@@ -36,6 +36,8 @@ SIGNATURE_FIELD = "signature"
 SIGNATURE_CONTEXT = b"AKIRA-HIVE-SYNC-V1\n"
 MAX_PRIVATE_KEY_FILE_BYTES = 16 * 1024
 MAX_CANONICAL_JSON_BYTES = 1024 * 1024
+MAX_JSON_NESTING_DEPTH = 64
+MAX_JSON_NODE_COUNT = 100_000
 ALLOWED_EVENT_TYPES = frozenset({"KNOWLEDGE_SNAPSHOT", "KNOWLEDGE_REVOCATION"})
 ALLOWED_ENVELOPE_FIELDS = frozenset({
     "protocol_version", "event_type", "event_id", "publication_id",
@@ -79,22 +81,71 @@ class HiveSyncSignatureError(HiveSyncCryptoError):
     """An envelope signature is missing, untrusted, malformed, or invalid."""
 
 
+def _preflight_json_value(value: Any) -> None:
+    """Bound and validate a JSON-like tree before recursive checks or serialization.
+
+    This avoids spending unbounded memory on oversized payloads and prevents deeply
+    nested caller data from escaping as RecursionError before the canonicalizer runs.
+    """
+    stack = [(value, 0)]
+    node_count = 0
+    estimated_bytes = 0
+    while stack:
+        current, depth = stack.pop()
+        node_count += 1
+        if node_count > MAX_JSON_NODE_COUNT:
+            raise HiveSyncEnvelopeError("canonical_json_node_limit_exceeded")
+        if depth > MAX_JSON_NESTING_DEPTH:
+            raise HiveSyncEnvelopeError("canonical_json_nesting_too_deep")
+
+        if isinstance(current, Mapping):
+            estimated_bytes += 2
+            for key, nested in current.items():
+                if not isinstance(key, str):
+                    raise HiveSyncEnvelopeError("canonical_json_object_key_not_string")
+                if len(key) > MAX_CANONICAL_JSON_BYTES:
+                    raise HiveSyncEnvelopeError("canonical_json_payload_too_large")
+                estimated_bytes += len(key.encode("utf-8")) + 3
+                stack.append((nested, depth + 1))
+        elif isinstance(current, (list, tuple)):
+            estimated_bytes += 2
+            for nested in current:
+                stack.append((nested, depth + 1))
+        elif isinstance(current, str):
+            if len(current) > MAX_CANONICAL_JSON_BYTES:
+                raise HiveSyncEnvelopeError("canonical_json_payload_too_large")
+            estimated_bytes += len(current.encode("utf-8")) + 2
+        elif current is None or isinstance(current, bool):
+            estimated_bytes += 5
+        elif isinstance(current, int):
+            estimated_bytes += min(current.bit_length() // 3 + 3, MAX_CANONICAL_JSON_BYTES + 1)
+        elif isinstance(current, float):
+            estimated_bytes += 32
+        else:
+            raise HiveSyncEnvelopeError("canonical_json_value_type_unsupported")
+
+        if estimated_bytes > MAX_CANONICAL_JSON_BYTES:
+            raise HiveSyncEnvelopeError("canonical_json_payload_too_large")
+
+
 def _reject_negative_zero(value: Any) -> None:
     """Reject -0.0 before JCS collapses it to the same representation as +0.0."""
-    if isinstance(value, float) and value == 0.0 and math.copysign(1.0, value) < 0:
-        raise HiveSyncEnvelopeError("negative_zero_not_allowed")
-    if isinstance(value, Mapping):
-        for nested in value.values():
-            _reject_negative_zero(nested)
-    elif isinstance(value, (list, tuple)):
-        for nested in value:
-            _reject_negative_zero(nested)
+    stack = [value]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, float) and current == 0.0 and math.copysign(1.0, current) < 0:
+            raise HiveSyncEnvelopeError("negative_zero_not_allowed")
+        if isinstance(current, Mapping):
+            stack.extend(current.values())
+        elif isinstance(current, (list, tuple)):
+            stack.extend(current)
 
 
 def canonical_json_bytes(value: Mapping[str, Any]) -> bytes:
     """Serialize a JSON object with RFC 8785 JCS and return its UTF-8 bytes."""
     if not isinstance(value, Mapping):
         raise HiveSyncEnvelopeError("canonical_json_requires_object")
+    _preflight_json_value(value)
     _reject_negative_zero(value)
     try:
         canonical = rfc8785.dumps(dict(value))
@@ -117,14 +168,16 @@ def snapshot_sha256(snapshot: Mapping[str, Any]) -> str:
 
 def _reject_sensitive_snapshot_keys(value: Any) -> None:
     """Reject private/runtime metadata keys anywhere inside a snapshot projection."""
-    if isinstance(value, Mapping):
-        for key, nested in value.items():
-            if isinstance(key, str) and key.strip().lower() in FORBIDDEN_NESTED_SNAPSHOT_KEYS:
-                raise HiveSyncEnvelopeError("snapshot_contains_forbidden_metadata")
-            _reject_sensitive_snapshot_keys(nested)
-    elif isinstance(value, (list, tuple)):
-        for nested in value:
-            _reject_sensitive_snapshot_keys(nested)
+    stack = [value]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, Mapping):
+            for key, nested in current.items():
+                if isinstance(key, str) and key.strip().lower() in FORBIDDEN_NESTED_SNAPSHOT_KEYS:
+                    raise HiveSyncEnvelopeError("snapshot_contains_forbidden_metadata")
+                stack.append(nested)
+        elif isinstance(current, (list, tuple)):
+            stack.extend(current)
 
 
 def _validate_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
