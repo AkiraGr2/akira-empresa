@@ -167,6 +167,7 @@ class HiveSyncCanonicalizationContractTests(unittest.TestCase):
         for raw in (
             '{"event_type":"KNOWLEDGE_SNAPSHOT","event_type":"KNOWLEDGE_REVOCATION"}',
             '{"nested":{"role":"owner","role":"attacker"}}',
+            '{"event_type":"KNOWLEDGE_SNAPSHOT","\\u0065vent_type":"KNOWLEDGE_REVOCATION"}',
         ):
             with self.subTest(raw=raw):
                 with self.assertRaises(HiveSyncEnvelopeError):
@@ -179,7 +180,7 @@ class HiveSyncCanonicalizationContractTests(unittest.TestCase):
                     strict_json_object_loads(raw)
 
     def test_strict_json_parser_rejects_nonfinite_and_invalid_json(self):
-        for raw in ('{"value":NaN}', '{"value":Infinity}', '{"value":-Infinity}', '{"broken":'):
+        for raw in ('{"value":NaN}', '{"value":Infinity}', '{"value":-Infinity}', '{"value":1e400}', '{"broken":'):
             with self.subTest(raw=raw):
                 with self.assertRaises(HiveSyncEnvelopeError):
                     strict_json_object_loads(raw)
@@ -226,6 +227,10 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
             ("evidence", [{"metadata": {"apiKey": "synthetic-secret"}}]),
             ("provenance", {"context": {"ownerId": "synthetic-owner"}}),
             ("evidence", [{"credentials": {"user": "synthetic-user"}}]),
+            ("evidence", [{"headers": {"clientSecret": "synthetic-secret"}}]),
+            ("provenance", {"transport": {"bearer-token": "synthetic-token"}}]),
+            ("evidence", [{"session": {"serviceRoleKey": "synthetic-key"}}]),
+            ("provenance", {"config": {"connection_string": "synthetic-dsn"}}]),
         )
         for field, value in cases:
             with self.subTest(field=field, value=value):
