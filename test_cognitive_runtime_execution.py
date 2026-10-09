@@ -5,8 +5,9 @@ import nexus
 
 
 class FakeCognitiveService:
-    def __init__(self, fail_self_model=False):
+    def __init__(self, fail_self_model=False, with_capability=False):
         self.fail_self_model = fail_self_model
+        self.with_capability = with_capability
         self.events = []
         self.cycle = {
             "id": "cycle_test",
