@@ -84,6 +84,10 @@ jobs:
         run: |
           python -m unittest test_f8_zero_cost_provider_contract -v
 
+      - name: Test F14 zero-cost provider contract
+        run: |
+          python -m unittest test_f14_zero_cost_provider_contract -v
+
       - name: Test memory recall capability contract
         run: |
           python -m unittest test_memory_recall_contract -v

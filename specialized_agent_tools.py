@@ -73,6 +73,41 @@ class SpecializedAgentError(RuntimeError):
 
 _F8_ZERO_COST_AUDIT = contextvars.ContextVar("akira_f8_zero_cost_audit", default=False)
 
+_F14_ZERO_COST_AUTONOMY = contextvars.ContextVar("akira_f14_zero_cost_autonomy", default=False)
+
+
+@contextmanager
+def f14_zero_cost_autonomy_scope():
+    """Keep F14 inference on an explicitly confirmed Groq free tier only."""
+    token = _F14_ZERO_COST_AUTONOMY.set(True)
+    try:
+        yield
+    finally:
+        _F14_ZERO_COST_AUTONOMY.reset(token)
+
+
+def f14_zero_cost_autonomy_active() -> bool:
+    return bool(_F14_ZERO_COST_AUTONOMY.get())
+
+
+def f14_zero_cost_provider_preflight() -> dict[str, Any]:
+    """Read-only check; never sends a provider request or consumes inference quota."""
+    confirmed = os.getenv("AKIRA_F14_GROQ_FREE_PLAN_CONFIRMED", "").strip().lower() == "true"
+    if not confirmed:
+        return {
+            "ok": False,
+            "provider": "groq",
+            "reason": "groq_free_plan_not_confirmed",
+        }
+    if not _groq_keys():
+        return {
+            "ok": False,
+            "provider": "groq",
+            "reason": "groq_api_key_missing",
+        }
+    return {"ok": True, "provider": "groq", "reason": "free_plan_explicitly_confirmed"}
+
+
 
 @contextmanager
 def f8_zero_cost_audit_scope():
@@ -157,11 +192,18 @@ def _groq_keys() -> list[str]:
 def _specialist_json_call(prompt: str, max_output_tokens: int = 2600) -> dict[str, Any]:
     deadline = time.monotonic() + 28
 
-    if f8_zero_cost_audit_active():
+    f8_active = f8_zero_cost_audit_active()
+    f14_active = f14_zero_cost_autonomy_active()
+    if f8_active:
         gate = f8_audit_provider_preflight()
         if not gate["ok"]:
             raise SpecializedAgentError(f"f8_zero_cost_audit_blocked:{gate['reason']}")
-    else:
+    elif f14_active:
+        gate = f14_zero_cost_provider_preflight()
+        if not gate["ok"]:
+            raise SpecializedAgentError(f"f14_zero_cost_autonomy_blocked:{gate['reason']}")
+
+    if not (f8_active or f14_active):
         try:
             import requests
             for key in _gemini_keys():

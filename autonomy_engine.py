@@ -12,6 +12,8 @@ from typing import Any
 from github_readonly import inspect_repository
 from specialized_agent_tools import (
     SpecializedAgentError,
+    f14_zero_cost_autonomy_scope,
+    f14_zero_cost_provider_preflight,
     propose_code_change,
     review_code_change,
     run_python_tests_in_workspace,
@@ -76,6 +78,10 @@ def _canonicalize_proposal_against_base(
 
 
 def start_controlled_autonomy(service, request: dict[str, Any], actor: str, owner_scope: str) -> dict[str, Any]:
+    provider_gate = f14_zero_cost_provider_preflight()
+    if not provider_gate["ok"]:
+        raise ControlledAutonomyError(f"f14_zero_cost_provider_blocked:{provider_gate['reason']}")
+
     a = _autonomy(service, actor, owner_scope)
     created = a.create_run(request, actor=actor, owner_scope=owner_scope)
     run = created["record"]
@@ -114,13 +120,14 @@ def start_controlled_autonomy(service, request: dict[str, Any], actor: str, owne
 
         _advance(a, run_id, "delegating", actor, owner_scope)
 
-        proposal = propose_code_change(
-            inspect_repository,
-            run["repository"],
-            run["paths"],
-            run["instruction"],
-            run.get("queries") or [],
-        )
+        with f14_zero_cost_autonomy_scope():
+            proposal = propose_code_change(
+                inspect_repository,
+                run["repository"],
+                run["paths"],
+                run["instruction"],
+                run.get("queries") or [],
+            )
         proposal = validate_proposal(proposal)
         proposal = _canonicalize_proposal_against_base(
             proposal,
@@ -165,13 +172,14 @@ def start_controlled_autonomy(service, request: dict[str, Any], actor: str, owne
             raise ControlledAutonomyError("sandbox_tests_failed")
         _advance(a, run_id, "tested", actor, owner_scope, {"tests": test_result})
 
-        review = review_code_change(
-            inspect_repository,
-            run["repository"],
-            [x["path"] for x in proposal["changes"]],
-            proposal,
-            test_result,
-        )
+        with f14_zero_cost_autonomy_scope():
+            review = review_code_change(
+                inspect_repository,
+                run["repository"],
+                [x["path"] for x in proposal["changes"]],
+                proposal,
+                test_result,
+            )
         if review.get("verdict") != "approve":
             raise ControlledAutonomyError("review_not_approved")
 
