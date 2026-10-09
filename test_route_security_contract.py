@@ -13,6 +13,7 @@ SENSITIVE_PREFIXES = (
     "/api/v8/learning",
     "/api/v8/graph",
     "/api/v8/knowledge",
+    "/api/v8/hive",
     "/api/v8/cognitive",
     "/api/v8/missions",
     "/api/v8/agents",
@@ -213,6 +214,31 @@ class SensitiveRouteSecurityContract(unittest.TestCase):
         self.assertIn('s.get("is_owner")', route["source"])
         self.assertIn("idempotency_key", route["source"])
         self.assertIn("owner_scope", route["source"])
+
+    def test_hive_routes_are_owner_protected_and_explicit(self):
+        expected = {
+            ("GET", "/api/v8/hive/status"),
+            ("GET", "/api/v8/hive/knowledge"),
+            ("POST", "/api/v8/hive/knowledge/{knowledge_id}/privacy"),
+        }
+        found = {
+            (r["method"], r["path"])
+            for r in self.routes
+            if r["path"].startswith("/api/v8/hive")
+        }
+        self.assertEqual(found, expected)
+        for route in self.routes:
+            if route["path"].startswith("/api/v8/hive"):
+                self.assertIn("_require_owner(request)", route["source"])
+                self.assertIn('s["owner_scope"]', route["source"])
+
+    def test_knowledge_privacy_changes_require_the_explicit_hive_gate(self):
+        route = next(
+            r for r in self.routes
+            if (r["method"], r["path"]) == ("PATCH", "/api/v8/knowledge/{knowledge_id}")
+        )
+        self.assertIn('if "privacy_level" in changes:', route["source"])
+        self.assertIn("explicit_hive_privacy_transition_required", route["source"])
 
 if __name__ == "__main__":
     unittest.main()
