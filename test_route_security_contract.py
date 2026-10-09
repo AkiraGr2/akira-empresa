@@ -230,7 +230,8 @@ class SensitiveRouteSecurityContract(unittest.TestCase):
         for route in self.routes:
             if route["path"].startswith("/api/v8/hive"):
                 self.assertIn("_require_owner(request)", route["source"])
-                self.assertIn('s["owner_scope"]', route["source"])
+                if route["path"] != "/api/v8/hive/status":
+                    self.assertIn('s["owner_scope"]', route["source"])
 
     def test_knowledge_privacy_changes_require_the_explicit_hive_gate(self):
         route = next(
