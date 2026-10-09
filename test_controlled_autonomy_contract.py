@@ -505,9 +505,14 @@ class ControlledAutonomyContractTests(unittest.TestCase):
                "decision": {"approved_by": "owner@example.com", "approved_at": "2026-10-06T17:00:00+00:00"}}
         action = {"branch_name": "akira/autonomy/autonomy_test_123", "pr_url": "https://github.com/AkiraGr2/akira-empresa/pull/999",
                   "pr_draft": True, "merged": False}
-        result = _record_controlled_autonomy_verification(service, run, action)
+        runtime_ref = "sha256:" + "d" * 48
+        with patch("autonomy_engine.runtime_build_ref", return_value=runtime_ref):
+            result = _record_controlled_autonomy_verification(service, run, action)
         self.assertEqual(result["effective_state"], "verified")
         args, kwargs = service.record_capability_verification.call_args
+        self.assertEqual(args[1]["build_ref"], runtime_ref)
+        self.assertEqual(args[1]["environment"]["base_commit_sha"], "a" * 40)
+        self.assertNotEqual(args[1]["build_ref"], args[1]["environment"]["base_commit_sha"])
         self.assertEqual(kwargs["idempotency_key"], "f14:e2e:autonomy_test_123")
         self.assertEqual(args[0], "cap_f14")
         self.assertEqual(args[1]["test_key"], "controlled_autonomy_v1_e2e")
