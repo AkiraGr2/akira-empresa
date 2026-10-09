@@ -240,3 +240,54 @@ Esta sección registra hechos observados y límites, sin afirmar que exista ya u
 - Comprobar que logs y respuestas HTTP nunca imprimen PEM/bytes privados y que error de configuración mantiene sync deshabilitada.
 
 **Gate de salida:** contrato revisado/aprobado; dependencias declaradas y fijadas; secreto configurado por el operador en el entorno correcto; clave pública registrada/verificada; pruebas de vector y rotación correctas; plan de despliegue compatible con la política operativa. Hasta cumplirlo, Hive Collective Sync permanece no disponible.
+
+## 15. Auditoría de persistencia previa a una migración — observación de `main`
+
+Esta sección es una lectura estática de `main` observada el 2026-10-09. Es una propuesta de implementación y una lista de restricciones; no es una migración ejecutada. Debe volver a revisarse contra el SHA y los PR aprobados justo antes de programar DDL.
+
+### 15.1 Hechos del repositorio
+
+- `persistence/migrations.py` mantiene migraciones como lista explícita y el encabezado prohíbe editar migraciones ya aplicadas. En el SHA consultado, la secuencia de la lista llega a `054_tool_invocation_owner_scope_and_idempotency`; `055_hive_collective_sync_v1` sería un nombre candidato, no una migración existente.
+- El ejecutor `persistence/postgres.py` aplica migraciones bajo un advisory transaction lock. Su parser separa sentencias por punto y coma; una migración nueva debe evitar punto y coma dentro de comentarios/literales que confunda ese parser.
+- El repositorio usa SQL con identificadores de tabla/columna tomados de la allowlist `ENTITIES` en `persistence/core.py`, y valores parametrizados. Una entidad a la que se acceda con los métodos genéricos necesita una entrada explícita en `ENTITIES` con columnas, columnas JSON, campos mutables, filtros y orden permitidos. No basta con crear una tabla.
+- `PostgresRepository.transaction()` crea un repositorio atado a una sola conexión; las operaciones anidadas reutilizan esa transacción. Las escrituras obligatorias de publicación/aceptación/revocación deben usar esa única transacción y el API existente de auditoría, no hacer commits independientes.
+- La migración `049_knowledge_first_class_and_graph_fk` crea `knowledge_records.id` como `TEXT`; su CHECK permite `COLLECTIVE` como valor de privacidad pero no define relaciones colectivas. Cualquier FK desde las tablas propuestas al Knowledge fuente debe conservar el tipo `TEXT`. No se cambia la tabla ni el CHECK existente en este diseño.
+- Las migraciones de seguridad existentes habilitan RLS y revocan acceso directo a los roles Supabase `anon` y `authenticated`, con políticas restrictivas de denegación por defecto. Las tablas nuevas deben seguir el mismo patrón; la autorización de negocio sigue en el backend autenticado.
+
+### 15.2 Tablas candidatas y propósito
+
+Todos los nombres/columnas son candidatos por revisar; no se crean en este PR.
+
+| Tabla candidata | Datos propios y restricciones críticas |
+|---|---|
+| `hive_collectives` | UUID de colectiva, owner creador derivado en el servidor, estado, versión de política, timestamps. El propietario de una colectiva no debe poder adjudicar membresías a sí mismo cambiando IDs en el cliente. |
+| `hive_collective_memberships` | UUID de membresía, colectiva, owner autenticado, estado `INVITED/ACTIVE/SUSPENDED/REVOKED`, generación, emisor/fechas de invitación/aceptación/revocación, hash de invitación y caducidad. Token original de invitación no se persiste. Índice que impida membresías activas duplicadas según la política aprobada; preservar historial revocado. |
+| `hive_share_consents` | Consentimiento inmutable ligado a owner origen, Knowledge ID/versión, hash del snapshot, colectiva, conjunto exacto de membership IDs y generaciones destinatarias, hash de audiencia, política de redacción, actor/fecha y generación de revocación. No reutilizar un consentimiento para otra revisión o audiencia. |
+| `hive_sync_outbox` | Una fila durable por entrega a un destinatario: `event_id`, `publication_id`, consentimiento, membership destino/generación, hash de envelope y snapshot, envelope sanitizado/firma/clave, estado `PENDING/DELIVERED/ACKNOWLEDGED/FAILED/CANCELLED`, intentos y fechas. Restricción única de deduplicación por destino + evento; ID repetido con hash distinto es error de integridad. |
+| `hive_sync_inbox` | Evento/envelope recibido, hash y firma validada, membership destino, estado `RECEIVED/VALIDATED/PENDING_REVIEW/ACCEPTED/REJECTED/QUARANTINED`, versión/hash aceptados y recibo. `UNIQUE(recipient_membership_id,event_id)` debe hacer durable la idempotencia. |
+| `hive_collective_revisions` | Historial inmutable de snapshots aceptados, linaje/revisión/padres, origen opaco, evento, hash, procedencia permitida, actor receptor y fecha. Nunca actualizar un snapshot previo para simular una revisión nueva. |
+| `hive_collective_conflicts` | Linaje y revisiones/base en conflicto, estado pendiente/resuelto/rechazado, resolución, actor/fecha y vínculo a una nueva revisión de resolución. No se admite last-write-wins. |
+| `hive_revocation_tombstones` | Consentimiento/linaje/hash destinatario, generación positiva, evento y acuse. Una revisión antigua no puede reactivar la relación; mantener el tombstone según retención aprobada. |
+| `hive_sync_service_public_keys` (opcional) | Solo `service_key_id`, clave pública, algoritmo, estado y periodo de validez. Nunca almacenar aquí el PEM privado. Usarlo solo si la arquitectura de verificación realmente lo necesita, no solo por simetría de tablas. |
+
+### 15.3 Invariantes DDL y de aplicación
+
+- UUID en columnas de identidad/evento donde el contrato lo especifica; Knowledge fuente conserva su ID de texto actual.
+- CHECK para estados finitos, contador de versión/generación entero positivo, hash de contenido/audiencia en hex SHA-256 y límites razonables al tamaño de JSON/firmas.
+- Foreign keys con `ON DELETE RESTRICT` para conservar historia y auditoría; la baja lógica/revocación no debe borrar revisiones, receipts o tombstones.
+- Restricciones únicas para idempotencia y evitar más de una membresía vigente conforme a la política aprobada. No confiar en «buscar primero y luego insertar»: la unicidad debe hacerse cumplir por la base de datos.
+- RLS habilitado, `REVOKE ALL` a `anon`/`authenticated` y denegación directa por defecto, igual al baseline existente. No añadir políticas públicas para hacer funcionar Hive.
+- Índices para outbox pendiente por `next_attempt_at`, inbox por estado/membresía, conflictos pendientes y tombstones por colectivo/linaje/generación. Índices y retención deben comprobarse sobre los tests; no inventar selectividad/volumen.
+- Cualquier tabla incorporada a la interfaz genérica se añade explícitamente a `persistence/core.py:ENTITIES`; si requiere semánticas diferentes a CRUD/versionado genérico, se usa un servicio dedicado en vez de relajar la allowlist.
+
+### 15.4 Límites transaccionales
+
+1. **Publicar:** releer Knowledge bajo owner scope exacto y `expected_version`; comprobar verificación/evidencia, hash y privacidad; calcular y presentar audiencia; registrar consentimiento; crear outbox por destinatario y auditoría. Todo dentro de una transacción. No enviar mensajes externos dentro de esta transacción.
+2. **Entregar internamente:** bloquear/adquirir una fila pending de outbox de forma concurrente segura; revalidar consent/generación/membresía; crear inbox de manera idempotente y actualizar el recibo/estado. Si el transporte futuro no es el mismo Postgres, usar un worker con lease/retry y no mantener una transacción abierta durante la red.
+3. **Aceptar:** volver a leer inbox por owner/membership derivada de sesión, verificar `expected_hash` y `expected_version`, crear relación/revisión local y auditoría en una transacción.
+4. **Resolver conflicto:** preservar entradas competidoras, crear nueva revisión con enlaces a sus padres y marcar resolución/auditoría atómicamente.
+5. **Revocar:** incrementar generación, crear tombstones, cancelar outbox aún no entregada y emitir auditoría. Los acuses externos (si existen) son otro hecho durable, no prueba de eliminación de copias.
+
+### 15.5 Puerta de implementación
+
+Antes del primer archivo de migración: aceptar/rechazar la sección 13 de este contrato; inspeccionar de nuevo `ENTITIES`, CRUD, funciones de auditoría, rutas/auth y estado del schema; especificar retención/tamaño máximo del snapshot; ejecutar una migración equivalente en PostgreSQL desechable desde base limpia y desde una base ya migrada hasta `054`; probar rollback por fallo inyectado; y verificar denegación de acceso con roles `anon`/`authenticated`. No modificar Supabase productivo ni el estado de Render en esta etapa.
