@@ -172,6 +172,10 @@ jobs:
         run: |
           python -m unittest test_agent_audit_contract -v
 
+      - name: Test read-only GitHub inspection contract
+        run: |
+          python -m unittest test_github_readonly -v
+
       - name: Test specialized agent contract
         run: |
           python -m unittest test_specialized_agents_contract -v
