@@ -300,3 +300,14 @@ Todos los nombres/columnas son candidatos por revisar; no se crean en este PR.
 ### 15.5 Puerta de implementación
 
 Antes del primer archivo de migración: aceptar/rechazar la sección 13 de este contrato; inspeccionar de nuevo `ENTITIES`, CRUD, funciones de auditoría, rutas/auth y estado del schema; especificar retención/tamaño máximo del snapshot; ejecutar una migración equivalente en PostgreSQL desechable desde base limpia y desde una base ya migrada hasta `054`; probar rollback por fallo inyectado; y verificar denegación de acceso con roles `anon`/`authenticated`. No modificar Supabase productivo ni el estado de Render en esta etapa.
+
+## 16. Revalidación de runtime y persistencia — 2026-10-09 20:46 UTC
+
+Comprobación de solo lectura realizada después de las suites CI y sin cambiar configuración, datos, esquema ni despliegues:
+
+- **Render:** el servicio `akira-empresa` sigue configurado para la rama `main`, con `autoDeploy=yes` y plan `free`. El despliegue activo observado es `dep-db4fbioae00c73a22uk0`, sobre el SHA `7060e02ac01868425adb5f4e0c4748c88f05387b`. Los PR F15 permanecen fuera de `main`; por tanto, este trabajo no ha activado auto-deploy de F15.
+- **Supabase / `public`:** la consulta de catálogo no devuelve tablas cuyo nombre corresponda a Hive, Collective, Sync, outbox, inbox o tombstones. La consulta a `public.capabilities` tampoco devuelve una capacidad Hive/Collective. No se aplicó ninguna migración ni se escribió ninguna fila.
+- **Clave de firma:** no se leyó ni imprimió ningún valor secreto. La existencia, protección, rotación y correspondencia entre clave privada de servicio y clave pública de confianza siguen **sin verificar**; esta auditoría no aprovisionó ni modificó secretos.
+- **Conclusión de runtime:** la compuerta de privacidad está preparada en PR, pero no está desplegada por este cambio. No hay evidencia de una sincronización colectiva activa ni de un Local Agent operativo en producción.
+
+Esta observación es una fotografía del entorno en ese momento, no una garantía permanente. Debe repetirse antes de cualquier release. La ausencia de tablas F15 en producción es esperada mientras el contrato siga sin aprobación y no se haya autorizado la migración.
