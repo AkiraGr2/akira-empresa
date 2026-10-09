@@ -18,6 +18,7 @@ import os
 import re
 from uuid import UUID
 from collections.abc import Mapping
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,7 @@ FORBIDDEN_NESTED_SNAPSHOT_KEYS = frozenset({
 })
 _KEY_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+_UTC_TIMESTAMP_RE = re.compile(r"^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?Z$")
 _SIGNATURE_RE = re.compile(r"^[A-Za-z0-9_-]{86}$")
 
 
@@ -189,6 +191,16 @@ def _reject_sensitive_snapshot_keys(value: Any) -> None:
             stack.extend(current)
 
 
+def _validate_issued_at(value: str) -> None:
+    """Require the canonical v1 UTC timestamp form and a real calendar date."""
+    if not _UTC_TIMESTAMP_RE.fullmatch(value):
+        raise HiveSyncEnvelopeError("issued_at_invalid")
+    try:
+        datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError as exc:
+        raise HiveSyncEnvelopeError("issued_at_invalid") from exc
+
+
 def _validate_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(envelope, Mapping):
         raise HiveSyncEnvelopeError("envelope_requires_object")
@@ -230,6 +242,7 @@ def _validate_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
     if len(set(parent_revision_ids)) != len(parent_revision_ids):
         raise HiveSyncEnvelopeError("parent_revision_ids_duplicate")
 
+    _validate_issued_at(result["issued_at"])
     if result["protocol_version"] != PROTOCOL_VERSION:
         raise HiveSyncEnvelopeError("unsupported_protocol_version")
     if result["canonicalization"] != CANONICALIZATION_VERSION:
