@@ -126,7 +126,8 @@ def _validate_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
             raise HiveSyncEnvelopeError("envelope_uuid_invalid:" + field) from exc
         if normalized != result[field]:
             raise HiveSyncEnvelopeError("envelope_uuid_not_canonical:" + field)
-    if not _HASH_RE.fullmatch(result["content_hash"]):
+    content_hash = result["content_hash"]
+    if not isinstance(content_hash, str) or not _HASH_RE.fullmatch(content_hash):
         raise HiveSyncEnvelopeError("content_hash_invalid")
 
     if result["event_type"] == "KNOWLEDGE_SNAPSHOT":
