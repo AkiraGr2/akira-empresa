@@ -269,13 +269,19 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
         signed = sign_envelope(envelope, self.private_key, self.key_id)
         self.assertTrue(verify_envelope(signed, {self.key_id: self.public_key}))
 
-    def test_snapshot_requires_concept_and_content(self):
+    def test_snapshot_requires_nonempty_string_concept_and_content(self):
         for field in ("concept", "content"):
-            with self.subTest(field=field):
+            with self.subTest(field=field, kind="missing"):
                 snapshot = make_snapshot()
                 snapshot.pop(field)
                 with self.assertRaises(HiveSyncEnvelopeError):
                     sign_envelope(make_envelope(snapshot), self.private_key, self.key_id)
+            for bad_value in ("", "  ", None, 1, []):
+                with self.subTest(field=field, bad_value=bad_value):
+                    snapshot = make_snapshot()
+                    snapshot[field] = bad_value
+                    with self.assertRaises(HiveSyncEnvelopeError):
+                        sign_envelope(make_envelope(snapshot), self.private_key, self.key_id)
 
     def test_sign_and_verify_snapshot_event(self):
         unsigned = make_envelope()
