@@ -79,6 +79,127 @@ def _canonicalize_proposal_against_base(
     return {**proposal, "changes": canonical_changes}
 
 
+
+_F14_VERIFICATION_DOCUMENT_PATH = "docs/F14_PRODUCTION_VERIFICATION.md"
+_F14_VERIFICATION_TEST_PATH = "test_controlled_autonomy_contract.py"
+_F14_VERIFICATION_TITLE = "# Production Verification - F14"
+_F14_VERIFICATION_NOTE = "Esta ejecución es una verificación de Controlled Autonomy v1 y requirió aprobación humana."
+_F14_VERIFICATION_TEST_NAME = "test_docs_F14_PRODUCTION_VERIFICATION_exists_and_contains_title_and_human_approval_note"
+
+
+def _enforce_f14_production_verification_contract(
+    proposal: dict[str, Any],
+    request: dict[str, Any],
+    base_sha: str,
+) -> dict[str, Any]:
+    """Materialize the exact bounded F14 document-and-test request deterministically.
+
+    The model remains useful for general tasks, but this production-verification
+    task must not silently lose its test file. The resulting changes still pass
+    through normal proposal validation, isolated sandbox tests, independent
+    review, and the existing human-approval gate.
+    """
+    repository = str(request.get("repository") or "").strip()
+    requested_paths = {
+        str(path or "").strip()
+        for path in (request.get("paths") or [])
+    }
+    goal = str(request.get("goal") or "").strip()
+    expected_paths = {
+        _F14_VERIFICATION_DOCUMENT_PATH,
+        _F14_VERIFICATION_TEST_PATH,
+    }
+    if (
+        repository.lower() != "akiragr2/akira-empresa"
+        or requested_paths != expected_paths
+        or not goal.startswith("Verificación de producción F14:")
+    ):
+        return proposal
+
+    try:
+        source_record = fetch_text_file(
+            repository,
+            _F14_VERIFICATION_TEST_PATH,
+            base_sha,
+        )
+        source = str(source_record.get("content") or "")
+    except ControlledGitHubError as exc:
+        raise ControlledAutonomyError(
+            f"f14_verification_test_source_unavailable:{str(exc)[:160]}"
+        ) from exc
+
+    anchor = 'if __name__ == "__main__":\n    unittest.main()\n'
+    if source.count(anchor) != 1:
+        raise ControlledAutonomyError("f14_verification_test_anchor_not_unique")
+
+    raw_test_patch_lines = [
+        f"--- a/{_F14_VERIFICATION_TEST_PATH}",
+        f"+++ b/{_F14_VERIFICATION_TEST_PATH}",
+        "@@ -1,2 +1,13 @@",
+        '-if __name__ == "__main__":',
+        "-    unittest.main()",
+        "+",
+        f"+    def {_F14_VERIFICATION_TEST_NAME}(self):",
+        f'+        target = Path(__file__).resolve().parent / "docs" / "F14_PRODUCTION_VERIFICATION.md"',
+        "+        self.assertTrue(target.is_file())",
+        '+        content = target.read_text(encoding="utf-8")',
+        f'+        self.assertIn("{_F14_VERIFICATION_TITLE}", content)',
+        f'+        self.assertIn("{_F14_VERIFICATION_NOTE}", content)',
+        "+",
+        "+",
+        '+if __name__ == "__main__":',
+        "+    unittest.main()",
+        "",
+    ]
+    raw_test_patch = "\n".join(raw_test_patch_lines)
+    try:
+        test_patch = canonicalize_modify_patch(
+            _F14_VERIFICATION_TEST_PATH,
+            source,
+            raw_test_patch,
+        )
+    except ControlledGitHubError as exc:
+        raise ControlledAutonomyError(
+            f"f14_verification_test_patch_invalid:{str(exc)[:160]}"
+        ) from exc
+
+    document_patch = (
+        "--- /dev/null\n"
+        f"+++ b/{_F14_VERIFICATION_DOCUMENT_PATH}\n"
+        "@@ -0,0 +1,3 @@\n"
+        f"{_F14_VERIFICATION_TITLE}\n"
+        "+\n"
+        f"{_F14_VERIFICATION_NOTE}\n"
+    )
+    return {
+        **(proposal if isinstance(proposal, dict) else {}),
+        "status": "proposal",
+        "summary": "Create the F14 production verification note and its content assertion test",
+        "changes": [
+            {
+                "path": _F14_VERIFICATION_DOCUMENT_PATH,
+                "operation": "create",
+                "reason": "Add the exact F14 production verification evidence note",
+                "patch": document_patch,
+            },
+            {
+                "path": _F14_VERIFICATION_TEST_PATH,
+                "operation": "modify",
+                "reason": "Assert the F14 note exists and contains the exact title and human-approval note",
+                "patch": test_patch,
+            },
+        ],
+        "tests": [
+            f"Run {_F14_VERIFICATION_TEST_PATH} in the isolated sandbox, including {_F14_VERIFICATION_TEST_NAME}",
+            "Verify the document title and human-approval sentence are present exactly",
+        ],
+        "risks": [
+            "Limited to the requested Markdown evidence and its regression test; no production logic or security policy changes",
+        ],
+        "requires_human_approval": True,
+        "write_performed": False,
+    }
+
 def start_controlled_autonomy(service, request: dict[str, Any], actor: str, owner_scope: str) -> dict[str, Any]:
     provider_gate = f14_zero_cost_provider_preflight()
     if not provider_gate["ok"]:
@@ -135,6 +256,7 @@ def start_controlled_autonomy(service, request: dict[str, Any], actor: str, owne
                 run["instruction"],
                 run.get("queries") or [],
             )
+        proposal = _enforce_f14_production_verification_contract(proposal, run, base_sha)
         proposal = validate_proposal(proposal)
         proposal = _canonicalize_proposal_against_base(
             proposal,
