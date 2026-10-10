@@ -120,6 +120,69 @@ def _head_commit_sha(repo: str) -> str:
     return sha.lower()
 
 
+_COMMIT_REFERENCE_RE = re.compile(
+    r"^https://github\\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/commit/([0-9a-f]{40})$"
+)
+
+
+def verify_applied_commit_reference(reference: str) -> dict[str, Any]:
+    """Verify an allow-listed commit exists and is reachable from its default branch."""
+    if not isinstance(reference, str):
+        raise GitHubReadValidationError("change_reference_must_be_text")
+    value = reference.strip()
+    match = _COMMIT_REFERENCE_RE.fullmatch(value)
+    if not match:
+        raise GitHubReadValidationError("change_reference_must_be_commit_url")
+
+    repository = _validate_repo(match.group(1))
+    commit_sha = match.group(2)
+    try:
+        commit = _get_json(
+            f"https://api.github.com/repos/{repository}/commits/{commit_sha}"
+        )
+    except GitHubReadUpstreamError as exc:
+        if str(exc) == "not_found":
+            raise GitHubReadValidationError("change_commit_not_found") from exc
+        raise
+
+    observed_sha = (
+        str(commit.get("sha") or "").strip().lower()
+        if isinstance(commit, dict)
+        else ""
+    )
+    if observed_sha != commit_sha:
+        raise GitHubReadUpstreamError("change_commit_sha_mismatch")
+
+    base_sha = _head_commit_sha(repository)
+    try:
+        comparison = _get_json(
+            f"https://api.github.com/repos/{repository}/compare/"
+            f"{commit_sha}...{base_sha}"
+        )
+    except GitHubReadUpstreamError as exc:
+        if str(exc) == "not_found":
+            raise GitHubReadValidationError("change_commit_not_comparable") from exc
+        raise
+
+    merge_base = str(
+        ((comparison.get("merge_base_commit") or {}).get("sha"))
+        if isinstance(comparison, dict)
+        else ""
+    ).strip().lower()
+    if merge_base != commit_sha:
+        raise GitHubReadValidationError("change_commit_not_applied_to_main")
+
+    return {
+        "status": "verified",
+        "reference": value,
+        "repository": repository,
+        "commit_sha": commit_sha,
+        "base_branch": DEFAULT_BRANCH,
+        "base_sha": base_sha,
+        "applied_to_base": True,
+    }
+
+
 def _decode_content(item: dict[str, Any]) -> str:
     return _decode_content_with_limit(item, MAX_FILE_BYTES)
 
