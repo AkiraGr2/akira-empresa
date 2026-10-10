@@ -3460,7 +3460,47 @@ class PersistenceService:
             raise VerificationError("evolution update no confirmada")
         return verified
 
-    def advance_evolution(self, evolution_id, next_status, expected_version=None, actor="system", owner_scope=None):
+    def _verify_applied_change_reference(self, reference):
+        from github_readonly import (
+            GitHubReadUpstreamError,
+            GitHubReadValidationError,
+            verify_applied_commit_reference,
+        )
+
+        try:
+            evidence = verify_applied_commit_reference(reference)
+        except GitHubReadValidationError as exc:
+            raise ValidationError(
+                "change_reference no corresponde a un commit aplicado en main"
+            ) from exc
+        except GitHubReadUpstreamError as exc:
+            raise VerificationError(
+                "no se pudo verificar change_reference en GitHub"
+            ) from exc
+
+        if (
+            not isinstance(evidence, dict)
+            or evidence.get("status") != "verified"
+            or evidence.get("reference") != reference
+            or evidence.get("applied_to_base") is not True
+            or evidence.get("base_branch") != "main"
+            or not isinstance(evidence.get("commit_sha"), str)
+            or len(evidence["commit_sha"]) != 40
+            or not isinstance(evidence.get("base_sha"), str)
+            or len(evidence["base_sha"]) != 40
+        ):
+            raise VerificationError("evidencia de change_reference incompleta")
+        return evidence
+
+    def advance_evolution(
+        self,
+        evolution_id,
+        next_status,
+        expected_version=None,
+        actor="system",
+        owner_scope=None,
+        _change_reference=None,
+    ):
         current = self.get_evolution(evolution_id, owner_scope=owner_scope)
         if current is None:
             raise NotFoundError(evolution_id)
@@ -3483,18 +3523,41 @@ class PersistenceService:
             value = current.get(field)
             if not value:
                 raise ValidationError(message)
+        applied_reference = None
+        change_verification = None
         if next_status == "applied":
             decision = current.get("decision")
             if not isinstance(decision, dict) or decision.get("status") != "approved":
                 raise ValidationError("apply requiere decision.status=approved")
-            if not str(current.get("change_reference") or "").strip():
+            raw_reference = (
+                current.get("change_reference")
+                if _change_reference is None
+                else _change_reference
+            )
+            applied_reference = validate_evolution_record(
+                {"change_reference": raw_reference},
+                partial=True,
+            )["change_reference"]
+            if not applied_reference:
                 raise ValidationError("apply requiere change_reference verificable")
+            change_verification = self._verify_applied_change_reference(applied_reference)
+        elif _change_reference is not None:
+            raise ValidationError("change_reference solo se acepta al aplicar")
         if next_status == "rejected":
             decision = current.get("decision")
             if not isinstance(decision, dict) or decision.get("status") != "rejected":
                 raise ValidationError("reject requiere decision.status=rejected")
 
         changes = {"status": next_status}
+        if next_status == "applied":
+            evaluation = current.get("evaluation")
+            if not isinstance(evaluation, dict):
+                evaluation = {}
+            changes["change_reference"] = applied_reference
+            changes["evaluation"] = {
+                **evaluation,
+                "change_reference_verification": change_verification,
+            }
         if next_status != "detected" and not current.get("started_at"):
             changes["started_at"] = _now_iso()
         if next_status in ("applied", "rejected", "failed"):
@@ -3506,13 +3569,17 @@ class PersistenceService:
         try:
             with self.repo.transaction() as tx:
                 updated = tx.update("evolution_records", evolution_id, changes, expected_version)
+                detail = {"status": next_status, "new_version": updated["version"]}
+                if change_verification is not None:
+                    detail["verified_commit_sha"] = change_verification["commit_sha"]
+                    detail["verified_base_sha"] = change_verification["base_sha"]
                 tx.append_audit({
                     "actor": actor,
                     "action": "evolution.status.update",
                     "resource": "evolution_records",
                     "resource_id": evolution_id,
                     "status": "success",
-                    "detail": {"status": next_status, "new_version": updated["version"]},
+                    "detail": detail,
                 })
         except PersistenceError:
             raise
@@ -3521,6 +3588,12 @@ class PersistenceService:
         verified = self.get_evolution(evolution_id, owner_scope=owner_scope)
         if verified is None or verified.get("status") != next_status:
             raise VerificationError("evolution status no confirmada")
+        if next_status == "applied":
+            persisted_evidence = (verified.get("evaluation") or {}).get(
+                "change_reference_verification"
+            )
+            if persisted_evidence != change_verification:
+                raise VerificationError("evolution change evidence no confirmada")
         return verified
 
     def approve_evolution(self, evolution_id, actor="system", owner_scope=None):
@@ -3607,23 +3680,19 @@ class PersistenceService:
         decision = current.get("decision")
         if not isinstance(decision, dict) or decision.get("status") != "approved":
             raise ValidationError("apply requiere aprobacion humana explicita")
-        reference = str(change_reference or "").strip()[:1000]
+        reference = validate_evolution_record(
+            {"change_reference": change_reference},
+            partial=True,
+        )["change_reference"]
         if not reference:
             raise ValidationError("change_reference requerido")
-        changed = self.update_evolution(
-            evolution_id,
-            {"change_reference": reference},
-            expected_version=current["version"],
-            actor=actor,
-            owner_scope=owner_scope,
-            _allow_control_fields=True,
-        )
         return self.advance_evolution(
             evolution_id,
             "applied",
-            expected_version=changed["version"],
+            expected_version=current["version"],
             actor=actor,
             owner_scope=owner_scope,
+            _change_reference=reference,
         )
 
     def _validate_mission_transition(self, current, new):
