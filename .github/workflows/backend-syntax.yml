@@ -171,6 +171,9 @@ jobs:
       - name: Test agent semantic contract
         run: |
           python -m unittest test_agent_contract -v
+      - name: Test agent selftest cleanup
+        run: |
+          python -m unittest persistence.test_agent_selftest_cleanup -v
 
       - name: Test agent audit contract
         run: |

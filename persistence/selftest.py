@@ -547,6 +547,50 @@ def _disable_test_agent(service):
     }
 
 
+def cleanup_agent_test_tasks(service, task_ids):
+    """Borra solo tasks creadas por esta ejecucion y falla si la limpieza no queda confirmada."""
+    failures = []
+    deleted_count = 0
+    unique_ids = list(dict.fromkeys(task_ids or []))
+
+    for task_id in unique_ids:
+        try:
+            with service.repo.transaction() as tx:
+                deleted = tx.delete("agent_tasks", task_id)
+                still_in_transaction = tx.get("agent_tasks", task_id)
+                confirmed = still_in_transaction is None
+                tx.append_audit({
+                    "actor": "selftest",
+                    "action": "agent_task.fixture.delete",
+                    "resource": "agent_tasks",
+                    "resource_id": task_id,
+                    "status": "success" if confirmed else "failure",
+                    "detail": {
+                        "fixture": True,
+                        "delete_returned": bool(deleted),
+                        "absence_confirmed": confirmed,
+                    },
+                })
+            still_exists = service.get_task(task_id) is not None
+            if not confirmed or still_exists:
+                failures.append({"task_id": task_id, "reason": "task_still_exists"})
+            else:
+                deleted_count += int(bool(deleted))
+        except Exception as exc:
+            failures.append({
+                "task_id": task_id,
+                "reason": "delete_error",
+                "error_type": type(exc).__name__,
+            })
+
+    return {
+        "ok": not failures,
+        "attempted": len(unique_ids),
+        "deleted": deleted_count,
+        "failures": failures,
+    }
+
+
 def run_logic_tests(service, fresh_service_factory=None):
     """fresh_service_factory: opcional, devuelve un servicio con conexiones nuevas ('reinicio suave')."""
     created_ids = []
@@ -3058,11 +3102,21 @@ def run_logic_tests(service, fresh_service_factory=None):
             f"{len(cleanup_failures)} memory(s) remain or could not be deleted",
             flush=True,
         )
-    for tid in created_task_ids:
-        try:
-            service.repo.delete("agent_tasks", tid)
-        except Exception:
-            pass
+    task_cleanup = cleanup_agent_test_tasks(service, created_task_ids)
+    results.append(
+        _res(
+            "TEST_AGENT_TASK_CLEANUP",
+            task_cleanup["ok"],
+            f"creadas={task_cleanup['attempted']} eliminadas={task_cleanup['deleted']} "
+            f"fallos={len(task_cleanup['failures'])}",
+        )
+    )
+    if task_cleanup["failures"]:
+        print(
+            f"[persistence] agent-task selftest cleanup FAIL: "
+            f"{len(task_cleanup['failures'])} task(s) remain or could not be deleted",
+            flush=True,
+        )
 
     mission_cleanup_failures = []
     mission_cleanup_deleted = 0
