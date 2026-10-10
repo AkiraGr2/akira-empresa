@@ -17,7 +17,7 @@ import uuid
 
 import akira_auth
 
-from .core import (ConflictError, GRAPH_EDGE_SCHEMA_VERSION, GRAPH_NODE_SCHEMA_VERSION,
+from .core import (COGNITIVE_STAGES, ConflictError, GRAPH_EDGE_SCHEMA_VERSION, GRAPH_NODE_SCHEMA_VERSION,
                    LEARNING_SCHEMA_VERSION, NotFoundError, PersistenceError, ValidationError, new_id,
                    _SELF_MODEL_DERIVED_FIELDS,
                    validate_graph_edge, validate_graph_node, validate_knowledge, validate_memory, validate_learning_event)
@@ -46,6 +46,256 @@ class _Abort(Exception):
 
 def _res(name, ok, detail):
     return {"test": name, "status": "PASS" if ok else "FAIL", "detail": detail}
+
+
+def run_relation_integrity_test(service):
+    """Verifica ciclo cognitivo -> Learning -> Knowledge -> grafo y limpia sus fixtures."""
+    name = "TEST_RELATION_INTEGRITY"
+    marker = uuid.uuid4().hex
+    owner_scope = f"selftest:relation_integrity:{marker}"
+    cycle_id = None
+    learning_id = None
+    knowledge_id = None
+    graph_node_id = None
+    checks = {}
+    cleanup_failures = []
+
+    def _delete_verified(entity, record_id):
+        try:
+            service.repo.delete(entity, record_id)
+            if service.repo.get(entity, record_id) is not None:
+                cleanup_failures.append(f"{entity}:{record_id}:still_exists")
+        except Exception as exc:
+            cleanup_failures.append(f"{entity}:{record_id}:{type(exc).__name__}")
+
+    try:
+        cycle = service.start_cycle(
+            "selftest_relation_integrity",
+            {"fixture": marker},
+            actor="selftest",
+            owner_scope=owner_scope,
+            idempotency_key=f"selftest:relation_integrity:{marker}:cycle",
+        )["record"]
+        cycle_id = cycle["id"]
+        event_ids = []
+        for index, stage in enumerate(COGNITIVE_STAGES):
+            recorded = service.record_stage(
+                cycle_id,
+                stage,
+                data={"fixture": marker, "stage_index": index},
+                actor="selftest",
+                owner_scope=owner_scope,
+                idempotency_key=f"selftest:relation_integrity:{marker}:{stage}",
+            )
+            event_ids.append(recorded["event"]["id"])
+        completed_cycle = service.complete_cycle(
+            cycle_id,
+            "completed",
+            actor="selftest",
+            owner_scope=owner_scope,
+        )
+
+        graph_node = service.create_node({
+            "node_type": "concept",
+            "label": f"selftest relation {marker}",
+            "description": "Nodo temporal de la prueba de integridad entre fases.",
+            "node_metadata": {"selftest_fixture": "relation_integrity", "suppress_tag_auto_connect": True},
+            "tags": ["selftest_relation_integrity"],
+            "owner_scope": owner_scope,
+            "privacy_level": "PRIVATE",
+        }, actor="selftest", idempotency_key=f"selftest:relation_integrity:{marker}:node")
+        graph_node_id = graph_node["record"]["id"]
+
+        learning = service.save_learning({
+            "source": "selftest_relation_integrity",
+            "event": "cognitive_cycle_completed",
+            "lesson": "Una experiencia cognitiva puede producir un aprendizaje enlazado a Knowledge.",
+            "knowledge_nodes": [graph_node_id],
+            "relationships": [],
+            "confidence": 0.8,
+            "outcome": "success",
+            "status": "candidate",
+            "evidence": [{
+                "type": "selftest",
+                "title": "Cognitive cycle fixture",
+                "reference": f"cognitive_cycle://{cycle_id}",
+                "note": "Ciclo sintético completado por las nueve etapas persistentes.",
+            }],
+            "learning_context": {
+                "origin": "selftest",
+                "cognitive_cycle_id": cycle_id,
+                "fixture": marker,
+            },
+        }, actor="selftest", owner_scope=owner_scope,
+            idempotency_key=f"selftest:relation_integrity:{marker}:learning")
+        learning_id = learning["record"]["id"]
+
+        knowledge = service.save_knowledge({
+            "concept": f"Relation integrity {marker}",
+            "content": "Registro de conocimiento temporal vinculado al aprendizaje y al grafo.",
+            "domain": "selftest",
+            "source": "selftest_relation_integrity",
+            "source_id": learning_id,
+            "source_reference": f"learning://{learning_id}",
+            "confidence": 0.8,
+            "evidence": [{
+                "type": "selftest",
+                "title": "Learning fixture",
+                "reference": f"learning://{learning_id}",
+                "note": f"Origen del conocimiento: ciclo {cycle_id}.",
+            }],
+            "tags": ["selftest", "relation_integrity"],
+            "related_nodes": [graph_node_id],
+            "owner_scope": owner_scope,
+            "privacy_level": "PRIVATE",
+        }, actor="selftest", owner_scope=owner_scope,
+            idempotency_key=f"selftest:relation_integrity:{marker}:knowledge")
+        knowledge_id = knowledge["record"]["id"]
+
+        cycle_read = service.get_cycle(cycle_id, owner_scope=owner_scope)
+        events = service.list_cycle_events(cycle_id, owner_scope=owner_scope)
+        learning_read = service.get_learning(learning_id, owner_scope=owner_scope)
+        knowledge_read = service.get_knowledge(knowledge_id, owner_scope=owner_scope)
+        knowledge_rows = service.search_knowledge(
+            {"source_id": learning_id}, owner_scope=owner_scope, limit=10
+        )
+        learning_nodes = service.repo.search(
+            "graph_nodes",
+            {"node_type": "experience", "label": f"learning:{learning_id}", "owner_scope": owner_scope},
+            limit=10,
+        )
+        learning_node_id = learning_nodes[0]["id"] if learning_nodes else None
+        graph_edges = service.repo.search(
+            "graph_edges",
+            {
+                "from_node": learning_node_id,
+                "to_node": graph_node_id,
+                "relation_type": "learned_from",
+                "status": "active",
+            },
+            limit=10,
+        ) if learning_node_id else []
+        foreign_scope = owner_scope + ":other"
+
+        checks = {
+            "cycle_completed": bool(
+                cycle_read
+                and completed_cycle.get("status") == "completed"
+                and cycle_read.get("status") == "completed"
+            ),
+            "all_cognitive_stages_persisted": (
+                len(events) == len(COGNITIVE_STAGES)
+                and {event.get("stage") for event in events} == set(COGNITIVE_STAGES)
+                and all(event.get("status") == "success" for event in events)
+                and {event.get("id") for event in events} == set(event_ids)
+            ),
+            "learning_links_cycle_and_graph": bool(
+                learning_read
+                and learning_read.get("learning_context", {}).get("cognitive_cycle_id") == cycle_id
+                and graph_node_id in (learning_read.get("knowledge_nodes") or [])
+            ),
+            "knowledge_links_learning_and_graph": bool(
+                knowledge_read
+                and knowledge_read.get("source_id") == learning_id
+                and knowledge_read.get("source_reference") == f"learning://{learning_id}"
+                and graph_node_id in (knowledge_read.get("related_nodes") or [])
+                and any(row.get("id") == knowledge_id for row in knowledge_rows)
+            ),
+            "learning_graph_edge_persisted": bool(
+                learning_node_id
+                and graph_edges
+                and graph_edges[0].get("from_node") == learning_node_id
+                and graph_edges[0].get("to_node") == graph_node_id
+            ),
+            "owner_scope_isolated": (
+                service.get_cycle(cycle_id, owner_scope=foreign_scope) is None
+                and service.get_learning(learning_id, owner_scope=foreign_scope) is None
+                and service.get_knowledge(knowledge_id, owner_scope=foreign_scope) is None
+                and service.get_node(graph_node_id, owner_scope=foreign_scope) is None
+            ),
+        }
+    except Exception as exc:
+        checks["execution"] = f"{type(exc).__name__}: {str(exc)[:240]}"
+    finally:
+        # Look up any rows created just before an exception so failed probes do not leak fixtures.
+        try:
+            learning_rows = service.repo.search(
+                "learning_events",
+                {"owner_scope": owner_scope, "source": "selftest_relation_integrity"},
+                limit=20,
+            )
+            learning_id = learning_id or (learning_rows[0].get("id") if learning_rows else None)
+        except Exception as exc:
+            cleanup_failures.append(f"learning_lookup:{type(exc).__name__}")
+        try:
+            knowledge_rows = service.repo.search(
+                "knowledge_records",
+                {"owner_scope": owner_scope, "source": "selftest_relation_integrity"},
+                limit=20,
+            )
+            if not knowledge_id and knowledge_rows:
+                knowledge_id = knowledge_rows[0].get("id")
+        except Exception as exc:
+            cleanup_failures.append(f"knowledge_lookup:{type(exc).__name__}")
+        try:
+            cycle_rows = service.repo.search(
+                "cognitive_cycles",
+                {"owner_scope": owner_scope, "trigger": "selftest_relation_integrity"},
+                limit=20,
+            )
+            cycle_id = cycle_id or (cycle_rows[0].get("id") if cycle_rows else None)
+        except Exception as exc:
+            cleanup_failures.append(f"cycle_lookup:{type(exc).__name__}")
+
+        node_ids = set()
+        try:
+            scoped_nodes = service.repo.search("graph_nodes", {"owner_scope": owner_scope}, limit=200)
+            for node in scoped_nodes:
+                if node.get("label") == f"selftest relation {marker}" or (
+                    learning_id and node.get("label") == f"learning:{learning_id}"
+                ):
+                    node_ids.add(node["id"])
+            if graph_node_id:
+                node_ids.add(graph_node_id)
+        except Exception as exc:
+            cleanup_failures.append(f"graph_node_lookup:{type(exc).__name__}")
+
+        edge_ids = set()
+        for node_id in node_ids:
+            for field in ("from_node", "to_node"):
+                try:
+                    edge_ids.update(
+                        row["id"] for row in service.repo.search(
+                            "graph_edges", {field: node_id}, limit=5000
+                        ) if row.get("id")
+                    )
+                except Exception as exc:
+                    cleanup_failures.append(f"graph_edge_lookup:{node_id}:{type(exc).__name__}")
+        for edge_id in edge_ids:
+            _delete_verified("graph_edges", edge_id)
+        if knowledge_id:
+            _delete_verified("knowledge_records", knowledge_id)
+        if learning_id:
+            _delete_verified("learning_events", learning_id)
+        for node_id in node_ids:
+            _delete_verified("graph_nodes", node_id)
+        if cycle_id:
+            try:
+                event_rows = service.repo.search("cognitive_events", {"cycle_id": cycle_id}, limit=100)
+            except Exception as exc:
+                event_rows = []
+                cleanup_failures.append(f"cognitive_event_lookup:{type(exc).__name__}")
+            for event in event_rows:
+                if event.get("id"):
+                    _delete_verified("cognitive_events", event["id"])
+            _delete_verified("cognitive_cycles", cycle_id)
+
+    checks["cleanup"] = not cleanup_failures
+    ok = all(value is True for key, value in checks.items() if key != "cleanup") and checks["cleanup"]
+    detail = f"checks={checks}"
+    if cleanup_failures:
+        detail += f"; cleanup_failures={cleanup_failures}"
+    return _res(name, ok, detail)
 
 
 def _mem(marker, **over):
@@ -2686,8 +2936,12 @@ def run_logic_tests(service, fresh_service_factory=None):
     ):
         results.append(_guard(name, fn, service, created_ids))
 
-    results.append({"test": "TEST_RELATION_INTEGRITY", "status": "N/A",
-                    "detail": "Experiencia/Learning/Knowledge enlazados: pendiente de pruebas cruzadas."})
+    results.append(_guard(
+        "TEST_RELATION_INTEGRITY",
+        lambda: run_relation_integrity_test(service),
+        service,
+        created_ids,
+    ))
 
     # Limpieza (Fase 1.6, 2026-10-01): BORRAR de verdad las memorias de prueba.
     # La limpieza también se valida: un selftest NO puede reportar PASS si dejó
