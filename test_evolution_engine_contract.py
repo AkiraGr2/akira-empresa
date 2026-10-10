@@ -1,5 +1,11 @@
 import unittest
+from unittest.mock import patch
 
+from github_readonly import (
+    GitHubReadUpstreamError,
+    GitHubReadValidationError,
+    verify_applied_commit_reference,
+)
 from persistence.core import (
     EVOLUTION_STATUSES,
     ValidationError,
@@ -91,6 +97,25 @@ class EvolutionEngineContractTests(unittest.TestCase):
             owner_scope=scope,
         )
 
+    def make_evaluating(self, evolution_id):
+        current = self.service.get_evolution(evolution_id, owner_scope="scope:A")
+        for status, fields in (
+            ("researching", {"research_reference": "research://test"}),
+            ("designing", {"design": "Diseño mínimo"}),
+            ("prototyping", {"prototype_reference": "prototype://test"}),
+            ("testing", {"tests": [{"name": "contract", "status": "passed"}]}),
+            ("evaluating", {"evaluation": {"verdict": "supported", "confidence": 0.95}}),
+        ):
+            current = self.service.update_evolution(
+                evolution_id, fields, expected_version=current["version"],
+                actor="owner@example.test", owner_scope="scope:A",
+            )
+            current = self.service.advance_evolution(
+                evolution_id, status, expected_version=current["version"],
+                actor="owner@example.test", owner_scope="scope:A",
+            )
+        return current
+
     def test_schema_contract_and_statuses(self):
         self.assertEqual(EVOLUTION_STATUSES[0], "detected")
         self.assertEqual(EVOLUTION_STATUSES[-1], "failed")
@@ -181,26 +206,12 @@ class EvolutionEngineContractTests(unittest.TestCase):
         rec = self.create()
         evolution_id = rec["record"]["id"]
 
-        for status, fields in (
-            ("researching", {"research_reference": "research://test"}),
-            ("designing", {"design": "Diseño mínimo"}),
-            ("prototyping", {"prototype_reference": "prototype://test"}),
-            ("testing", {"tests": [{"name": "contract", "status": "passed"}]}),
-            ("evaluating", {"evaluation": {"verdict": "supported", "confidence": 0.95}}),
-        ):
-            current = self.service.get_evolution(evolution_id, owner_scope="scope:A")
-            current = self.service.update_evolution(
-                evolution_id, fields, expected_version=current["version"],
-                actor="owner@example.test", owner_scope="scope:A",
-            )
-            self.service.advance_evolution(
-                evolution_id, status, expected_version=current["version"],
-                actor="owner@example.test", owner_scope="scope:A",
-            )
+        current = self.make_evaluating(evolution_id)
 
         with self.assertRaises(ValidationError):
             self.service.apply_evolution(
-                evolution_id, "github:commit:test",
+                evolution_id,
+                "https://github.com/AkiraGr2/akira-empresa/commit/" + "a" * 40,
                 actor="owner@example.test", owner_scope="scope:A",
             )
 
@@ -210,12 +221,29 @@ class EvolutionEngineContractTests(unittest.TestCase):
         self.assertEqual(approved["decision"]["status"], "approved")
         self.assertEqual(approved["decision"]["approved_by"], "owner@example.test")
 
-        applied = self.service.apply_evolution(
-            evolution_id, "github:commit:test",
-            actor="owner@example.test", owner_scope="scope:A",
-        )
+        commit_sha = "a" * 40
+        base_sha = "b" * 40
+        reference = f"https://github.com/AkiraGr2/akira-empresa/commit/{commit_sha}"
+        with patch("github_readonly._head_commit_sha", return_value=base_sha), patch(
+            "github_readonly._get_json",
+            side_effect=[
+                {"sha": commit_sha},
+                {"merge_base_commit": {"sha": commit_sha}},
+            ],
+        ):
+            applied = self.service.apply_evolution(
+                evolution_id, reference,
+                actor="owner@example.test", owner_scope="scope:A",
+            )
         self.assertEqual(applied["status"], "applied")
-        self.assertEqual(applied["change_reference"], "github:commit:test")
+        self.assertEqual(applied["change_reference"], reference)
+        self.assertEqual(
+            applied["evaluation"]["change_reference_verification"]["commit_sha"],
+            commit_sha,
+        )
+        self.assertTrue(
+            applied["evaluation"]["change_reference_verification"]["applied_to_base"]
+        )
 
         with self.assertRaises(ValidationError):
             self.service.advance_evolution(
@@ -223,6 +251,59 @@ class EvolutionEngineContractTests(unittest.TestCase):
                 expected_version=applied["version"],
                 actor="owner@example.test", owner_scope="scope:A",
             )
+
+    def test_commit_reference_rejects_noncanonical_and_missing_commits(self):
+        with patch("github_readonly._get_json") as get_json:
+            with self.assertRaises(GitHubReadValidationError):
+                verify_applied_commit_reference("github:commit:test")
+            get_json.assert_not_called()
+
+        with patch(
+            "github_readonly._get_json",
+            side_effect=GitHubReadUpstreamError("not_found"),
+        ):
+            with self.assertRaises(GitHubReadValidationError):
+                verify_applied_commit_reference(
+                    "https://github.com/AkiraGr2/akira-empresa/commit/" + "a" * 40
+                )
+
+    def test_commit_reference_must_be_reachable_from_main(self):
+        commit_sha = "a" * 40
+        with patch("github_readonly._head_commit_sha", return_value="b" * 40), patch(
+            "github_readonly._get_json",
+            side_effect=[
+                {"sha": commit_sha},
+                {"merge_base_commit": {"sha": "c" * 40}},
+            ],
+        ):
+            with self.assertRaises(GitHubReadValidationError):
+                verify_applied_commit_reference(
+                    f"https://github.com/AkiraGr2/akira-empresa/commit/{commit_sha}"
+                )
+
+    def test_advance_cannot_bypass_commit_verification(self):
+        rec = self.create()
+        evolution_id = rec["record"]["id"]
+        current = self.make_evaluating(evolution_id)
+        current = self.service.update_evolution(
+            evolution_id,
+            {"change_reference": "github:commit:test"},
+            expected_version=current["version"],
+            actor="owner@example.test",
+            owner_scope="scope:A",
+        )
+        approved = self.service.approve_evolution(
+            evolution_id, actor="owner@example.test", owner_scope="scope:A"
+        )
+        with self.assertRaises(ValidationError):
+            self.service.advance_evolution(
+                evolution_id, "applied",
+                expected_version=approved["version"],
+                actor="owner@example.test", owner_scope="scope:A",
+            )
+        current = self.service.get_evolution(evolution_id, owner_scope="scope:A")
+        self.assertEqual(current["status"], "evaluating")
+        self.assertEqual(current["version"], approved["version"])
 
     def test_reject_requires_evaluating_state(self):
         rec = self.create()
