@@ -27,6 +27,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from persistence.postgres import PostgresRepository, make_pool, migrate  # noqa: E402
 from persistence.selftest import run_relation_integrity_test  # noqa: E402
 from persistence.service import PersistenceService  # noqa: E402
+from persistence.capability_catalog import COGNITIVE_CYCLE_PERSISTENT_CAPABILITY  # noqa: E402
 
 
 class F12RepairPostgresApiE2ETests(unittest.TestCase):
@@ -253,13 +254,28 @@ class F12RepairPostgresApiE2ETests(unittest.TestCase):
         )
 
     def test_cross_phase_relation_integrity_against_postgres(self):
-        result = run_relation_integrity_test(self.service)
+        created = self.service.create_capability(
+            COGNITIVE_CYCLE_PERSISTENT_CAPABILITY,
+            actor="selftest",
+            idempotency_key="bootstrap:capability:cognitive_cycle_persistent:v1",
+        )
+        capability_id = created["record"]["id"]
+
+        result = run_relation_integrity_test(self.service, record_capability=True)
 
         self.assertEqual(result["status"], "PASS", result["detail"])
         self.assertIn("'cleanup': True", result["detail"])
+        self.assertIn("'capability_verification_persisted': True", result["detail"])
+        capability = self.service.capability_state(capability_id)
+        self.assertEqual(capability["state"]["verification_state"], "verified")
+        self.assertEqual(capability["effective_state"], "verified")
+        verifications = self.service.get_capability_verifications(capability_id, limit=1)
+        self.assertEqual(verifications[0]["test_key"], "cognitive_cycle_persistent_e2e")
+        self.assertEqual(verifications[0]["result"], "pass")
+        self.assertTrue(verifications[0]["build_ref"].startswith("sha256:"))
         print(
-            "F12_RELATION_INTEGRITY_POSTGRES_PASS "
-            "cycle=learning=knowledge=graph verified synthetic_fixture=cleanup"
+            "F7_COGNITIVE_CYCLE_CAPABILITY_POSTGRES_PASS "
+            "test_key=cognitive_cycle_persistent_e2e build_ref=present synthetic_fixture=cleanup"
         )
 
 
