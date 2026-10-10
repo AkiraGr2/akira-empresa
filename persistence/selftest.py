@@ -1165,7 +1165,7 @@ def run_logic_tests(service, fresh_service_factory=None):
             )
             applied = service.apply_evolution(
                 created,
-                "github:pr#selftest/no-write",
+                "https://github.com/AkiraGr2/akira-empresa/commit/90b7bc2f7bd4cae89680045a3f44fe5b6d8aae24",
                 actor="selftest",
                 owner_scope=owner_a,
             )
@@ -1178,7 +1178,18 @@ def run_logic_tests(service, fresh_service_factory=None):
                     and approved["decision"].get("status") == "approved"
                     and approved["decision"].get("approved_by") == "selftest-approval"
                 ),
-                "apply_requires_reference": applied.get("change_reference") == "github:pr#selftest/no-write",
+                "apply_requires_reference": applied.get("change_reference") == "https://github.com/AkiraGr2/akira-empresa/commit/90b7bc2f7bd4cae89680045a3f44fe5b6d8aae24",
+                "applied_commit_verified": (
+                    isinstance(applied.get("evaluation"), dict)
+                    and isinstance(
+                        applied["evaluation"].get("change_reference_verification"),
+                        dict,
+                    )
+                    and applied["evaluation"]["change_reference_verification"].get("status") == "verified"
+                    and applied["evaluation"]["change_reference_verification"].get("commit_sha")
+                    == "90b7bc2f7bd4cae89680045a3f44fe5b6d8aae24"
+                    and applied["evaluation"]["change_reference_verification"].get("applied_to_base") is True
+                ),
                 "fresh_re_read": (
                     (fresh := (fresh_service_factory() if fresh_service_factory else service)).get_evolution(
                         created, owner_scope=owner_a
@@ -1215,7 +1226,7 @@ def run_logic_tests(service, fresh_service_factory=None):
                     "summary": (
                         "Lifecycle persistente detected->researching->designing->prototyping->"
                         "testing->evaluating->applied, aislamiento owner_scope, aprobacion humana "
-                        "explicita, change_reference obligatorio y sin escritura de GitHub."
+                        "explicita y commit change_reference verificado en main mediante GET."
                     ),
                     "hash": source_digest,
                 }],
@@ -1225,6 +1236,7 @@ def run_logic_tests(service, fresh_service_factory=None):
                     {"kind": "storage", "id": "PostgreSQL.evolution_records", "version": "runtime"},
                     {"kind": "security", "id": "owner_scope", "version": "runtime"},
                     {"kind": "approval", "id": "human_approval", "version": "runtime"},
+                    {"kind": "external_read", "id": "GitHubReadOnly.commit_ancestry", "version": "runtime"},
                 ],
                 "runtime_version": "selftest",
                 "build_ref": build_ref,
