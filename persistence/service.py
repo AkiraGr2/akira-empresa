@@ -1227,6 +1227,56 @@ class PersistenceService:
             ],
         }
 
+    def refresh_self_knowledge_observation(self, actor="system:self_knowledge_observer"):
+        """Registra observacion autonoma de registros autoritativos sin inferir hechos."""
+        snapshot = self.self_knowledge_snapshot(owner_scope=None, limit=200)
+        observed_at = _now_iso()
+        observed_sources = [
+            {"id": "IdentityRoot", "kind": "registry", "observed_at": observed_at},
+            {"id": "CapabilityEngine", "kind": "registry", "observed_at": observed_at},
+            {"id": "AgentRegistry", "kind": "registry", "observed_at": observed_at},
+            {"id": "ToolRegistry", "kind": "registry", "observed_at": observed_at},
+        ]
+        observed_ids = {source["id"] for source in observed_sources}
+
+        for attempt in range(3):
+            current = self.get_self_model()
+            current_state = dict(current.get("current_state") or {})
+            current_state["last_observed_at"] = observed_at
+            knowledge_state = dict(current.get("knowledge_state") or {})
+            preserved_sources = [
+                dict(source)
+                for source in (knowledge_state.get("sources") or [])
+                if source.get("id") not in observed_ids
+            ]
+            knowledge_state["last_observed_at"] = observed_at
+            knowledge_state["sources"] = (observed_sources + preserved_sources)[:20]
+            try:
+                updated = self.update_self_model(
+                    {
+                        "current_state": current_state,
+                        "knowledge_state": knowledge_state,
+                    },
+                    current["version"],
+                    actor=actor,
+                )
+            except ConflictError:
+                if attempt == 2:
+                    raise
+                continue
+
+            return {
+                "observed_at": observed_at,
+                "source": snapshot["source"],
+                "registry_counts": {
+                    "capabilities": len(snapshot.get("capabilities") or []),
+                    "agents": len(snapshot.get("agents") or []),
+                    "tools": len(snapshot.get("tools") or []),
+                },
+                "self_model_version": updated["version"],
+            }
+        raise ConflictError("self-model observation no se pudo actualizar")
+
     def record_capability_verification(self, capability_id, data, actor="system", idempotency_key=None):
         capability = self.get_capability(capability_id)
         if capability is None:

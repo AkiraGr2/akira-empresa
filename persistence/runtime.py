@@ -24,8 +24,62 @@ STATE = {
     "migrations_applied_now": [],
     "error_type": None,
     "selftest_this_boot": None,
+    "self_knowledge_observation": None,
     "service": None,
 }
+
+
+SELF_KNOWLEDGE_REFRESH_INTERVAL_SECONDS = 6 * 60 * 60
+
+
+def _observe_self_knowledge_once(service):
+    """Actualiza metadatos de observacion sin bloquear el chat ni propagar errores."""
+    try:
+        observation = service.refresh_self_knowledge_observation()
+        counts = observation.get("registry_counts") or {}
+        summary = {
+            "status": "success",
+            "observed_at": observation.get("observed_at"),
+            "registry_counts": counts,
+            "self_model_version": observation.get("self_model_version"),
+        }
+        STATE["self_knowledge_observation"] = summary
+        print(
+            "[persistence] self_knowledge observation=success "
+            f"capabilities={counts.get('capabilities', 0)} "
+            f"agents={counts.get('agents', 0)} tools={counts.get('tools', 0)}",
+            flush=True,
+        )
+        return summary
+    except Exception as exc:
+        summary = {
+            "status": "failed",
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "error_type": type(exc).__name__,
+        }
+        STATE["self_knowledge_observation"] = summary
+        print(
+            f"[persistence] self_knowledge observation failed: {type(exc).__name__}",
+            flush=True,
+        )
+        return summary
+
+
+def _self_knowledge_observer_loop(service):
+    while True:
+        _observe_self_knowledge_once(service)
+        time.sleep(SELF_KNOWLEDGE_REFRESH_INTERVAL_SECONDS)
+
+
+def _start_self_knowledge_observer(service):
+    thread = threading.Thread(
+        target=_self_knowledge_observer_loop,
+        args=(service,),
+        daemon=True,
+        name="akira-self-knowledge-observer",
+    )
+    thread.start()
+    return thread
 
 
 def _seed_capabilities(service):
@@ -149,6 +203,8 @@ def boot(backend_factory=None, attempts=3, wait_seconds=(5, 10), sleep=time.slee
                 pass
             _close_extra_pools()
 
+    _start_self_knowledge_observer(STATE["service"])
+
 
 def start_background():
     threading.Thread(target=boot, daemon=True, name="akira-persistence-boot").start()
@@ -156,7 +212,8 @@ def start_background():
 
 def get_status():
     snap = {k: STATE[k] for k in ("state", "boot_id", "started_at", "configured", "connected",
-                                  "migrations_applied_now", "error_type", "selftest_this_boot")}
+                                  "migrations_applied_now", "error_type", "selftest_this_boot",
+                                  "self_knowledge_observation")}
     service = STATE.get("service")
     if service is not None:
         try:
