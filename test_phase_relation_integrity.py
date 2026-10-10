@@ -33,6 +33,8 @@ class FakeService:
     def __init__(self, persist_learning_edge=True):
         self.repo = FakeRepo()
         self.persist_learning_edge = persist_learning_edge
+        self.recorded_capability_verifications = []
+        self.capability_verification_fails = False
         self._next = 0
 
     def _id(self, prefix):
@@ -133,6 +135,30 @@ class FakeService:
             limit=limit,
         )
 
+    def list_capabilities(self, filters=None, limit=1):
+        if filters != {"name": "cognitive_cycle_persistent"}:
+            return []
+        return [{"id": "cap_cognitive_cycle_persistent", "name": "cognitive_cycle_persistent"}]
+
+    def record_capability_verification(
+        self, capability_id, data, actor="system", idempotency_key=None
+    ):
+        if self.capability_verification_fails:
+            raise RuntimeError("verification persistence failed")
+        record = dict(data)
+        self.recorded_capability_verifications.append({
+            "capability_id": capability_id,
+            "record": record,
+            "actor": actor,
+            "idempotency_key": idempotency_key,
+        })
+        return {
+            "outcome": "created",
+            "record": record,
+            "capability": {"id": capability_id, "verification_state": "verified"},
+            "effective_state": "verified",
+        }
+
     def get_node(self, node_id, owner_scope=None):
         row = self.repo.get("graph_nodes", node_id)
         return row if row and row.get("owner_scope") == owner_scope else None
@@ -143,7 +169,7 @@ class RelationIntegritySelftestTests(unittest.TestCase):
         source = Path("persistence/selftest.py").read_text(encoding="utf-8")
 
         self.assertIn('"TEST_RELATION_INTEGRITY",', source)
-        self.assertIn("lambda: run_relation_integrity_test(service)", source)
+        self.assertIn("lambda: run_relation_integrity_test(service, record_capability=True)", source)
         self.assertNotIn('"status": "N/A"', source)
 
     def test_cross_phase_links_are_verified_and_fixtures_are_cleaned(self):
@@ -153,6 +179,32 @@ class RelationIntegritySelftestTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "PASS", result["detail"])
         self.assertTrue(all(not rows for rows in service.repo.rows.values()))
+
+    def test_f7_verification_is_recorded_after_relation_probe_and_cleanup(self):
+        service = FakeService()
+
+        result = run_relation_integrity_test(service, record_capability=True)
+
+        self.assertEqual(result["status"], "PASS", result["detail"])
+        self.assertTrue(all(not rows for rows in service.repo.rows.values()))
+        self.assertEqual(len(service.recorded_capability_verifications), 1)
+        item = service.recorded_capability_verifications[0]
+        self.assertEqual(item["capability_id"], "cap_cognitive_cycle_persistent")
+        self.assertEqual(item["actor"], "selftest")
+        self.assertEqual(item["record"]["test_key"], "cognitive_cycle_persistent_e2e")
+        self.assertEqual(item["record"]["result"], "pass")
+        self.assertTrue(item["record"]["build_ref"].startswith("sha256:"))
+        self.assertEqual(item["record"]["evidence"][0]["hash"], item["record"]["build_ref"])
+
+    def test_f7_verification_failure_fails_probe_without_fixture_leaks(self):
+        service = FakeService()
+        service.capability_verification_fails = True
+
+        result = run_relation_integrity_test(service, record_capability=True)
+
+        self.assertEqual(result["status"], "FAIL", result["detail"])
+        self.assertTrue(all(not rows for rows in service.repo.rows.values()))
+        self.assertIn("capability_verification_error", result["detail"])
 
     def test_missing_graph_edge_fails_and_still_cleans_fixtures(self):
         service = FakeService(persist_learning_edge=False)

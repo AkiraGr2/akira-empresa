@@ -48,7 +48,7 @@ def _res(name, ok, detail):
     return {"test": name, "status": "PASS" if ok else "FAIL", "detail": detail}
 
 
-def run_relation_integrity_test(service):
+def run_relation_integrity_test(service, record_capability=False):
     """Verifica ciclo cognitivo -> Learning -> Knowledge -> grafo y limpia sus fixtures."""
     name = "TEST_RELATION_INTEGRITY"
     marker = uuid.uuid4().hex
@@ -291,6 +291,71 @@ def run_relation_integrity_test(service):
             _delete_verified("cognitive_cycles", cycle_id)
 
     checks["cleanup"] = not cleanup_failures
+    relation_ok = all(value is True for key, value in checks.items() if key != "cleanup") and checks["cleanup"]
+    if record_capability:
+        if relation_ok:
+            try:
+                capability_rows = service.list_capabilities(
+                    filters={"name": "cognitive_cycle_persistent"}, limit=1
+                )
+                if not capability_rows:
+                    raise LookupError("cognitive_cycle_persistent capability missing")
+                build_ref = runtime_build_ref()
+                verification = service.record_capability_verification(
+                    capability_rows[0]["id"],
+                    {
+                        "event_type": "verification",
+                        "test_key": "cognitive_cycle_persistent_e2e",
+                        "test_version": "v1",
+                        "result": "pass",
+                        "evidence": [{
+                            "type": "selftest",
+                            "title": "Cognitive cycle persistent E2E",
+                            "reference": f"runtime://cognitive-cycle-persistent/{cycle_id}",
+                            "summary": (
+                                f"{len(COGNITIVE_STAGES)} stages, Learning, Knowledge, graph edge, "
+                                "owner_scope isolation and fixture cleanup passed."
+                            ),
+                            "hash": build_ref,
+                        }],
+                        "environment": {"runtime": "persistence.selftest", "mode": "e2e"},
+                        "dependency_snapshot": [
+                            "PersistenceService.start_cycle",
+                            "PersistenceService.record_stage",
+                            "PersistenceService.complete_cycle",
+                            "PostgreSQL.cognitive_cycles",
+                            "PostgreSQL.cognitive_events",
+                            "owner_scope",
+                        ],
+                        "runtime_version": build_ref,
+                        "build_ref": build_ref,
+                        "actor": "selftest",
+                        "executor": "persistence.selftest",
+                        "evaluator": "system",
+                    },
+                    actor="selftest",
+                    idempotency_key=(
+                        f"selftest:cognitive_cycle_persistent_e2e:{build_ref}:{marker}"
+                    ),
+                )
+                verified_capability = verification.get("capability") or {}
+                verification_record = verification.get("record") or {}
+                checks["capability_verification_persisted"] = (
+                    verification.get("effective_state") == "verified"
+                    and verified_capability.get("verification_state") == "verified"
+                    and verification_record.get("test_key") == "cognitive_cycle_persistent_e2e"
+                    and verification_record.get("result") == "pass"
+                    and verification_record.get("build_ref") == build_ref
+                )
+            except Exception as exc:
+                checks["capability_verification_persisted"] = False
+                checks["capability_verification_error"] = (
+                    f"{type(exc).__name__}: {str(exc)[:200]}"
+                )
+        else:
+            checks["capability_verification_persisted"] = False
+            checks["capability_verification_error"] = "relation checks or cleanup failed"
+
     ok = all(value is True for key, value in checks.items() if key != "cleanup") and checks["cleanup"]
     detail = f"checks={checks}"
     if cleanup_failures:
@@ -2938,7 +3003,7 @@ def run_logic_tests(service, fresh_service_factory=None):
 
     results.append(_guard(
         "TEST_RELATION_INTEGRITY",
-        lambda: run_relation_integrity_test(service),
+        lambda: run_relation_integrity_test(service, record_capability=True),
         service,
         created_ids,
     ))
