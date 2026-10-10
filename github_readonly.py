@@ -121,7 +121,7 @@ def _head_commit_sha(repo: str) -> str:
 
 
 _COMMIT_REFERENCE_RE = re.compile(
-    r"^https://github\\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/commit/([0-9a-f]{40})$"
+    r"^https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/commit/([0-9a-f]{40})$"
 )
 
 
