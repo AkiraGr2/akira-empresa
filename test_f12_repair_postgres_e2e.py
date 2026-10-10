@@ -25,6 +25,7 @@ import nexus  # noqa: E402
 import specialized_agent_tools  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from persistence.postgres import PostgresRepository, make_pool, migrate  # noqa: E402
+from persistence.selftest import run_relation_integrity_test  # noqa: E402
 from persistence.service import PersistenceService  # noqa: E402
 
 
@@ -249,6 +250,16 @@ class F12RepairPostgresApiE2ETests(unittest.TestCase):
             f"repair_id={self.__class__.repair_id} "
             "auth=verified lifecycle=applied fresh_readback=verified "
             "audit=verified synthetic_fixture=cleanup_on_teardown"
+        )
+
+    def test_cross_phase_relation_integrity_against_postgres(self):
+        result = run_relation_integrity_test(self.service)
+
+        self.assertEqual(result["status"], "PASS", result["detail"])
+        self.assertIn("'cleanup': True", result["detail"])
+        print(
+            "F12_RELATION_INTEGRITY_POSTGRES_PASS "
+            "cycle=learning=knowledge=graph verified synthetic_fixture=cleanup"
         )
 
 

@@ -41,12 +41,33 @@ class F10MissionHardeningContractTests(unittest.TestCase):
         self.assertIn('tool_name == "memory_save"', block)
         self.assertIn('tool_name == "cognitive_cycle"', block)
 
-    def test_semantic_gate_runs_before_step_is_recorded_complete(self):
+    def test_semantic_gate_runs_before_task_and_step_are_recorded_complete(self):
         source = Path("nexus.py").read_text(encoding="utf-8")
-        gate = source.index("_mission_output_semantic_gate(")
-        report = source.index('step_report = {', gate)
-        self.assertLess(gate, report)
-        self.assertIn('step_semantic_failed', source[gate:report])
+        start = source.index("def _run_mission_sync")
+        end = source.index('    total_elapsed_ms =', start)
+        block = source[start:end]
+        gate = block.index("semantic_ok, semantic_reason = _mission_output_semantic_gate(")
+        completion = block.index("service.complete_task(", gate)
+        step_complete = block.index('mission_id, "step_completed"', gate)
+        report = block.index('step_report = {', gate)
+
+        self.assertLess(gate, completion)
+        self.assertLess(completion, step_complete)
+        self.assertLess(step_complete, report)
+        self.assertIn('step_semantic_failed', block[gate:completion])
+        self.assertIn('service.fail_task(', block[gate:completion])
+
+    def test_replayed_task_output_is_validated_before_reuse(self):
+        source = Path("nexus.py").read_text(encoding="utf-8")
+        start = source.index('if create_result.get("outcome") == "already_synced":')
+        end = source.index('                task_id = existing_task["id"]', start)
+        replay = source[start:end]
+
+        gate = replay.index("_mission_output_semantic_gate(")
+        reuse = replay.index("outputs_by_order[order] = replayed_outputs")
+        self.assertLess(gate, reuse)
+        self.assertIn('"task_replay_semantic_failed"', replay[gate:reuse])
+        self.assertIn('task_ids.append(existing_task["id"])', replay[reuse:])
 
 
 if __name__ == "__main__":

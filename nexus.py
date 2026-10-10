@@ -1853,7 +1853,42 @@ def _run_mission_sync(mission_id, actor, owner_scope=None):
                 if create_result.get("outcome") == "already_synced":
                     if existing_task.get("status") == "completed":
                         replayed_outputs = existing_task.get("outputs") or {}
+                        replay_semantic_ok, replay_semantic_reason = _mission_output_semantic_gate(
+                            tool_name,
+                            step,
+                            replayed_outputs,
+                            outputs_by_order,
+                        )
+                        if not replay_semantic_ok:
+                            replay_semantic_error = {
+                                "type": "SemanticOutputError",
+                                "message": replay_semantic_reason,
+                            }
+                            _set_mission_runtime(
+                                mission_id,
+                                "task_replay_semantic_failed",
+                                step=order,
+                                task_id=existing_task["id"],
+                                tool=tool_name,
+                                reason=replay_semantic_reason,
+                            )
+                            _fail_mission_with_autonomous_learning(
+                                service,
+                                mission_id,
+                                actor,
+                                {
+                                    "type": "task_replay_semantic_failed",
+                                    "step": order,
+                                    "task_id": existing_task["id"],
+                                    "agent": agent_name,
+                                    "tool": tool_name,
+                                    "error": replay_semantic_error,
+                                },
+                                owner_scope=owner_scope,
+                            )
+                            return
                         outputs_by_order[order] = replayed_outputs
+                        task_ids.append(existing_task["id"])
                         step_reports.append({
                             "order": order, "agent": agent_name, "tool": tool_name,
                             "task_id": existing_task["id"],
@@ -1983,30 +2018,6 @@ def _run_mission_sync(mission_id, actor, owner_scope=None):
                 owner_scope=owner_scope)
                 return
 
-            _set_mission_runtime(
-                mission_id, "step_completed",
-                step=order, task_id=task_id, duration_ms=duration_ms,
-            )
-            db_t2 = time.time()
-            try:
-                service.complete_task(task_id, outputs=outputs or {},
-                    duration_ms=duration_ms, actor="orchestrator", owner_scope=owner_scope)
-            except Exception as e:
-                total_db_ms += int((time.time() - db_t2) * 1000)
-                _set_mission_runtime(
-                    mission_id, "task_completion_persist_failed",
-                    step=order, task_id=task_id,
-                    error_type=type(e).__name__, error=str(e)[:200],
-                )
-                _fail_running_tasks_of_mission(service, mission_id, "task_completion_persist_failed", owner_scope=owner_scope)
-                _fail_mission_with_autonomous_learning(
-                    service, mission_id, actor,
-                    {"type": "task_completion_persist_failed", "step": order,
-                     "task_id": task_id, "error": str(e)[:300]},
-                owner_scope=owner_scope)
-                return
-            total_db_ms += int((time.time() - db_t2) * 1000)
-
             semantic_ok, semantic_reason = _mission_output_semantic_gate(
                 tool_name,
                 step,
@@ -2062,6 +2073,30 @@ def _run_mission_sync(mission_id, actor, owner_scope=None):
                     owner_scope=owner_scope,
                 )
                 return
+
+            db_t2 = time.time()
+            try:
+                service.complete_task(task_id, outputs=outputs or {},
+                    duration_ms=duration_ms, actor="orchestrator", owner_scope=owner_scope)
+            except Exception as e:
+                total_db_ms += int((time.time() - db_t2) * 1000)
+                _set_mission_runtime(
+                    mission_id, "task_completion_persist_failed",
+                    step=order, task_id=task_id,
+                    error_type=type(e).__name__, error=str(e)[:200],
+                )
+                _fail_running_tasks_of_mission(service, mission_id, "task_completion_persist_failed", owner_scope=owner_scope)
+                _fail_mission_with_autonomous_learning(
+                    service, mission_id, actor,
+                    {"type": "task_completion_persist_failed", "step": order,
+                     "task_id": task_id, "error": str(e)[:300]},
+                owner_scope=owner_scope)
+                return
+            total_db_ms += int((time.time() - db_t2) * 1000)
+            _set_mission_runtime(
+                mission_id, "step_completed",
+                step=order, task_id=task_id, duration_ms=duration_ms,
+            )
 
             if order is not None:
                 outputs_by_order[order] = outputs or {}

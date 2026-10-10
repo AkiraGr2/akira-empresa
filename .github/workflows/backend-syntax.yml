@@ -132,6 +132,10 @@ jobs:
         run: |
           python -m unittest test_f7_zero_cost_provider_contract -v
 
+      - name: Test cross-phase relation integrity
+        run: |
+          python -m unittest test_phase_relation_integrity -v
+
       - name: Test runtime build identity contract
         run: |
           python -m unittest test_build_identity_contract -v
