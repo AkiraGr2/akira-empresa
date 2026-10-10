@@ -1,10 +1,12 @@
 import unittest
+from contextlib import contextmanager
 
 from persistence.service import PersistenceService
 
 
 class FakeRepo:
     def __init__(self):
+        self.audit = []
         self.data = {
             "self_model": {
                 "id": "akira_primary",
@@ -55,6 +57,23 @@ class FakeRepo:
             ],
         }
 
+    @contextmanager
+    def transaction(self):
+        yield self
+
+    def update(self, entity, key, changes, expected_version):
+        from persistence.core import ConflictError
+
+        row = self.data[entity]
+        if row.get("id") != key or row.get("version") != expected_version:
+            raise ConflictError("version conflict")
+        row.update(changes)
+        row["version"] += 1
+        return row
+
+    def append_audit(self, event):
+        self.audit.append(event)
+
     def get(self, entity, key):
         rows = self.data.get(entity, {})
         if entity == "self_model" and isinstance(rows, dict) and rows.get("id") == key:
@@ -80,6 +99,66 @@ class SelfKnowledgeSnapshotTests(unittest.TestCase):
         self.assertEqual(snapshot["agents"][0]["name"], "tester")
         self.assertIn("python_test", snapshot["tools"][1]["name"])
         self.assertEqual(snapshot["limitations"][0].startswith("Los estados de capability"), True)
+
+    def test_autonomous_observation_persists_registry_sources_and_timestamps(self):
+        from persistence.service import PersistenceService
+
+        repo = FakeRepo()
+        repo.data["self_model"]["current_state"] = {"cycles_completed": 3}
+        repo.data["self_model"]["knowledge_state"] = {
+            "notes": "Nota previa",
+            "sources": [{
+                "id": "PriorDocument",
+                "kind": "document",
+                "observed_at": "2026-10-04T00:00:00+00:00",
+            }],
+        }
+        service = PersistenceService(repo)
+
+        result = service.refresh_self_knowledge_observation(actor="test:self_knowledge_observer")
+
+        persisted = repo.data["self_model"]
+        self.assertEqual(result["source"], "runtime_authoritative_registry")
+        self.assertEqual(result["registry_counts"], {
+            "capabilities": 1,
+            "agents": 1,
+            "tools": 2,
+        })
+        self.assertEqual(
+            persisted["current_state"]["last_observed_at"],
+            result["observed_at"],
+        )
+        self.assertEqual(persisted["current_state"]["cycles_completed"], 3)
+        self.assertEqual(
+            persisted["knowledge_state"]["last_observed_at"],
+            result["observed_at"],
+        )
+        self.assertEqual(persisted["knowledge_state"]["notes"], "Nota previa")
+        sources = persisted["knowledge_state"]["sources"]
+        self.assertEqual(
+            {source["id"] for source in sources},
+            {"IdentityRoot", "CapabilityEngine", "AgentRegistry", "ToolRegistry", "PriorDocument"},
+        )
+        self.assertEqual(persisted["version"], 2)
+        self.assertEqual(
+            repo.audit[-1]["detail"]["fields"],
+            ["current_state", "knowledge_state"],
+        )
+        self.assertEqual(repo.audit[-1]["actor"], "test:self_knowledge_observer")
+
+    def test_runtime_observation_failure_is_non_fatal(self):
+        from persistence.runtime import STATE, _observe_self_knowledge_once
+
+        class BrokenObserver:
+            def refresh_self_knowledge_observation(self):
+                raise RuntimeError("simulated storage outage")
+
+        previous = STATE.get("self_knowledge_observation")
+        result = _observe_self_knowledge_once(BrokenObserver())
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_type"], "RuntimeError")
+        self.assertEqual(STATE["self_knowledge_observation"], result)
+        STATE["self_knowledge_observation"] = previous
 
     def test_cognitive_cycle_owner_scope_regression(self):
         with open("nexus.py", encoding="utf-8") as handle:
