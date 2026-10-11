@@ -513,6 +513,59 @@ KNOWLEDGE_PERSISTENT_CAPABILITY = {
     },
 }
 
+
+HIVE_KNOWLEDGE_SHARING_CAPABILITY = {
+    "name": "hive_knowledge_sharing_v1",
+    "description": "Compuerta de publicación explícita y auditada para conocimiento verificado, limitada al propietario y sin propagación externa en esta versión.",
+    "category": "hive",
+    "kind": "composite",
+    "implementation_state": "partial",
+    "verification_state": "unverified",
+    "availability_state": "degraded",
+    "maturity": "experimental",
+    "cost_compatibility": "free",
+    "dependencies": [
+        {"kind": "service", "id": "PersistenceService.transition_knowledge_privacy", "required": True},
+        {"kind": "service", "id": "PersistenceService.list_hive_knowledge", "required": True},
+        {"kind": "storage", "id": "PostgreSQL.knowledge_records", "required": True},
+        {"kind": "storage", "id": "PostgreSQL.audit_log", "required": True},
+        {"kind": "security", "id": "exact_owner_scope", "required": True},
+        {"kind": "security", "id": "explicit_confirmation", "required": True},
+    ],
+    "limitations": [
+        "Solo habilita una compuerta de privacidad y una vista de exportación restringida al owner_scope autenticado.",
+        "No existe propagación entre propietarios, sincronización colectiva ni resolución de conflictos; COLLECTIVE falla de forma cerrada.",
+        "La autorización requiere coincidencia exacta de owner_scope; los registros legacy con owner_scope='owner' no se pueden publicar mediante compatibilidad histórica.",
+        "El conocimiento debe estar verificado y contener evidencia y una referencia de procedencia antes de pasar a SHAREABLE.",
+        "El cambio de privacidad queda auditado y versionado; no realiza ninguna escritura externa ni declara Hive completa.",
+    ],
+    "verification_spec": {
+        "method": "selftest",
+        "test_key": "hive_knowledge_sharing_contract",
+        "freshness_policy": {
+            "mode": "on_change",
+            "max_age_seconds": None,
+            "invalidate_on": [
+                "build_change",
+                "knowledge_schema_change",
+                "ownership_change",
+                "sharing_policy_change",
+            ],
+        },
+    },
+    "provenance": {
+        "source": "f15_hive_share_gate_v1",
+        "created_by": "system",
+        "basis": [
+            "persistence/core.py",
+            "persistence/service.py",
+            "nexus.py",
+            "test_hive_contract.py",
+            "test_route_security_contract.py",
+        ],
+    },
+}
+
 TOOL_REGISTRY_CAPABILITY = {
     "name": "tool_registry",
     "description": "Registro y gateway de herramientas de Akira con permisos, schemas de entrada, disponibilidad, persistencia de invocaciones, ownership e idempotencia.",
@@ -563,4 +616,4 @@ TOOL_REGISTRY_CAPABILITY = {
     }
 }
 
-BASE_CAPABILITIES = (TOOL_REGISTRY_CAPABILITY, SESSION_AUTH_CAPABILITY, SELF_MODEL_PERSISTENT_CAPABILITY, PERSISTENT_MEMORY_CAPABILITY, MEMORY_RECALL_CAPABILITY, LEARNING_PERSISTENT_CAPABILITY, GRAPH_PERSISTENT_CAPABILITY, KNOWLEDGE_PERSISTENT_CAPABILITY, COGNITIVE_CYCLE_PERSISTENT_CAPABILITY, EVOLUTION_ENGINE_CAPABILITY, CONTROLLED_AUTONOMY_CAPABILITY)
+BASE_CAPABILITIES = (TOOL_REGISTRY_CAPABILITY, SESSION_AUTH_CAPABILITY, SELF_MODEL_PERSISTENT_CAPABILITY, PERSISTENT_MEMORY_CAPABILITY, MEMORY_RECALL_CAPABILITY, LEARNING_PERSISTENT_CAPABILITY, GRAPH_PERSISTENT_CAPABILITY, KNOWLEDGE_PERSISTENT_CAPABILITY, HIVE_KNOWLEDGE_SHARING_CAPABILITY, COGNITIVE_CYCLE_PERSISTENT_CAPABILITY, EVOLUTION_ENGINE_CAPABILITY, CONTROLLED_AUTONOMY_CAPABILITY)

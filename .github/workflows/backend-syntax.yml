@@ -120,6 +120,10 @@ jobs:
         run: |
           python -m unittest test_knowledge_persistent_contract -v
 
+      - name: Test F15 Hive sharing contract
+        run: |
+          python -m unittest test_hive_contract -v
+
       - name: Test learning and cognitive ownership contract
         run: |
           python -m unittest test_learning_cognitive_ownership -v

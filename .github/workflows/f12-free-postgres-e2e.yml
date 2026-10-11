@@ -56,3 +56,4 @@ jobs:
         run: |
           python -m unittest persistence.test_postgres_migration_statements -v
           python -m unittest test_f12_repair_postgres_e2e -v
+          python -m unittest test_f15_hive_postgres_e2e -v
