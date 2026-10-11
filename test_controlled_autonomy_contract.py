@@ -599,7 +599,8 @@ class ControlledAutonomyContractTests(unittest.TestCase):
             root = Path(temp)
             source = "import unittest\nfrom pathlib import Path\n"
             target = root / "test_tool_registry_contract.py"
-            target.write_text(source, encoding="utf-8")
+            # Exercise Windows-style source independently of the host OS.
+            target.write_bytes(source.replace("\n", "\r\n").encode("utf-8"))
             stale_patch = (
                 "--- a/test_tool_registry_contract.py\n"
                 "+++ b/test_tool_registry_contract.py\n"

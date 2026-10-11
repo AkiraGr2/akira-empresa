@@ -104,8 +104,20 @@ def canonicalize_modify_patch(path: str, source: str, patch: str) -> str:
     if not body or any(not line.startswith((" ", "-", "+")) for line in body):
         raise ControlledGitHubError(f"patch_invalid_body:{path}")
 
-    old_text = "".join(line[1:] for line in body if line.startswith((" ", "-")))
-    new_text = "".join(line[1:] for line in body if line.startswith((" ", "+")))
+    # GitHub patches use LF, while files in a Windows workspace may use CRLF.
+    # Match and replace using the source file's newline convention so an
+    # otherwise exact hunk is not rejected solely because of platform endings.
+    source_newline = "\r\n" if "\r\n" in source else "\n"
+
+    def source_endings(value: str) -> str:
+        return value.replace("\r\n", "\n").replace("\n", source_newline)
+
+    old_text = source_endings("".join(
+        line[1:] for line in body if line.startswith((" ", "-"))
+    ))
+    new_text = source_endings("".join(
+        line[1:] for line in body if line.startswith((" ", "+"))
+    ))
     if not old_text or old_text == new_text:
         raise ControlledGitHubError(f"patch_not_recoverable:{path}")
     if source.count(old_text) == 1:
@@ -116,8 +128,12 @@ def canonicalize_modify_patch(path: str, source: str, patch: str) -> str:
     # context is not unique, fall back only to the exact removed lines, and
     # only when that removed block occurs exactly once in the authoritative
     # source. This keeps insertion/replacement deterministic and fail-closed.
-    removed_text = "".join(line[1:] for line in body if line.startswith("-"))
-    added_text = "".join(line[1:] for line in body if line.startswith("+"))
+    removed_text = source_endings("".join(
+        line[1:] for line in body if line.startswith("-")
+    ))
+    added_text = source_endings("".join(
+        line[1:] for line in body if line.startswith("+")
+    ))
     if (
         removed_text
         and removed_text != added_text
@@ -476,7 +492,8 @@ def sandbox_changes(
 
             result_text = apply_unified_patch(source, change["patch"], path, change["operation"])
             file_path.parent.mkdir(parents=True, exist_ok=True)
-            file_path.write_text(result_text, encoding="utf-8")
+            # Avoid Windows text-mode newline translation (CRLF -> CRCRLF).
+            file_path.write_bytes(result_text.encode("utf-8"))
             results.append({
                 "path": path,
                 "operation": change["operation"],
