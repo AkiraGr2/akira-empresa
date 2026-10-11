@@ -487,5 +487,74 @@ class F15HivePostgresE2ETests(unittest.TestCase):
         self.assertEqual(legacy_after["privacy_level"], "PRIVATE")
 
 
+    def test_reverification_and_share_visible_edits_revoke_consent_in_postgres(self):
+        owner = "f15-postgres-consent-revocation"
+        private = self.create_knowledge(
+            owner,
+            "https://example.test/f15-consent-source",
+            "f15:consent:revocation",
+            "Consent revocation regression",
+        )
+        verified = self.verify(private, owner)
+        shared = self.transition(verified, owner, "SHAREABLE")
+
+        contradicted = self.service.update_knowledge(
+            shared["id"],
+            {"verification_status": "contradicted"},
+            expected_version=shared["version"],
+            actor="f15-postgres-ci",
+            owner_scope=owner,
+        )
+        self.assertEqual(contradicted["privacy_level"], "PRIVATE")
+        self.assertEqual(contradicted["verification_status"], "contradicted")
+        self.assertEqual(self.fresh_service.list_hive_knowledge(owner_scope=owner), [])
+
+        # A later verification does not revive the former SHAREABLE consent.
+        reverified = self.verify(contradicted, owner)
+        self.assertEqual(reverified["verification_status"], "verified")
+        self.assertEqual(reverified["privacy_level"], "PRIVATE")
+        self.assertEqual(self.fresh_service.list_hive_knowledge(owner_scope=owner), [])
+
+        shared_again = self.transition(reverified, owner, "SHAREABLE")
+        evidence_changed = self.service.update_knowledge(
+            shared_again["id"],
+            {"evidence": list(shared_again["evidence"]) + [{
+                "type": "manual_verification",
+                "title": "Additional PostgreSQL E2E evidence",
+                "reference": "https://example.test/f15-consent-extra-evidence",
+                "note": "Changing exported evidence invalidates the previous consent.",
+            }]},
+            expected_version=shared_again["version"],
+            actor="f15-postgres-ci",
+            owner_scope=owner,
+        )
+        self.assertEqual(evidence_changed["privacy_level"], "PRIVATE")
+        self.assertEqual(self.fresh_service.list_hive_knowledge(owner_scope=owner), [])
+
+        shared_after_evidence = self.transition(evidence_changed, owner, "SHAREABLE")
+        tags_changed = self.service.update_knowledge(
+            shared_after_evidence["id"],
+            {"tags": ["f15", "hive", "postgres-e2e", "updated"]},
+            expected_version=shared_after_evidence["version"],
+            actor="f15-postgres-ci",
+            owner_scope=owner,
+        )
+        self.assertEqual(tags_changed["privacy_level"], "PRIVATE")
+        self.assertEqual(self.fresh_service.list_hive_knowledge(owner_scope=owner), [])
+        persisted = self.fresh_repo.get("knowledge_records", tags_changed["id"])
+        self.assertEqual(persisted["privacy_level"], "PRIVATE")
+        self.assertEqual(persisted["tags"][-1], "updated")
+
+        events = [
+            event for event in self.fresh_repo.audit_search(
+                actor="f15-postgres-ci", action_prefix="knowledge.update", limit=100
+            )
+            if event.get("resource_id") == private["id"]
+        ]
+        self.assertTrue(
+            any((event.get("detail") or {}).get("share_consent_revoked") is True for event in events)
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
