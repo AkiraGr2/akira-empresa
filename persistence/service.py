@@ -2062,13 +2062,23 @@ class PersistenceService:
         }
         factual_change = bool(factual_fields.intersection(clean))
 
-        # A record can never become visible in the shareable export again just
-        # because someone later re-verifies it. Material edits and status changes
-        # revoke the old consent in the same versioned update.
-        status_change = "status" in clean and clean["status"] != current.get("status")
+        # Consent applies to the values returned by the share feed. Any changed
+        # share-visible field invalidates that consent in the same versioned update,
+        # including verification state/evidence and tags; re-verification alone can
+        # never publish a record again.
+        share_visible_fields = {
+            "concept", "content", "domain", "source", "source_id",
+            "source_reference", "created_by", "confidence", "verification_status",
+            "evidence", "tags", "related_nodes", "owner_scope", "status",
+            "last_verified_at", "verified_by",
+        }
+        share_visible_change = any(
+            field in clean and clean[field] != current.get(field)
+            for field in share_visible_fields
+        )
         share_consent_revoked = (
             current.get("privacy_level") == "SHAREABLE"
-            and (factual_change or status_change)
+            and share_visible_change
         )
         if share_consent_revoked:
             clean["privacy_level"] = "PRIVATE"
@@ -2124,7 +2134,7 @@ class PersistenceService:
                         "new_version": updated["version"],
                         "previous_privacy_level": current.get("privacy_level"),
                         "new_privacy_level": updated.get("privacy_level"),
-                        "share_consent_revoked_due_to_material_change": share_consent_revoked,
+                        "share_consent_revoked": share_consent_revoked,
                     },
                 })
             except PersistenceError:
