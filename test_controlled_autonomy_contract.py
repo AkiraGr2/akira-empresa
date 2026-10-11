@@ -1127,5 +1127,14 @@ class ControlledAutonomyContractTests(unittest.TestCase):
             github_controlled.canonicalize_modify_patch(path, source, patch)
 
 
+
+    def test_docs_F14_PRODUCTION_VERIFICATION_exists_and_contains_title_and_human_approval_note(self):
+        target = Path(__file__).resolve().parent / "docs" / "F14_PRODUCTION_VERIFICATION.md"
+        self.assertTrue(target.is_file())
+        content = target.read_text(encoding="utf-8")
+        self.assertIn("# Production Verification - F14", content)
+        self.assertIn("Esta ejecución es una verificación de Controlled Autonomy v1 y requirió aprobación humana.", content)
+
+
 if __name__ == "__main__":
     unittest.main()
