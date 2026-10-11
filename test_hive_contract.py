@@ -238,6 +238,71 @@ class HiveKnowledgeSharingContractTests(unittest.TestCase):
         self.assertEqual(reactivated["privacy_level"], "PRIVATE")
         self.assertEqual(self.service.list_hive_knowledge(owner_scope="scope:A"), [])
 
+    def test_reverification_evidence_and_tags_changes_revoke_old_consent(self):
+        shared = self.share(self.verify_knowledge())
+
+        contradicted = self.service.update_knowledge(
+            shared["id"],
+            {"verification_status": "contradicted"},
+            expected_version=shared["version"],
+            actor="owner@example.test",
+            owner_scope="scope:A",
+        )
+        self.assertEqual(contradicted["verification_status"], "contradicted")
+        self.assertEqual(contradicted["privacy_level"], "PRIVATE")
+        self.assertEqual(self.service.list_hive_knowledge(owner_scope="scope:A"), [])
+
+        # Re-verifying a previously shared row does not restore its old consent.
+        reverified = self.service.verify_knowledge(
+            contradicted["id"],
+            [{
+                "type": "manual_verification",
+                "title": "Fresh verification after contradiction",
+                "reference": "test://f15-fresh-after-contradiction",
+                "note": "The record is reviewed again after its status changed.",
+            }],
+            actor="owner@example.test",
+            expected_version=contradicted["version"],
+            owner_scope="scope:A",
+        )
+        self.assertEqual(reverified["verification_status"], "verified")
+        self.assertEqual(reverified["privacy_level"], "PRIVATE")
+        self.assertEqual(self.service.list_hive_knowledge(owner_scope="scope:A"), [])
+
+        shared_again = self.share(reverified)
+        evidence_changed = self.service.update_knowledge(
+            shared_again["id"],
+            {"evidence": list(shared_again["evidence"]) + [{
+                "type": "manual_verification",
+                "title": "Additional evidence",
+                "reference": "test://f15-additional-evidence",
+                "note": "A share-visible evidence update invalidates the old consent.",
+            }]},
+            expected_version=shared_again["version"],
+            actor="owner@example.test",
+            owner_scope="scope:A",
+        )
+        self.assertEqual(evidence_changed["privacy_level"], "PRIVATE")
+        self.assertEqual(self.service.list_hive_knowledge(owner_scope="scope:A"), [])
+
+        shared_after_evidence = self.share(evidence_changed)
+        tags_changed = self.service.update_knowledge(
+            shared_after_evidence["id"],
+            {"tags": ["f15", "hive", "updated"]},
+            expected_version=shared_after_evidence["version"],
+            actor="owner@example.test",
+            owner_scope="scope:A",
+        )
+        self.assertEqual(tags_changed["privacy_level"], "PRIVATE")
+        self.assertEqual(self.service.list_hive_knowledge(owner_scope="scope:A"), [])
+
+        events = [e for e in self.repo.audit if e.get("resource_id") == shared["id"]]
+        consent_revocations = [
+            e for e in events
+            if (e.get("detail") or {}).get("share_consent_revoked") is True
+        ]
+        self.assertTrue(consent_revocations)
+
     def test_generic_knowledge_update_cannot_bypass_the_hive_gate(self):
         record = self.create_knowledge()
         with self.assertRaisesRegex(ValidationError, "explicit_hive_privacy_transition_required"):
