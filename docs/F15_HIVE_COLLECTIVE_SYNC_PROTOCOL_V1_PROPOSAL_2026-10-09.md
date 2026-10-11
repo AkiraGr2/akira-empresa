@@ -9,32 +9,32 @@
 
 ## 1. Objetivo y límites
 
-Definir el contrato mínimo seguro para que propietarios autorizados compartan snapshots de Knowledge con una colectiva, reciban contenido para revisión, conserven historial y procesen conflictos y revocaciones de forma reproducible.
+Definir el contrato mínimo seguro para que una misma propietaria sincronice snapshots de Knowledge entre varias instalaciones de Akira que estén vinculadas a su misma identidad autenticada, con revisión, historial, conflictos y revocaciones reproducibles.
 
 La secuencia de producto se mantiene: conocimiento privado → autorización explícita para compartir → relación de conocimiento aceptada en una colectiva. El protocolo NO convierte todo dato elegible en dato transmitido, NO confunde «entregado» con «aceptado» y NO permite que el contenido recibido otorgue autoridad automáticamente.
 
-**En alcance de este contrato:** identidades de propietarios y dispositivos, membresía de colectivas, consentimiento ligado a un snapshot, envelopes firmados, entrega durable e idempotente, inbox, aceptación humana, conflictos factuales y revocaciones.
+**En alcance de este contrato:** identidad autenticada de la propietaria, registro y emparejamiento de sus instalaciones de Akira, membresía por instalación, consentimiento ligado a un snapshot y a una audiencia exacta de sus instalaciones, envelopes firmados, entrega durable e idempotente, inbox, aceptación explícita, conflictos factuales y revocaciones.
 
-**Fuera de alcance:** Local Agent ejecutable, ejecución de comandos, propagación automática a colectivas distintas, merge automático de hechos, borrado garantizado de copias externas, compatibilidad retroactiva con clientes que ignoren este contrato y activación de producción.
+**Fuera de alcance:** miembros de propietarios distintos, federación entre backends o cuentas que no comparten una misma identidad autenticada, Local Agent ejecutable, ejecución de comandos, propagación automática a otras colectivas, merge automático de hechos, borrado garantizado de copias externas, compatibilidad retroactiva con clientes que ignoren este contrato y activación de producción.
 
 ## 2. Modelo de identidad y autorización
 
 ### 2.0 Topología elegida para la propuesta v1
 
-La propuesta v1 es **mediada por el backend**: el servicio autentica la acción de origen, valida membresías, crea envelopes, administra outbox/inbox y registra recibos. No hay conexión directa browser-a-browser ni peer-to-peer, y no se acepta un envelope arbitrario a través de una ruta pública. La entrega se procesa a través de servicios internos confiables y persistencia durable.
+La propuesta v1 es **mediada por el backend**: el servicio autentica la acción y deriva la identidad de la propietaria desde la sesión, valida que cada instalación emparejada pertenece a esa misma identidad, crea envelopes, administra outbox/inbox y registra recibos. Los miembros son instalaciones de Akira vinculadas a una sola propietaria; no se admite otro propietario ni federación entre cuentas o backends independientes en v1. No hay conexión directa browser-a-browser ni peer-to-peer, y no se acepta un envelope arbitrario a través de una ruta pública. La entrega se procesa mediante servicios internos confiables y persistencia durable.
 
-En este contrato, «par» significa otro owner autenticado miembro de la colectiva, no una instalación local. La identidad de dispositivo, pairing y claves de Local Agent son otro contrato. Si en el futuro se requiere transferencia directa entre instancias, será una versión/capacidad distinta, no un cambio implícito de transporte dentro de v1.
+En este contrato, «par» significa otra instalación de Akira emparejada bajo la misma identidad autenticada de propietaria. Una instancia local de Akira puede participar solo si usa esa identidad y el flujo de emparejamiento admitido; el ejecutor Local Agent y sus permisos son un contrato separado. Las instalaciones vinculadas a identidades de propietaria distintas quedan fuera de v1. La transferencia directa entre instancias queda fuera del transporte mediado de esta versión.
 
 ### 2.1 Principales, colectivas y membresía
 
 - **Owner principal:** identidad autenticada por el mecanismo de sesión del backend. El servidor deriva al owner desde la sesión; nunca acepta `owner_scope`, `owner_id`, `is_owner` ni roles del JSON como autoridad.
-- **Collective:** espacio de intercambio identificado por UUID, con owner creador y política de membresía.
-- **Miembro:** owner principal que aceptó explícitamente una invitación y tiene membresía activa. Las sesiones o dispositivos de ese owner no son miembros adicionales.
-- **Peer receptor:** destino autorizado por una membresía concreta. `collective_id` no es una credencial ni concede acceso por sí solo.
+- **Collective:** espacio de intercambio identificado por UUID, creado por la propietaria autenticada y limitado a instalaciones de Akira vinculadas a esa misma identidad.
+- **Miembro:** instalación de Akira registrada con un `instance_id` estable que aceptó explícitamente el emparejamiento bajo la identidad de la propietaria y tiene membresía activa. Las sesiones de una instalación no crean miembros adicionales; cada instalación emparejada sí tiene una membresía propia.
+- **Peer receptor:** instalación destinataria autorizada por su membresía concreta. `collective_id` no es una credencial ni concede acceso por sí solo, y el servidor comprueba que las instalaciones emisora y receptora pertenecen a la misma propietaria.
 
-La membresía es **por invitación, con aceptación explícita y caducidad**. Un token de invitación debe tener entropía criptográfica, almacenarse como hash, ser de un solo uso, estar ligado a la colectiva y al destinatario previsto cuando aplique, y expirar. Invitar no equivale a activar. Estados propuestos: `INVITED`, `ACTIVE`, `SUSPENDED`, `REVOKED`, con transiciones auditadas. `REVOKED` no vuelve a `ACTIVE` por reintento; se requiere una invitación nueva.
+El emparejamiento es **por invitación de un solo uso, aceptación explícita y caducidad**. La instalación receptora debe autenticarse como la misma propietaria; el servidor deriva esa identidad desde la sesión y rechaza invitaciones aceptadas bajo otra cuenta. El token debe tener entropía criptográfica, almacenarse como hash, estar ligado a la colectiva y a la instalación prevista cuando aplique, y expirar. Invitar no equivale a activar. Estados propuestos: `INVITED`, `ACTIVE`, `SUSPENDED`, `REVOKED`, con transiciones auditadas. `REVOKED` no vuelve a `ACTIVE` por reintento; se requiere una invitación nueva.
 
-Toda escritura comprueba sesión, ownership y membresía vigente en el servidor. Para recursos ajenos se usan respuestas opacas, sin confirmar si existen. Una baja o suspensión de membresía bloquea nuevas publicaciones y recepciones/aceptaciones según el contrato; no se puede eludir pasando otro `owner_scope` o un ID de cuenta en el cuerpo.
+Toda escritura comprueba la sesión, la misma identidad de propietaria, el `instance_id` autenticado y la membresía vigente en el servidor. Para recursos fuera de ese ámbito se usan respuestas opacas, sin confirmar si existen. Una baja o suspensión de una instalación bloquea sus nuevas publicaciones y recepciones/aceptaciones; no se puede eludir pasando otro `owner_scope`, `owner_id` o `instance_id` en el cuerpo.
 
 ### 2.2 Firma del servicio y canonicalización
 
@@ -74,7 +74,7 @@ Cada entrega destinada a un miembro es un envelope de servicio con mínimo:
 
 - `protocol_version` literal `hive-sync/1` y `event_type`;
 - `publication_id` para agrupar los envíos de una publicación y `event_id` UUID canónico (minúsculas, formato estándar) único para esa entrega a un destinatario;
-- `collective_id` UUID canónico, referencia opaca estable del owner emisor, `recipient_membership_id` como UUID canónico de la membresía autorizada, generación de membresía y `sender_sequence` monotónica por colectiva/owner;
+- `collective_id` UUID canónico, `sender_instance_id` y `recipient_instance_id` UUID canónicos, `recipient_membership_id` como UUID canónico de la instalación destinataria, generación de membresía y `sender_sequence` monotónica por colectiva/instalación emisora;
 - `knowledge_lineage_id`, `revision_id`, revisión(es) padre y `content_hash`;
 - snapshot mínimo sanitizado, clasificación de privacidad y estado de verificación de ese snapshot;
 - procedencia/evidencia asociada al mismo hash, en la proyección permitida;
@@ -90,7 +90,7 @@ Reglas de serialización v1 propuestas para evitar ambigüedad entre implementac
 - `issued_at` se emite en UTC en formato `YYYY-MM-DDTHH:MM:SS[.ffffff]Z` (T/Z mayúsculas; fracción opcional de 1–6 dígitos). No se usa para resolver conflictos ni para ordenar hechos.
 - El receptor debe verificar el envelope desde los bytes JSON originales con un parser estricto antes de la validación criptográfica. Se rechazan claves de objeto duplicadas (también si una forma escapada colisiona con otra), representaciones léxicas de cero negativo (`-0`, `-0.0` y notación exponencial equivalente), `NaN`/`Infinity`, overflow numérico, UTF-8/Unicode inválido, raíz que no sea objeto y exceso de tamaño/profundidad/nodos. No basta con verificar un diccionario creado por un parser genérico porque ese parseo puede perder claves repetidas y la forma original de un número. Las primitivas del PR #139 ya exponen un parser estricto para entrada JSON sin conectarlo al runtime.
 - `membership_generation` y `sender_sequence` son enteros positivos (no booleanos); `parent_revision_ids` es un array de strings no vacíos sin duplicados, que puede estar vacío para la raíz.
-- `audience_hash` es el SHA-256 en hexadecimal minúsculo de los bytes JCS de la lista ordenada lexicográficamente de IDs de membresía receptora UUID canónicos en minúsculas, deduplicada antes de ordenar. Se persiste/retiene también la audiencia exacta vinculada al consentimiento; el hash no sustituye la autorización de membresía.
+- `audience_hash` es el SHA-256 en hexadecimal minúsculo de los bytes JCS de la lista ordenada lexicográficamente de `recipient_membership_id` UUID canónicos en minúsculas, deduplicada antes de ordenar; cada ID corresponde a una instalación emparejada de la misma propietaria. Se conserva también la audiencia exacta vinculada al consentimiento; el hash no sustituye la autorización de membresía.
 - Para un evento `KNOWLEDGE_SNAPSHOT`, `evidence` y `provenance` deben estar presentes en el envelope además del snapshot; la validación de completitud semántica y sus tipos definitivos sigue sujeta al cotejo con el schema real.
  El esquema no autoriza a filtrar evidencia privada por conveniencia de serialización. Como propuesta inicial, el snapshot de primer nivel queda limitado a `concept`, `content`, `domain`, `source`, `source_reference`, `confidence`, `evidence` y `tags`; `source_id` y `related_nodes` quedan fuera por defecto porque pueden exponer IDs internos o estructura privada del grafo. Solo se podrían incluir referencias transformadas y opacas si el contrato de publicación las permite explícitamente. Tampoco se incluyen `id`, `owner_scope`, `created_by`, `status`, `version`, `last_verified_at`, `verified_by`, `idempotency_key` ni timestamps internos. Las claves privadas/de ejecución (por ejemplo `owner_scope`, `access_token`, `refresh_token`, `authorization`, `headers`, `session`, `private_key`, `api_key`, `password`, `secret`) se rechazan también en mapas anidados. El PR aislado [#139](https://github.com/AkiraGr2/akira-empresa/pull/139) implementa este rechazo dentro de la primitiva; la proyección por lista positiva y la validación de procedencia/evidencia siguen siendo responsabilidad del servicio futuro y la lista debe revisarse con el contrato antes de integrar.
 
@@ -143,14 +143,14 @@ Revocar significa cancelar el consentimiento para nuevas entregas y hacer que la
 
 Entidades aditivas candidatas (nombres ilustrativos hasta revisar convenciones de migración):
 
-- `hive_collectives` y `hive_collective_memberships`: owner creador, política, estado de invitación/membresía y generación.
-- `hive_share_consents`: revisión/hash exactos, actor, colectiva destino, conjunto destinatario autorizado, versión de política y revocación.
+- `hive_collectives` y `hive_collective_memberships`: identidad de propietaria creadora; cada fila de membresía vincula una instalación de Akira (`instance_id`) de esa misma propietaria, con estado de emparejamiento y generación.
+- `hive_share_consents`: revisión/hash exactos, actor, colectiva destino, conjunto exacto de instalaciones destinatarias autorizadas, versión de política y revocación.
 - `hive_sync_outbox` y filas de entrega por destinatario: envelope/hash, estado, secuencia, intento, recibo y timestamps.
-- `hive_sync_inbox`: owner/membresía receptora, evento/hash, estado de validación/decisión y recibo.
+- `hive_sync_inbox`: instalación/membresía receptora, evento/hash, estado de validación/decisión y recibo.
 - `hive_collective_revisions`, `hive_collective_conflicts` y `hive_revocation_tombstones`: historial inmutable, conflictos y generaciones de revocación.
 - Registro público de `service_key_id` y estado/validez para validar firmas; **la clave privada no va a Postgres ni al repositorio**. La ubicación de clave privada/rotación se decide con el mecanismo de secretos real.
 
-No se proponen tablas de pares de dispositivos en Sync v1; eso pertenece al contrato Local Agent. Restricciones mínimas: índices únicos para deduplicación; FK/ownership verificable; transiciones por versión esperada; timestamps UTC; tamaño máximo del payload; límites de retención documentados; índices para outbox pendiente, inbox pendiente, conflictos y tombstones. La migración debe ser aditiva. No se edita una migración aplicada y no se cambia el CHECK de `privacy_level` hasta identificar todos sus lectores/escritores.
+Sync v1 sí necesita registrar instalaciones de Akira y sus membresías emparejadas; el contrato Local Agent y sus permisos de filesystem/terminal siguen separados. Restricciones mínimas: índices únicos para deduplicación e identidad de instalación; FK/ownership que garantice una sola identidad de propietaria por colectiva; transiciones por versión esperada; timestamps UTC; tamaño máximo del payload; límites de retención documentados; índices para outbox pendiente, inbox pendiente, conflictos y tombstones. La migración debe ser aditiva. No se edita una migración aplicada y no se cambia el CHECK de `privacy_level` hasta identificar todos sus lectores/escritores.
 
 Transacciones mínimas:
 - consentimiento + revisión/hash validado + snapshot/outbox por audiencia + auditoría;
@@ -180,7 +180,7 @@ Cada escritura requiere auth de owner, autorización por colectiva, estado vigen
 
 El siguiente PR de código no debe abrirse hasta revisar este contrato, resolver el key management del servicio y leer de nuevo los routers, modelos, esquema de Knowledge y mecanismo de auth. Debe incluir como mínimo:
 
-1. **Aislamiento de propietarios:** tests de dos owners y varias membresías destinatarias; no leer ni mutar filas ajenas y respuestas opacas para recursos ajenos.
+1. **Aislamiento de instancias y propietarios:** probar dos instalaciones de una misma propietaria con entrega autorizada y una segunda propietaria sintética como frontera negativa; nunca leer ni mutar filas ajenas y usar respuestas opacas fuera del ámbito autorizado.
 2. **Identidad e integridad:** firma del servicio válida/inválida, clave desconocida/rotada/revocada, membresía suspendida/revocada, envelope con destinatario distinto y principal incorrecto.
 3. **Consentimiento:** ausencia, colectivo incorrecto, versión/hash obsoletos, cambio material tras consentir, contenido `PRIVATE`/`SENSITIVE`, evidencia/procedencia incompletas y nueva confirmación después de editar.
 4. **Idempotencia:** evento duplicado idéntico no produce mutaciones duplicadas; ID repetido con hash diferente va a cuarentena.
@@ -195,11 +195,11 @@ Todas las pruebas deben ejecutarse en PostgreSQL desechable o fixtures aisladas.
 
 ## 12. Secuencia de trabajo y gates
 
-1. Revisar esta propuesta frente al Handoff Maestro/Pasaporte y aprobar/rechazar explícitamente la topología mediada, la semántica de audiencia y la firma de servicio.
+1. Incorporar la decisión confirmada el 2026-10-10: miembros de una sola propietaria, representados por sus instalaciones de Akira emparejadas. Revisar/aprobar por separado el transporte mediado, la semántica de audiencia y la firma de servicio.
 2. Resolver key management para Render, selección/versionado de dependencias Ed25519/JCS y vectores de interoperabilidad. Sin eso no se habilita sincronización firmada.
 3. Tras aprobación del contrato, volver a inspeccionar migraciones, auth, schema de Knowledge y convenciones de API.
 4. Abrir un PR de implementación backend separado: modelos/migraciones aditivas, servicios y contratos transaccionales; después endpoints, outbox/inbox y tests.
-5. Probar en PostgreSQL desechable con owners/membresías sintéticos y lecturas desde conexiones nuevas.
+5. Probar en PostgreSQL desechable con una propietaria, varias instalaciones emparejadas y una propietaria distinta como caso de denegación; verificar lecturas desde conexiones nuevas.
 6. Implementar y probar conflictos y revocaciones antes de conectar controles de Office.
 7. Diseñar Local Agent en un artefacto/PR separado, con emparejamiento, scopes, sandbox, límites de red/FS, approvals y health challenge; no reutilizar el token web como llave maestra.
 8. Ejecutar CI, revisión de seguridad y aprobación humana. El backend se despliega primero solo después de aprobar; luego se verifica runtime/persistencia antes de publicar frontend.
@@ -208,10 +208,11 @@ Todas las pruebas deben ejecutarse en PostgreSQL desechable o fixtures aisladas.
 ## 13. Decisiones propuestas que requieren revisión explícita
 
 - Transporte mediado por backend en v1, con envelopes Ed25519 firmados por el servicio, JSON canónico JCS y hash SHA-256; ninguna ruta pública acepta envelopes arbitrarios.
-- Invitación con aceptación explícita; membresía revocable y denegación por defecto.
+- **Decisión de alcance confirmada por la propietaria el 2026-10-10:** solo instalaciones de Akira emparejadas bajo una misma identidad autenticada; no se admiten miembros de propietarios distintos en v1.
+- Emparejamiento de instalaciones por invitación con aceptación explícita; membresía revocable y denegación por defecto.
 - V1 sin merge automático de conocimiento factual.
 - Consentimiento vinculado a una única revisión/hash, una colectiva destino y el conjunto concreto de membresías destinatarias autorizado; miembros nuevos no heredan publicaciones históricas.
-- Inbox requiere aceptación del owner receptor; recepción no activa conocimiento por sí sola.
+- Inbox requiere aceptación explícita del owner que administra las instalaciones; la recepción no activa conocimiento por sí sola.
 - Estado `COLLECTIVE` como relación de distribución/aceptación separada del valor `privacy_level`: el esquema legado ya permite ese literal, pero Share Gate actualmente lo rechaza y el valor aislado no representa membresía/consentimiento. No cambiar su uso sin una auditoría global de lectores/escritores.
 - Revocación como tombstone durable y bloqueo de distribución futura, sin prometer eliminación garantizada de copias externas.
 - Local Agent fuera del alcance de sync v1, separado en contrato y ciclo de release.
@@ -269,11 +270,11 @@ Todos los nombres/columnas son candidatos por revisar; no se crean en este PR.
 
 | Tabla candidata | Datos propios y restricciones críticas |
 |---|---|
-| `hive_collectives` | UUID de colectiva, owner creador derivado en el servidor, estado, versión de política, timestamps. El propietario de una colectiva no debe poder adjudicar membresías a sí mismo cambiando IDs en el cliente. |
-| `hive_collective_memberships` | UUID de membresía, colectiva, owner autenticado, estado `INVITED/ACTIVE/SUSPENDED/REVOKED`, generación, emisor/fechas de invitación/aceptación/revocación, hash de invitación y caducidad. Token original de invitación no se persiste. Índice que impida membresías activas duplicadas según la política aprobada; preservar historial revocado. |
-| `hive_share_consents` | Consentimiento inmutable ligado a owner origen, Knowledge ID/versión, hash del snapshot, colectiva, conjunto exacto de membership IDs y generaciones destinatarias, hash de audiencia, política de redacción, actor/fecha y generación de revocación. No reutilizar un consentimiento para otra revisión o audiencia. |
-| `hive_sync_outbox` | Una fila durable por entrega a un destinatario: `event_id`, `publication_id`, consentimiento, membership destino/generación, hash de envelope y snapshot, envelope sanitizado/firma/clave, estado `PENDING/DELIVERED/ACKNOWLEDGED/FAILED/CANCELLED`, intentos y fechas. Restricción única de deduplicación por destino + evento; ID repetido con hash distinto es error de integridad. |
-| `hive_sync_inbox` | Evento/envelope recibido, hash y firma validada, membership destino, estado `RECEIVED/VALIDATED/PENDING_REVIEW/ACCEPTED/REJECTED/QUARANTINED`, versión/hash aceptados y recibo. `UNIQUE(recipient_membership_id,event_id)` debe hacer durable la idempotencia. |
+| `hive_collectives` | UUID de colectiva, identidad de propietaria creadora derivada en el servidor, estado, versión de política, timestamps. Toda membresía debe estar ligada a esa misma identidad; el cliente no puede adjudicar membresías a otras cuentas cambiando IDs. |
+| `hive_collective_memberships` | UUID de membresía, colectiva, `instance_id` estable, owner autenticado derivado en el servidor, huella/identificador público de instalación si el contrato criptográfico lo requiere, estado `INVITED/ACTIVE/SUSPENDED/REVOKED`, generación, emisor/fechas de invitación/aceptación/revocación, hash de invitación y caducidad. Token original no se persiste. La aplicación y una restricción de base deben impedir asociar a la colectiva una instancia de otro owner; preservar historial revocado. |
+| `hive_share_consents` | Consentimiento inmutable ligado a la identidad de propietaria, instalación emisora, Knowledge ID/versión, hash del snapshot, colectiva, conjunto exacto de memberships de instalaciones destinatarias y sus generaciones, hash de audiencia, política de redacción, actor/fecha y generación de revocación. No reutilizar un consentimiento para otra revisión, audiencia o instalación. |
+| `hive_sync_outbox` | Una fila durable por entrega a una instalación destinataria: `event_id`, `publication_id`, consentimiento, membership/`instance_id` destino y generación, hash de envelope y snapshot, envelope sanitizado/firma/clave, estado `PENDING/DELIVERED/ACKNOWLEDGED/FAILED/CANCELLED`, intentos y fechas. Restricción única de deduplicación por destino + evento; ID repetido con hash distinto es error de integridad. |
+| `hive_sync_inbox` | Evento/envelope recibido por una instalación emparejada, hash y firma validada, membership/`instance_id` destino, estado `RECEIVED/VALIDATED/PENDING_REVIEW/ACCEPTED/REJECTED/QUARANTINED`, versión/hash aceptados y recibo. `UNIQUE(recipient_membership_id,event_id)` debe hacer durable la idempotencia. |
 | `hive_collective_revisions` | Historial inmutable de snapshots aceptados, linaje/revisión/padres, origen opaco, evento, hash, procedencia permitida, actor receptor y fecha. Nunca actualizar un snapshot previo para simular una revisión nueva. |
 | `hive_collective_conflicts` | Linaje y revisiones/base en conflicto, estado pendiente/resuelto/rechazado, resolución, actor/fecha y vínculo a una nueva revisión de resolución. No se admite last-write-wins. |
 | `hive_revocation_tombstones` | Consentimiento/linaje/hash destinatario, generación positiva, evento y acuse. Una revisión antigua no puede reactivar la relación; mantener el tombstone según retención aprobada. |
@@ -284,14 +285,14 @@ Todos los nombres/columnas son candidatos por revisar; no se crean en este PR.
 - UUID en columnas de identidad/evento donde el contrato lo especifica; Knowledge fuente conserva su ID de texto actual.
 - CHECK para estados finitos, contador de versión/generación entero positivo, hash de contenido/audiencia en hex SHA-256 y límites razonables al tamaño de JSON/firmas.
 - Foreign keys con `ON DELETE RESTRICT` para conservar historia y auditoría; la baja lógica/revocación no debe borrar revisiones, receipts o tombstones.
-- Restricciones únicas para idempotencia y evitar más de una membresía vigente conforme a la política aprobada. No confiar en «buscar primero y luego insertar»: la unicidad debe hacerse cumplir por la base de datos.
+- Restricciones únicas para idempotencia e identidad de instalación, y para impedir más de una membresía vigente duplicada de una misma instalación en una colectiva. La pertenencia queda limitada a la identidad de propietaria creadora. No confiar en «buscar primero y luego insertar»: la unicidad debe hacerse cumplir por la base de datos.
 - RLS habilitado, `REVOKE ALL` a `anon`/`authenticated` y denegación directa por defecto, igual al baseline existente. No añadir políticas públicas para hacer funcionar Hive.
 - Índices para outbox pendiente por `next_attempt_at`, inbox por estado/membresía, conflictos pendientes y tombstones por colectivo/linaje/generación. Índices y retención deben comprobarse sobre los tests; no inventar selectividad/volumen.
 - Cualquier tabla incorporada a la interfaz genérica se añade explícitamente a `persistence/core.py:ENTITIES`; si requiere semánticas diferentes a CRUD/versionado genérico, se usa un servicio dedicado en vez de relajar la allowlist.
 
 ### 15.4 Límites transaccionales
 
-1. **Publicar:** releer Knowledge bajo owner scope exacto y `expected_version`; comprobar verificación/evidencia, hash y privacidad; calcular y presentar audiencia; registrar consentimiento; crear outbox por destinatario y auditoría. Todo dentro de una transacción. No enviar mensajes externos dentro de esta transacción.
+1. **Publicar:** releer Knowledge bajo el owner scope exacto y `expected_version`; comprobar verificación/evidencia, hash, privacidad y que emisor/destinatarios son instalaciones de la misma propietaria; calcular y presentar la audiencia de instalaciones; registrar consentimiento; crear outbox por destinatario y auditoría. Todo dentro de una transacción. No enviar mensajes externos dentro de esta transacción.
 2. **Entregar internamente:** bloquear/adquirir una fila pending de outbox de forma concurrente segura; revalidar consent/generación/membresía; crear inbox de manera idempotente y actualizar el recibo/estado. Si el transporte futuro no es el mismo Postgres, usar un worker con lease/retry y no mantener una transacción abierta durante la red.
 3. **Aceptar:** volver a leer inbox por owner/membership derivada de sesión, verificar `expected_hash` y `expected_version`, crear relación/revisión local y auditoría en una transacción.
 4. **Resolver conflicto:** preservar entradas competidoras, crear nueva revisión con enlaces a sus padres y marcar resolución/auditoría atómicamente.
@@ -324,3 +325,10 @@ Esta observación es una fotografía del entorno en ese momento, no una garantí
 - **Advisors de Supabase:** se observaron advertencias preexistentes sobre extensiones en el esquema `public` (`postgres_fdw`, `vector`) e información de rendimiento sobre una FK sin índice y varios índices no usados. No se modificaron: requieren evaluación separada y no son específicos de F15.
 - **CI de primitivas criptográficas:** en el head `d0230940e03321b0fce6d962dfc0f693e81a78af`, Backend Syntax Verification pasó. La ejecución F12 PostgreSQL E2E no llegó a checkout ni a ejecutar tests: el paso de inicialización falló al descargar `pgvector/pgvector:pg17` por el límite de pulls anónimos de Docker Hub (`toomanyrequests`); el reintento volvió a fallar por la misma causa. Se registra como **bloqueo de infraestructura**, no como PASS ni como fallo del código. La suite PostgreSQL E2E había pasado en un head anterior, pero ese resultado no se atribuye al head actual.
 - **Decisión de release:** no se fusionó ningún PR, no se activaron claves, no se alteraron variables/servicios/planes, no se aplicaron migraciones y no se hizo despliegue. La sincronización colectiva y Local Agent siguen sin implementación verificada. F15 permanece **abierta/bloqueada por aprobación del contrato, revisión de interoperabilidad JCS, custodia/rotación de claves y verificación de release/runtime**.
+
+
+## 17. Decisión de membresía confirmada — 2026-10-10
+
+La propietaria confirmó que Hive v1 debe admitir instalaciones de Akira vinculadas a una misma identidad autenticada. Cada instalación emparejada tiene identidad y membresía propia; la propietaria puede revisar y aceptar snapshots entrantes. V1 no invita ni sincroniza contenido con cuentas de otros propietarios. Una instalación revocada deja de recibir futuras entregas; no se promete borrar copias ya recibidas.
+
+Esta decisión resuelve el alcance de miembros. No aprueba todavía el contrato criptográfico completo, el mecanismo de identidad/emparejamiento entre instalaciones, el esquema de persistencia, la política de claves ni el despliegue. Las instalaciones que no puedan demostrar la misma identidad deben fallar cerradas; no se debe inferir la propiedad desde un `owner_id` enviado por cliente.
