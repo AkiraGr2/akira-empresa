@@ -299,7 +299,7 @@ class F15HivePostgresE2ETests(unittest.TestCase):
             ]
             revoked_consent_event = next(
                 event for event in edit_events
-                if (event.get("detail") or {}).get("share_consent_revoked_due_to_material_change") is True
+                if (event.get("detail") or {}).get("share_consent_revoked") is True
             )
             edit_detail = revoked_consent_event.get("detail") or {}
             self.assertEqual(edit_detail.get("previous_privacy_level"), "SHAREABLE")
