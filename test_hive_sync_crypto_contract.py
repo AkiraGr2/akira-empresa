@@ -38,6 +38,8 @@ def make_envelope(snapshot=None):
         "event_type": "KNOWLEDGE_SNAPSHOT",
         "event_id": "10000000-0000-4000-8000-000000000001",
         "collective_id": "20000000-0000-4000-8000-000000000001",
+        "sender_instance_id": "25000000-0000-4000-8000-000000000001",
+        "recipient_instance_id": "26000000-0000-4000-8000-000000000001",
         "recipient_membership_id": "30000000-0000-4000-8000-000000000001",
         "publication_id": "40000000-0000-4000-8000-000000000001",
         "sender_owner_ref": "owner-ref-test",
@@ -288,6 +290,8 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
     def test_minimum_v1_envelope_fields_are_required(self):
         required = (
             "publication_id",
+            "sender_instance_id",
+            "recipient_instance_id",
             "sender_owner_ref",
             "membership_generation",
             "sender_sequence",
@@ -406,6 +410,14 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
         with self.assertRaises(HiveSyncSignatureError):
             verify_envelope(signed, {self.key_id: self.public_key})
 
+    def test_instance_tampering_invalidates_signature(self):
+        for field in ("sender_instance_id", "recipient_instance_id"):
+            with self.subTest(field=field):
+                signed = sign_envelope(make_envelope(), self.private_key, self.key_id)
+                signed[field] = "27000000-0000-4000-8000-000000000009"
+                with self.assertRaises(HiveSyncSignatureError):
+                    verify_envelope(signed, {self.key_id: self.public_key})
+
     def test_malformed_content_hash_type_fails_closed(self):
         for bad_hash in (None, 123, [], {"hash": "abc"}):
             with self.subTest(content_hash=bad_hash):
@@ -451,6 +463,8 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
         for field, bad_value in (
             ("event_id", "evt-not-a-uuid"),
             ("collective_id", "a0000000-0000-4000-8000-000000000001".upper()),
+            ("sender_instance_id", "sender-not-a-uuid"),
+            ("recipient_instance_id", "recipient-not-a-uuid"),
             ("recipient_membership_id", "not-a-membership-uuid"),
         ):
             with self.subTest(field=field, bad_value=bad_value):
@@ -466,6 +480,8 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
             "event_type": "KNOWLEDGE_REVOCATION",
             "event_id": "10000000-0000-4000-8000-000000000004",
             "collective_id": "20000000-0000-4000-8000-000000000001",
+            "sender_instance_id": "25000000-0000-4000-8000-000000000001",
+            "recipient_instance_id": "26000000-0000-4000-8000-000000000001",
             "recipient_membership_id": "30000000-0000-4000-8000-000000000001",
             "publication_id": "40000000-0000-4000-8000-000000000001",
             "sender_owner_ref": "owner-ref-test",
@@ -526,6 +542,8 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
             "event_type": "KNOWLEDGE_REVOCATION",
             "event_id": "10000000-0000-4000-8000-000000000002",
             "collective_id": "20000000-0000-4000-8000-000000000001",
+            "sender_instance_id": "25000000-0000-4000-8000-000000000001",
+            "recipient_instance_id": "26000000-0000-4000-8000-000000000001",
             "recipient_membership_id": "30000000-0000-4000-8000-000000000001",
             "publication_id": "40000000-0000-4000-8000-000000000001",
             "sender_owner_ref": "owner-ref-test",
@@ -550,6 +568,8 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
             "event_type": "KNOWLEDGE_REVOCATION",
             "event_id": "10000000-0000-4000-8000-000000000003",
             "collective_id": "20000000-0000-4000-8000-000000000001",
+            "sender_instance_id": "25000000-0000-4000-8000-000000000001",
+            "recipient_instance_id": "26000000-0000-4000-8000-000000000001",
             "recipient_membership_id": "30000000-0000-4000-8000-000000000001",
             "publication_id": "40000000-0000-4000-8000-000000000001",
             "sender_owner_ref": "owner-ref-test",
@@ -628,3 +648,4 @@ class HiveSyncSignatureContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

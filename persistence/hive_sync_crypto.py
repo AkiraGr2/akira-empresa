@@ -46,6 +46,7 @@ ALLOWED_EVENT_TYPES = frozenset({"KNOWLEDGE_SNAPSHOT", "KNOWLEDGE_REVOCATION"})
 ALLOWED_ENVELOPE_FIELDS = frozenset({
     "protocol_version", "event_type", "event_id", "publication_id",
     "collective_id", "sender_owner_ref", "recipient_membership_id",
+    "sender_instance_id", "recipient_instance_id",
     "membership_generation", "sender_sequence", "knowledge_lineage_id",
     "revision_id", "parent_revision_ids", "content_hash", "snapshot",
     "privacy_level", "verification_status", "provenance", "evidence",
@@ -325,6 +326,8 @@ def _validate_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
         "event_id",
         "publication_id",
         "collective_id",
+        "sender_instance_id",
+        "recipient_instance_id",
         "sender_owner_ref",
         "recipient_membership_id",
         "knowledge_lineage_id",
@@ -365,7 +368,13 @@ def _validate_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
         raise HiveSyncEnvelopeError("unsupported_event_type")
     # The v1 contract defines event_id, collective_id and recipient membership
     # identifiers as canonical lowercase UUIDs, not arbitrary client-supplied names.
-    for field in ("event_id", "collective_id", "recipient_membership_id"):
+    for field in (
+        "event_id",
+        "collective_id",
+        "sender_instance_id",
+        "recipient_instance_id",
+        "recipient_membership_id",
+    ):
         try:
             normalized = str(UUID(result[field]))
         except (ValueError, TypeError, AttributeError) as exc:
@@ -541,3 +550,4 @@ def load_signing_key_from_environment(
     if not isinstance(loaded, Ed25519PrivateKey):
         raise HiveSyncConfigurationError("signing_key_must_be_ed25519")
     return key_id, loaded
+
