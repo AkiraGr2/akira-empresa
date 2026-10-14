@@ -680,30 +680,46 @@ class PersistenceService:
         return rows[:max(1, min(int(limit), 200))]
 
     def _replace_repair(self, repair_id, changes, actor="system", owner_scope=None):
-        current = self.get_self_model()
-        repairs = list(current.get("repairs") or [])
-        target = None
-        for repair in repairs:
-            if repair.get("id") == repair_id:
-                if owner_scope is not None and repair.get("owner_scope") != str(owner_scope).strip():
-                    raise NotFoundError(repair_id)
-                target = repair
-                break
-        if target is None:
-            raise NotFoundError(repair_id)
+        original_target = None
+        for attempt in range(3):
+            current = self.get_self_model()
+            repairs = list(current.get("repairs") or [])
+            target = next((r for r in repairs if r.get("id") == repair_id), None)
+            if target is None:
+                raise NotFoundError(repair_id)
+            if owner_scope is not None and target.get("owner_scope") != str(owner_scope).strip():
+                raise NotFoundError(repair_id)
 
-        target = dict(target)
-        target.update(changes)
-        replaced = [target if r.get("id") == repair_id else r for r in repairs]
-        updated = self.update_self_model(
-            {"repairs": replaced},
-            current["version"],
-            actor=actor,
-        )
-        verified = next((r for r in updated.get("repairs", []) if r.get("id") == repair_id), None)
-        if verified is None:
-            raise VerificationError("repair update no confirmado")
-        return verified
+            target = dict(target)
+            if original_target is None:
+                original_target = dict(target)
+            elif target != original_target:
+                # Retry unrelated self-model observer writes, but never replay an
+                # outdated transition over a concurrent edit to this repair.
+                raise ConflictError("repair changed concurrently")
+
+            target.update(changes)
+            replaced = [target if r.get("id") == repair_id else r for r in repairs]
+            try:
+                updated = self.update_self_model(
+                    {"repairs": replaced},
+                    current["version"],
+                    actor=actor,
+                )
+            except ConflictError:
+                if attempt == 2:
+                    raise
+                continue
+
+            verified = next(
+                (r for r in updated.get("repairs", []) if r.get("id") == repair_id),
+                None,
+            )
+            if verified is None:
+                raise VerificationError("repair update no confirmado")
+            return verified
+
+        raise ConflictError("repair update no se pudo confirmar")
 
     def advance_repair(self, repair_id, new_stage, actor="system", owner_scope=None, **fields):
         from .repair import REPAIR_STAGE_TRANSITIONS
