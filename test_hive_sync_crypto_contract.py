@@ -1,4 +1,5 @@
 import json
+import struct
 import tempfile
 import unittest
 from pathlib import Path
@@ -97,6 +98,39 @@ class HiveSyncCanonicalizationContractTests(unittest.TestCase):
     def test_negative_zero_is_rejected_before_signing(self):
         with self.assertRaises(HiveSyncEnvelopeError):
             canonical_json_bytes({"nested": [0, {"negative": -0.0}]})
+
+    def test_rfc8785_appendix_b_binary64_vectors(self):
+        vectors = (
+            ("0000000000000000", "0"),
+            ("0000000000000001", "5e-324"),
+            ("8000000000000001", "-5e-324"),
+            ("7fefffffffffffff", "1.7976931348623157e+308"),
+            ("ffefffffffffffff", "-1.7976931348623157e+308"),
+            ("4340000000000000", "9007199254740992"),
+            ("c340000000000000", "-9007199254740992"),
+            ("4430000000000000", "295147905179352830000"),
+            ("44b52d02c7e14af5", "9.999999999999997e+22"),
+            ("44b52d02c7e14af6", "1e+23"),
+            ("44b52d02c7e14af7", "1.0000000000000001e+23"),
+            ("444b1ae4d6e2ef4e", "999999999999999700000"),
+            ("444b1ae4d6e2ef4f", "999999999999999900000"),
+            ("444b1ae4d6e2ef50", "1e+21"),
+            ("3eb0c6f7a0b5ed8c", "9.999999999999997e-7"),
+            ("3eb0c6f7a0b5ed8d", "0.000001"),
+        )
+        for binary64_hex, expected in vectors:
+            with self.subTest(binary64=binary64_hex):
+                value = struct.unpack(">d", bytes.fromhex(binary64_hex))[0]
+                self.assertEqual(
+                    canonical_json_bytes({"value": value}),
+                    ('{"value":' + expected + '}').encode("ascii"),
+                )
+
+        for binary64_hex in ("7fffffffffffffff", "7ff0000000000000"):
+            with self.subTest(binary64=binary64_hex):
+                value = struct.unpack(">d", bytes.fromhex(binary64_hex))[0]
+                with self.assertRaises(HiveSyncEnvelopeError):
+                    canonical_json_bytes({"value": value})
 
     def test_snapshot_hash_is_sha256_of_jcs_bytes(self):
         snapshot = make_snapshot()
