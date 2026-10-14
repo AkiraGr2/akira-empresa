@@ -232,4 +232,3 @@ jobs:
           assert 'teaching_lesson, teaching_mode = _extract_teaching_lesson(msg)' not in stream_body
           assert '_run_absorption_shadow' not in stream_body
           print("route ordering, health registration, canonical chat teaching, and single-source SSE guard OK")
-
