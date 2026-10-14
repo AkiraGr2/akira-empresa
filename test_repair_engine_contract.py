@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from persistence.repair import REPAIR_STAGES, REPAIR_STAGE_TRANSITIONS
-from persistence.service import NotFoundError, PersistenceService, ValidationError
+from persistence.service import ConflictError, NotFoundError, PersistenceService, ValidationError
 
 
 class FakeTx:
@@ -178,6 +178,38 @@ class RepairEngineContractTests(unittest.TestCase):
         self.assertIn("apply_postcondition_verified", repair["evidence"])
         agent = self.repo.get("agents", "agent_selftest")
         self.assertEqual(agent["status"], "disabled")
+
+    def test_repair_update_retries_unrelated_self_model_version_conflict(self):
+        repair = self.service.create_repair(
+            "selftest_agent", "observer race regression", "disable_selftest_agent",
+            actor="owner@example.test", owner_scope="scope:A",
+        )
+        original_update = self.service.update_self_model
+        calls = 0
+
+        def observer_race(changes, expected_version, actor="system"):
+            nonlocal calls
+            if calls == 0:
+                calls += 1
+                original_update(
+                    {"current_state": {"last_observed_at": "2026-10-14T00:00:00Z"}},
+                    expected_version,
+                    actor="system:self_knowledge_observer",
+                )
+                raise ConflictError("self-model changed during repair update")
+            return original_update(changes, expected_version, actor=actor)
+
+        with patch.object(self.service, "update_self_model", side_effect=observer_race):
+            updated = self.service.advance_repair(
+                repair["id"], "diagnosed", actor="owner@example.test", owner_scope="scope:A"
+            )
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(updated["stage"], "diagnosed")
+        self.assertEqual(
+            self.service.get_self_model()["current_state"]["last_observed_at"],
+            "2026-10-14T00:00:00Z",
+        )
 
     def test_repair_test_stage_runs_repair_specific_allowlisted_regressions(self):
         repair = self.service.create_repair(
