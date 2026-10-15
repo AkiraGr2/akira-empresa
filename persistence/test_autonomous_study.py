@@ -7,6 +7,9 @@ from persistence.autonomous_study import (
     run_autonomous_study,
     undo_autonomous_study,
 )
+from persistence.core import ENTITIES
+from persistence.inmemory import InMemoryRepository
+from persistence.service import PersistenceService
 
 
 class _Service:
@@ -243,6 +246,34 @@ class AutonomousStudyTests(unittest.TestCase):
         self.assertEqual(result["learning"]["id"], learning_id)
         self.assertTrue(result["promoted"])
         self.assertEqual(result["learning"]["status"], "consolidated")
+
+    def test_persistence_service_promotes_and_withdraws_private_study(self):
+        repository = InMemoryRepository()
+        repository._data = {entity: {} for entity in ENTITIES}
+        service = PersistenceService(repository)
+
+        learned = run_autonomous_study(
+            service, "desarrollo web", "owner@example.com", "owner-1",
+            lambda _topic, max_results: _sources(),
+            lambda _topic, _evidence: {
+                "verdict": "supported", "confidence": 0.91,
+                "summary": "Lección con evidencia [0] [1].",
+                "supporting_evidence": [0, 1],
+            },
+        )
+        memory = learned["memory"]
+        self.assertTrue(learned["promoted"])
+        self.assertEqual(memory["privacy_level"], "PRIVATE")
+        self.assertEqual(memory["status"], "active")
+
+        undone = undo_autonomous_study(
+            service, learned["learning"]["id"], "owner@example.com", "owner-1"
+        )
+
+        self.assertEqual(undone["learning"]["status"], "obsolete")
+        self.assertEqual(service.get_memory(memory["id"], owner_scope="owner-1")["status"], "archived")
+        node_id = learned["learning"]["knowledge_nodes"][-1]
+        self.assertEqual(service.get_node(node_id, owner_scope="owner-1")["status"], "archived")
 
     def test_undo_refuses_non_study_learning(self):
         service = _Service()
