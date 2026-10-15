@@ -112,7 +112,7 @@ def run_autonomous_study(
     topic_key = hashlib.sha256(
         (str(owner_scope).strip() + "\0" + topic.casefold()).encode("utf-8")
     ).hexdigest()[:32]
-    created = service.save_learning({
+    learning_payload = {
         "source": "autonomous_study",
         "event": "explicit_owner_study_request",
         "lesson": f"Tema solicitado para estudio: {topic}",
@@ -131,16 +131,29 @@ def run_autonomous_study(
             "importance": 7,
             "tags": ["autonomous-study", "private"],
         },
-    }, actor=actor, idempotency_key="autonomous_study_" + topic_key,
-       owner_scope=owner_scope)
-    record = created.get("record") or {}
+    }
+    base_idempotency_key = "autonomous_study_" + topic_key
+    idempotency_key = base_idempotency_key
+    # Keep retries idempotent while allowing a withdrawn/failed study to be
+    # researched again. Each terminal record deterministically names the next
+    # generation, so concurrent retries converge on the same candidate.
+    for _ in range(100):
+        created = service.save_learning(
+            learning_payload, actor=actor, idempotency_key=idempotency_key,
+            owner_scope=owner_scope,
+        )
+        record = created.get("record") or {}
+        if not record.get("id"):
+            raise RuntimeError("study_candidate_not_persisted")
+        status = record.get("status") or "candidate"
+        if created.get("outcome") != "already_synced" or status not in {"obsolete", "discarded"}:
+            break
+        idempotency_key = base_idempotency_key + "_retry_" + str(record["id"])
+    else:
+        raise RuntimeError("study_retry_limit_exceeded")
     learning_id = record.get("id")
-    if not learning_id:
-        raise RuntimeError("study_candidate_not_persisted")
-    if created.get("outcome") == "already_synced" and record.get("status") in {
-        "verified", "consolidated", "discarded", "obsolete"
-    }:
-        return {"learning": record, "reused": True, "promoted": record.get("status") == "consolidated"}
+    if created.get("outcome") == "already_synced" and record.get("status") == "consolidated":
+        return {"learning": record, "reused": True, "promoted": True}
 
     sources = search_sources(topic, max_results=MAX_STUDY_SOURCES)
     evidence = _safe_sources(sources)
@@ -296,3 +309,4 @@ def undo_autonomous_study(service, learning_id, actor, owner_scope):
         learning_id, actor=actor, owner_scope=owner_scope,
     )
     return {"learning": record, "archived": cleanup}
+
