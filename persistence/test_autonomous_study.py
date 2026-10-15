@@ -1,3 +1,4 @@
+import hashlib
 import unittest
 
 from persistence.autonomous_study import (
@@ -187,6 +188,62 @@ class AutonomousStudyTests(unittest.TestCase):
         self.assertEqual(result["archived"]["archived_memories"], 1)
         self.assertEqual(service.cleaned, learned["learning"]["id"])
 
+    def test_same_topic_can_be_studied_again_after_withdrawal(self):
+        service = _Service()
+        evaluator = lambda _topic, _evidence: {
+            "verdict": "supported", "confidence": 0.91,
+            "summary": "Lección con evidencia [0] [1].",
+            "supporting_evidence": [0, 1],
+        }
+        first = run_autonomous_study(
+            service, "desarrollo web", "owner@example.com", "owner-1",
+            lambda _topic, max_results: _sources(), evaluator,
+        )
+        undo_autonomous_study(
+            service, first["learning"]["id"], "owner@example.com", "owner-1"
+        )
+
+        second = run_autonomous_study(
+            service, "desarrollo web", "owner@example.com", "owner-1",
+            lambda _topic, max_results: _sources(), evaluator,
+        )
+
+        self.assertTrue(second["promoted"])
+        self.assertNotEqual(first["learning"]["id"], second["learning"]["id"])
+
+    def test_verified_study_resumes_consolidation_instead_of_stalling(self):
+        service = _Service()
+        created = service.save_learning({
+            "source": "autonomous_study", "event": "explicit_owner_study_request",
+            "lesson": "Tema solicitado para estudio: desarrollo web",
+            "knowledge_nodes": [], "relationships": [], "confidence": 0.91,
+            "outcome": "unknown", "status": "verified",
+            "evidence": [
+                {"type": "web_search", "title": item["title"],
+                 "reference": item["reference"], "note": item["snippet"]}
+                for item in _sources()
+            ],
+            "verification_analysis": {"verdict": "supported", "confidence": 0.91},
+            "learning_context": {"mode": "autonomous_study", "study_topic": "desarrollo web"},
+        }, actor="owner", idempotency_key="autonomous_study_" + hashlib.sha256(
+            b"owner-1\0desarrollo web"
+        ).hexdigest()[:32], owner_scope="owner-1")
+        learning_id = created["record"]["id"]
+
+        result = run_autonomous_study(
+            service, "desarrollo web", "owner@example.com", "owner-1",
+            lambda _topic, max_results: _sources(),
+            lambda _topic, _evidence: {
+                "verdict": "supported", "confidence": 0.91,
+                "summary": "Lección con evidencia [0] [1].",
+                "supporting_evidence": [0, 1],
+            },
+        )
+
+        self.assertEqual(result["learning"]["id"], learning_id)
+        self.assertTrue(result["promoted"])
+        self.assertEqual(result["learning"]["status"], "consolidated")
+
     def test_undo_refuses_non_study_learning(self):
         service = _Service()
         created = service.save_learning({
@@ -220,3 +277,4 @@ class AutonomousStudyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
