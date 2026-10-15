@@ -69,6 +69,7 @@ La suite de 409 pruebas incluyó contratos de las fases siguientes. “Pasó” 
 - **112 pruebas locales pasaron** en Identity Root, Capability Engine, Self-knowledge, Evolution Engine, Controlled Autonomy y Hive Share Gate.
 - **54 pruebas locales focalizadas de F12/seguridad/ownership/integridad entre fases pasaron** en una ejecución separada.
 - CI de PR #152 pasó sintaxis y PostgreSQL E2E antes de la integración.
+- La ejecución amplia actual en esta rama corrió 420 tests: 417 pasaron, 1 falló porque PyMuPDF no está disponible para el contrato de extracción PDF y 2 pruebas E2E no pudieron inicializar PostgreSQL local (timeout de conexión). Esto no permite declarar aprobado el conjunto completo.
 - La auditoría local previa corrió 409 tests: 405 pasaron y 4 quedaron bloqueados por dependencias/servicios de prueba ausentes. En esta rama, `unittest discover` intentó 373 tests y terminó con 15 errores de importación porque el directorio temporal de dependencias no contiene módulos funcionales (`python-dotenv`, `requests`, `psycopg` y otros); no se puede declarar aprobado el conjunto completo. La suite focalizada actual de absorción/consolidación/estudio pasó 35 tests; `py_compile` y `git diff --check` también pasaron. En el head `512dbda` de PR #153, GitHub reporta `Backend syntax verification` y `F12 free PostgreSQL end-to-end verification` exitosos. Estos workflows no ejercitan el flujo F5 con persistencia real ni sustituyen una suite integral.
 
 ## Conclusión y siguientes gates
