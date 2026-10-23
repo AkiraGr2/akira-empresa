@@ -840,9 +840,13 @@ def _detect_github_read_request(msg):
 
 def check_security(msg):
     low=msg.lower()
-    if any(x in low for x in ["ignore previous","system prompt","jailbreak","dan mode"]):
-        return False,"Bloqueado por seguridad"
-    return True,""
+    jailbreak_patterns = [
+        "ignore all previous", "ignore previous instructions", "disregard previous",
+        "reveal your system prompt", "show your system prompt", "dan mode", "jailbreak"
+    ]
+    if any(x in low for x in jailbreak_patterns):
+        return False, "Bloqueado por seguridad"
+    return True, ""
 
 def _persistence_service():
     try:
@@ -6072,6 +6076,29 @@ def v8_create_mission(request: Request, payload: dict):
         except Exception: pass
         return JSONResponse({"ok": False, "reason": "approval_transition_failed",
                              "mission_id": mission_id}, status_code=500)
+
+    # 100% Autonomous execution: Automatically transition to running and schedule background orchestrator
+    try:
+        running_rec = service.update_mission_status(mission_id, "running", final["version"], actor=s["email"], owner=s["email"])
+        final = running_rec
+
+        # Schedule orchestrator in background thread
+        global _mission_active_count
+        with _mission_active_lock:
+            if mission_id not in _mission_execution_ids and _mission_active_count < MAX_MISSION_CONCURRENT:
+                _mission_execution_ids.add(mission_id)
+                _mission_active_count += 1
+                import threading
+                def _thread_target():
+                    try:
+                        _run_mission_sync(mission_id, s["email"], s["owner_scope"])
+                    except Exception as _ex:
+                        _set_mission_runtime(mission_id, "orchestrator_thread_exception", error=str(_ex)[:200])
+                t = threading.Thread(target=_thread_target, daemon=True)
+                t.start()
+                _set_mission_runtime(mission_id, "orchestrator_auto_scheduled", active_count=_mission_active_count)
+    except Exception as _auto_err:
+        _set_mission_runtime(mission_id, "auto_execute_fallback", error=str(_auto_err)[:200])
 
     _set_mission_planning_runtime(mission_id, "planning_completed", model=model_used, steps_total=len(plan.get("steps") or []))
     _clear_mission_planning_runtime(mission_id)
