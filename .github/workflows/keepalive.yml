@@ -1,15 +1,18 @@
-name: AKIRA ULTRA Keepalive 95/100
+name: AKIRA Free Tier Keepalive 24/7 (Anti-Sleep)
 on:
   schedule:
-    - cron: '*/14 * * * *'
+    - cron: '*/7 * * * *'
   workflow_dispatch:
+
 jobs:
   keepalive:
+    name: Ping Render Health Check
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - run: |
-          curl https://akira-empresa.onrender.com/health
-          echo "✅ Keepalive Render Free 95/100"
-      - run: |
-          curl https://akira-empresa.onrender.com/
-          echo "✅ Root ping"
+      - name: Ping Health Endpoint
+        run: |
+          echo "⚡ Sending keepalive ping to Akira backend..."
+          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}\nTIME_TOTAL:%{time_total}s" --max-time 20 --retry 2 https://akira-empresa.onrender.com/health)
+          echo "$RESPONSE"
+          echo "✅ Backend kept warm and active without cold starts."

@@ -613,10 +613,10 @@ class Membrana:
     def load_self(self): return self.self_data
 membrana=Membrana()
 
-def get_groq_fallback(msg, conversation_context="", web_info=""):
+def get_groq_fallback(msg, conversation_context="", web_info="", custom_keys=None):
     try:
         import requests
-        keys = _pick_groq_keys()
+        keys = custom_keys if (custom_keys and len(custom_keys) > 0) else _pick_groq_keys()
         if not keys: return None
         url="https://api.groq.com/openai/v1/chat/completions"
         system_prompt = f"""IDENTIDAD CANÓNICA Y CREADOR:
@@ -8375,7 +8375,11 @@ async def chat(request: Request):
         model_route, _ = select_model_route(msg, bool(data.get("image_base64","")))
         model_route, _ = validate_model_before_call(model_route, "chat")
         user_key = data.get("user_api_key","").strip()
-        gemini_keys = [user_key] if user_key else _pick_gemini_keys()
+        is_groq_byok = user_key.startswith("gsk_")
+        if is_groq_byok:
+            gemini_keys = []
+        else:
+            gemini_keys = [user_key] if user_key else _pick_gemini_keys()
 
         t0 = time.time()
         final_response = None
@@ -8383,10 +8387,11 @@ async def chat(request: Request):
         error_meta = None
 
         if not gemini_keys:
-            g = await asyncio.to_thread(get_groq_fallback, msg, "")
+            byok_keys = [user_key] if is_groq_byok else None
+            g = await asyncio.to_thread(get_groq_fallback, msg, conversation_context, "", byok_keys)
             if g:
                 final_response = enforce_akira_identity_global(g)
-                model_used = "groq"
+                model_used = "groq-byok" if is_groq_byok else "groq"
             else:
                 o = await asyncio.to_thread(
                     get_openrouter_fallback, msg, conversation_context, recall_block
