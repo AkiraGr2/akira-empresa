@@ -2265,7 +2265,9 @@ async def runtime_capabilities():
         },
     }
 
+@app.api_route("/health", methods=["GET", "HEAD"])
 @app.get("/health")
+@app.head("/health")
 async def health():
     return {
         "status":"ok",
@@ -8685,7 +8687,9 @@ async def generate_image(request: Request):
     except Exception as e:
         return JSONResponse({"ok": False, "reason": type(e).__name__}, status_code=502)
 
+@app.api_route("/", methods=["GET", "HEAD"])
 @app.get("/")
+@app.head("/")
 async def root():
     return {"message": PUBLIC_IDENTITY, "version": VERSION}
 
