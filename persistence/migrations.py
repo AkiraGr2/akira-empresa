@@ -1910,4 +1910,262 @@ MIGRATIONS = [
             ON public.tool_invocations (owner_scope, created_at DESC)
         """
     ),
+    (
+        "055_hive_collective_sync_v1",
+        """
+        CREATE TABLE hive_collectives (
+            id TEXT PRIMARY KEY,
+            owner_identity_ref TEXT NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT,
+            policy_version TEXT NOT NULL DEFAULT 'hive_collective.v1',
+            status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','suspended','dissolved')),
+            schema_version TEXT NOT NULL DEFAULT 'hive_collective.v1',
+            version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+            idempotency_key TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX hive_collectives_idempotency_key_uq ON hive_collectives (idempotency_key);
+        CREATE INDEX hive_collectives_owner_idx ON hive_collectives (owner_identity_ref, status);
+
+        CREATE TABLE hive_collective_memberships (
+            id TEXT PRIMARY KEY,
+            collective_id TEXT NOT NULL REFERENCES hive_collectives(id) ON DELETE RESTRICT,
+            instance_id TEXT NOT NULL,
+            owner_identity_ref TEXT NOT NULL,
+            instance_label TEXT,
+            status TEXT NOT NULL DEFAULT 'invited' CHECK (status IN ('invited','active','suspended','revoked')),
+            membership_generation INTEGER NOT NULL DEFAULT 1 CHECK (membership_generation >= 1),
+            invitation_hash TEXT,
+            invitation_expires_at TIMESTAMPTZ,
+            invited_by TEXT,
+            invited_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            accepted_at TIMESTAMPTZ,
+            revoked_at TIMESTAMPTZ,
+            revoked_by TEXT,
+            schema_version TEXT NOT NULL DEFAULT 'hive_membership.v1',
+            version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+            idempotency_key TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX hive_memberships_idempotency_key_uq ON hive_collective_memberships (idempotency_key);
+        CREATE UNIQUE INDEX hive_memberships_active_instance_uq ON hive_collective_memberships (collective_id, instance_id) WHERE status IN ('invited','active');
+        CREATE INDEX hive_memberships_collective_status_idx ON hive_collective_memberships (collective_id, status);
+        CREATE INDEX hive_memberships_owner_idx ON hive_collective_memberships (owner_identity_ref, status);
+        CREATE INDEX hive_memberships_instance_idx ON hive_collective_memberships (instance_id, status);
+
+        CREATE TABLE hive_share_consents (
+            id TEXT PRIMARY KEY,
+            collective_id TEXT NOT NULL REFERENCES hive_collectives(id) ON DELETE RESTRICT,
+            owner_identity_ref TEXT NOT NULL,
+            sender_instance_id TEXT NOT NULL,
+            sender_membership_id TEXT NOT NULL REFERENCES hive_collective_memberships(id) ON DELETE RESTRICT,
+            knowledge_id TEXT NOT NULL,
+            knowledge_version INTEGER NOT NULL CHECK (knowledge_version >= 1),
+            content_hash TEXT NOT NULL CHECK (length(content_hash) = 64),
+            audience_hash TEXT NOT NULL CHECK (length(audience_hash) = 64),
+            audience_membership_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+            redaction_policy TEXT NOT NULL DEFAULT 'default',
+            contract_version TEXT NOT NULL DEFAULT 'hive-sync/1',
+            revocation_generation INTEGER NOT NULL DEFAULT 0 CHECK (revocation_generation >= 0),
+            status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked')),
+            schema_version TEXT NOT NULL DEFAULT 'hive_consent.v1',
+            version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+            idempotency_key TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX hive_consents_idempotency_key_uq ON hive_share_consents (idempotency_key);
+        CREATE INDEX hive_consents_collective_idx ON hive_share_consents (collective_id, status);
+        CREATE INDEX hive_consents_knowledge_idx ON hive_share_consents (knowledge_id, collective_id);
+        CREATE INDEX hive_consents_owner_idx ON hive_share_consents (owner_identity_ref, created_at DESC);
+
+        CREATE TABLE hive_sync_outbox (
+            id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL,
+            publication_id TEXT NOT NULL,
+            consent_id TEXT NOT NULL REFERENCES hive_share_consents(id) ON DELETE RESTRICT,
+            collective_id TEXT NOT NULL REFERENCES hive_collectives(id) ON DELETE RESTRICT,
+            sender_instance_id TEXT NOT NULL,
+            sender_membership_id TEXT NOT NULL REFERENCES hive_collective_memberships(id) ON DELETE RESTRICT,
+            recipient_instance_id TEXT NOT NULL,
+            recipient_membership_id TEXT NOT NULL REFERENCES hive_collective_memberships(id) ON DELETE RESTRICT,
+            membership_generation INTEGER NOT NULL CHECK (membership_generation >= 1),
+            sender_sequence INTEGER NOT NULL CHECK (sender_sequence >= 1),
+            event_type TEXT NOT NULL CHECK (event_type IN ('KNOWLEDGE_SNAPSHOT','KNOWLEDGE_REVOCATION')),
+            envelope_hash TEXT NOT NULL CHECK (length(envelope_hash) = 64),
+            envelope JSONB NOT NULL DEFAULT '{}'::jsonb,
+            content_hash TEXT NOT NULL CHECK (length(content_hash) = 64),
+            knowledge_lineage_id TEXT NOT NULL,
+            revision_id TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','delivered','acknowledged','failed','cancelled')),
+            attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+            last_attempt_at TIMESTAMPTZ,
+            next_attempt_at TIMESTAMPTZ DEFAULT now(),
+            delivered_at TIMESTAMPTZ,
+            acknowledged_at TIMESTAMPTZ,
+            failure_reason TEXT,
+            schema_version TEXT NOT NULL DEFAULT 'hive_outbox.v1',
+            version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+            idempotency_key TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX hive_outbox_idempotency_key_uq ON hive_sync_outbox (idempotency_key);
+        CREATE UNIQUE INDEX hive_outbox_recipient_event_uq ON hive_sync_outbox (recipient_membership_id, event_id);
+        CREATE INDEX hive_outbox_pending_idx ON hive_sync_outbox (status, next_attempt_at) WHERE status = 'pending';
+        CREATE INDEX hive_outbox_publication_idx ON hive_sync_outbox (publication_id, status);
+        CREATE INDEX hive_outbox_collective_idx ON hive_sync_outbox (collective_id, created_at DESC);
+
+        CREATE TABLE hive_sync_inbox (
+            id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL,
+            publication_id TEXT NOT NULL,
+            collective_id TEXT NOT NULL REFERENCES hive_collectives(id) ON DELETE RESTRICT,
+            sender_instance_id TEXT NOT NULL,
+            sender_membership_id TEXT NOT NULL REFERENCES hive_collective_memberships(id) ON DELETE RESTRICT,
+            recipient_instance_id TEXT NOT NULL,
+            recipient_membership_id TEXT NOT NULL REFERENCES hive_collective_memberships(id) ON DELETE RESTRICT,
+            membership_generation INTEGER NOT NULL CHECK (membership_generation >= 1),
+            sender_sequence INTEGER NOT NULL CHECK (sender_sequence >= 1),
+            event_type TEXT NOT NULL CHECK (event_type IN ('KNOWLEDGE_SNAPSHOT','KNOWLEDGE_REVOCATION')),
+            envelope_hash TEXT NOT NULL CHECK (length(envelope_hash) = 64),
+            envelope JSONB NOT NULL DEFAULT '{}'::jsonb,
+            content_hash TEXT NOT NULL CHECK (length(content_hash) = 64),
+            knowledge_lineage_id TEXT NOT NULL,
+            revision_id TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'received' CHECK (status IN ('received','validated','pending_review','accepted','rejected','quarantined')),
+            validation_result JSONB,
+            accepted_hash TEXT,
+            accepted_version INTEGER,
+            receipt JSONB,
+            schema_version TEXT NOT NULL DEFAULT 'hive_inbox.v1',
+            version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+            idempotency_key TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX hive_inbox_idempotency_key_uq ON hive_sync_inbox (idempotency_key);
+        CREATE UNIQUE INDEX hive_inbox_recipient_event_uq ON hive_sync_inbox (recipient_membership_id, event_id);
+        CREATE INDEX hive_inbox_status_idx ON hive_sync_inbox (recipient_membership_id, status);
+        CREATE INDEX hive_inbox_collective_idx ON hive_sync_inbox (collective_id, created_at DESC);
+
+        CREATE TABLE hive_collective_revisions (
+            id TEXT PRIMARY KEY,
+            collective_id TEXT NOT NULL REFERENCES hive_collectives(id) ON DELETE RESTRICT,
+            knowledge_lineage_id TEXT NOT NULL,
+            revision_id TEXT NOT NULL,
+            parent_revision_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+            content_hash TEXT NOT NULL CHECK (length(content_hash) = 64),
+            snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+            origin TEXT NOT NULL DEFAULT 'received' CHECK (origin IN ('received','local','resolution')),
+            event_id TEXT,
+            actor TEXT NOT NULL,
+            provenance JSONB NOT NULL DEFAULT '{}'::jsonb,
+            evidence JSONB NOT NULL DEFAULT '[]'::jsonb,
+            schema_version TEXT NOT NULL DEFAULT 'hive_revision.v1',
+            version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+            idempotency_key TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX hive_revisions_idempotency_key_uq ON hive_collective_revisions (idempotency_key);
+        CREATE UNIQUE INDEX hive_revisions_lineage_revision_uq ON hive_collective_revisions (collective_id, knowledge_lineage_id, revision_id);
+        CREATE INDEX hive_revisions_collective_lineage_idx ON hive_collective_revisions (collective_id, knowledge_lineage_id, created_at DESC);
+
+        CREATE TABLE hive_collective_conflicts (
+            id TEXT PRIMARY KEY,
+            collective_id TEXT NOT NULL REFERENCES hive_collectives(id) ON DELETE RESTRICT,
+            knowledge_lineage_id TEXT NOT NULL,
+            base_revision_id TEXT,
+            competing_revision_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','resolved','rejected')),
+            resolution_revision_id TEXT,
+            resolution_actor TEXT,
+            resolution_justification TEXT,
+            resolved_at TIMESTAMPTZ,
+            schema_version TEXT NOT NULL DEFAULT 'hive_conflict.v1',
+            version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+            idempotency_key TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX hive_conflicts_idempotency_key_uq ON hive_collective_conflicts (idempotency_key);
+        CREATE INDEX hive_conflicts_pending_idx ON hive_collective_conflicts (collective_id, status) WHERE status = 'pending';
+        CREATE INDEX hive_conflicts_lineage_idx ON hive_collective_conflicts (collective_id, knowledge_lineage_id);
+
+        CREATE TABLE hive_revocation_tombstones (
+            id TEXT PRIMARY KEY,
+            collective_id TEXT NOT NULL REFERENCES hive_collectives(id) ON DELETE RESTRICT,
+            consent_id TEXT NOT NULL REFERENCES hive_share_consents(id) ON DELETE RESTRICT,
+            knowledge_lineage_id TEXT NOT NULL,
+            revision_id TEXT,
+            content_hash TEXT NOT NULL CHECK (length(content_hash) = 64),
+            revocation_generation INTEGER NOT NULL CHECK (revocation_generation >= 1),
+            event_id TEXT,
+            actor TEXT NOT NULL,
+            receipt JSONB,
+            schema_version TEXT NOT NULL DEFAULT 'hive_tombstone.v1',
+            version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+            idempotency_key TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX hive_tombstones_idempotency_key_uq ON hive_revocation_tombstones (idempotency_key);
+        CREATE INDEX hive_tombstones_collective_lineage_idx ON hive_revocation_tombstones (collective_id, knowledge_lineage_id);
+        CREATE INDEX hive_tombstones_consent_idx ON hive_revocation_tombstones (consent_id);
+        CREATE UNIQUE INDEX hive_tombstones_generation_uq ON hive_revocation_tombstones (collective_id, knowledge_lineage_id, revocation_generation);
+
+        ALTER TABLE hive_collectives ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE hive_collective_memberships ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE hive_share_consents ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE hive_sync_outbox ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE hive_sync_inbox ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE hive_collective_revisions ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE hive_collective_conflicts ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE hive_revocation_tombstones ENABLE ROW LEVEL SECURITY;
+
+        REVOKE ALL ON TABLE hive_collectives, hive_collective_memberships, hive_share_consents, hive_sync_outbox, hive_sync_inbox, hive_collective_revisions, hive_collective_conflicts, hive_revocation_tombstones FROM anon, authenticated;
+
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON hive_collectives AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON hive_collectives AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON hive_collectives AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON hive_collectives AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON hive_collective_memberships AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON hive_collective_memberships AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON hive_collective_memberships AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON hive_collective_memberships AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON hive_share_consents AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON hive_share_consents AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON hive_share_consents AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON hive_share_consents AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON hive_sync_outbox AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON hive_sync_outbox AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON hive_sync_outbox AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON hive_sync_outbox AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON hive_sync_inbox AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON hive_sync_inbox AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON hive_sync_inbox AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON hive_sync_inbox AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON hive_collective_revisions AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON hive_collective_revisions AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON hive_collective_revisions AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON hive_collective_revisions AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON hive_collective_conflicts AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON hive_collective_conflicts AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON hive_collective_conflicts AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON hive_collective_conflicts AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false);
+
+        CREATE POLICY "akira_deny_anon_authenticated_select" ON hive_revocation_tombstones AS RESTRICTIVE FOR SELECT TO anon, authenticated USING (false);
+        CREATE POLICY "akira_deny_anon_authenticated_insert" ON hive_revocation_tombstones AS RESTRICTIVE FOR INSERT TO anon, authenticated WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_update" ON hive_revocation_tombstones AS RESTRICTIVE FOR UPDATE TO anon, authenticated USING (false) WITH CHECK (false);
+        CREATE POLICY "akira_deny_anon_authenticated_delete" ON hive_revocation_tombstones AS RESTRICTIVE FOR DELETE TO anon, authenticated USING (false)
+        """
+    ),
 ]

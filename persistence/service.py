@@ -4440,3 +4440,498 @@ class PersistenceService:
         if owner is not None and self.get_conversation(conversation_id, owner=owner) is None:
             raise NotFoundError(conversation_id)
         return self.repo.count("conversation_messages", {"conversation_id": conversation_id})
+
+    # ---------- F15 Hive Collective Sync v1 ----------
+
+    HIVE_COLLECTIVE_SCHEMA = "hive_collective.v1"
+    HIVE_MEMBERSHIP_SCHEMA = "hive_membership.v1"
+    HIVE_CONSENT_SCHEMA = "hive_consent.v1"
+    HIVE_OUTBOX_SCHEMA = "hive_outbox.v1"
+    HIVE_INBOX_SCHEMA = "hive_inbox.v1"
+    HIVE_REVISION_SCHEMA = "hive_revision.v1"
+    HIVE_CONFLICT_SCHEMA = "hive_conflict.v1"
+    HIVE_TOMBSTONE_SCHEMA = "hive_tombstone.v1"
+
+    MEMBERSHIP_STATUS_TRANSITIONS = {
+        "invited":   ("active", "revoked"),
+        "active":    ("suspended", "revoked"),
+        "suspended": ("active", "revoked"),
+        "revoked":   (),
+    }
+
+    def create_collective(self, owner_identity_ref, name, description=None,
+                          actor="system", idempotency_key=None):
+        """Create a new Hive collective owned by the authenticated identity."""
+        owner_identity_ref = str(owner_identity_ref).strip()
+        name = str(name).strip()
+        if not owner_identity_ref:
+            raise ValidationError("owner_identity_ref requerido")
+        if not name or len(name) > 200:
+            raise ValidationError("nombre de colectiva requerido (max 200 chars)")
+        record = {
+            "id": new_id("hcol"),
+            "owner_identity_ref": owner_identity_ref,
+            "name": name,
+            "description": str(description).strip()[:2000] if description else None,
+            "policy_version": self.HIVE_COLLECTIVE_SCHEMA,
+            "status": "active",
+            "schema_version": self.HIVE_COLLECTIVE_SCHEMA,
+        }
+        if idempotency_key is not None:
+            if not isinstance(idempotency_key, str) or not 0 < len(idempotency_key.strip()) <= 200:
+                raise ValidationError("idempotency_key debe ser texto de 1 a 200 caracteres")
+            record["idempotency_key"] = idempotency_key.strip()
+        try:
+            with self.repo.transaction() as tx:
+                stored, created = tx.create("hive_collectives", record)
+                tx.append_audit({
+                    "actor": actor,
+                    "action": "hive.collective.create" if created else "hive.collective.create.already_synced",
+                    "resource": "hive_collectives",
+                    "resource_id": stored["id"],
+                    "status": "success",
+                    "detail": {"owner": owner_identity_ref, "name": name},
+                })
+        except PersistenceError:
+            raise
+        except Exception as exc:
+            self._audit_failure_generic(actor, "hive.collective.create", "hive_collectives", None, exc)
+            raise StorageError(type(exc).__name__) from exc
+        verified = self.repo.get("hive_collectives", stored["id"])
+        if verified is None:
+            raise VerificationError("collective no confirmada")
+        return {"outcome": "created" if created else "already_synced", "record": verified}
+
+    def get_collective(self, collective_id, owner_identity_ref=None):
+        """Get a collective, optionally scoped to an owner."""
+        coll = self.repo.get("hive_collectives", collective_id)
+        if coll is None:
+            return None
+        if owner_identity_ref is not None:
+            if str(coll.get("owner_identity_ref", "")).strip() != str(owner_identity_ref).strip():
+                return None
+        return coll
+
+    def invite_instance(self, collective_id, instance_id, owner_identity_ref,
+                        invitation_hash=None, invitation_expires_at=None,
+                        instance_label=None, actor="system", idempotency_key=None):
+        """Invite an Akira instance to a collective. Only same-owner instances."""
+        collective_id = str(collective_id).strip()
+        instance_id = str(instance_id).strip()
+        owner_identity_ref = str(owner_identity_ref).strip()
+        if not collective_id or not instance_id or not owner_identity_ref:
+            raise ValidationError("collective_id, instance_id y owner_identity_ref requeridos")
+        record = {
+            "id": new_id("hmem"),
+            "collective_id": collective_id,
+            "instance_id": instance_id,
+            "owner_identity_ref": owner_identity_ref,
+            "instance_label": str(instance_label).strip()[:200] if instance_label else None,
+            "status": "invited",
+            "membership_generation": 1,
+            "invitation_hash": str(invitation_hash).strip() if invitation_hash else None,
+            "invitation_expires_at": str(invitation_expires_at).strip() if invitation_expires_at else None,
+            "invited_by": actor,
+            "schema_version": self.HIVE_MEMBERSHIP_SCHEMA,
+        }
+        if idempotency_key is not None:
+            if not isinstance(idempotency_key, str) or not 0 < len(idempotency_key.strip()) <= 200:
+                raise ValidationError("idempotency_key debe ser texto de 1 a 200 caracteres")
+            record["idempotency_key"] = idempotency_key.strip()
+        try:
+            with self.repo.transaction() as tx:
+                # Verify collective exists and belongs to same owner
+                coll = tx.get("hive_collectives", collective_id)
+                if coll is None:
+                    raise NotFoundError(f"collective {collective_id}")
+                if str(coll.get("owner_identity_ref", "")).strip() != owner_identity_ref:
+                    raise ValidationError("la colectiva no pertenece al owner")
+                if coll.get("status") != "active":
+                    raise ValidationError("la colectiva no esta activa")
+                stored, created = tx.create("hive_collective_memberships", record)
+                tx.append_audit({
+                    "actor": actor,
+                    "action": "hive.membership.invite" if created else "hive.membership.invite.already_synced",
+                    "resource": "hive_collective_memberships",
+                    "resource_id": stored["id"],
+                    "status": "success",
+                    "detail": {"collective_id": collective_id, "instance_id": instance_id},
+                })
+        except PersistenceError:
+            raise
+        except Exception as exc:
+            self._audit_failure_generic(actor, "hive.membership.invite", "hive_collective_memberships", None, exc)
+            raise StorageError(type(exc).__name__) from exc
+        verified = self.repo.get("hive_collective_memberships", stored["id"])
+        if verified is None:
+            raise VerificationError("membership no confirmada")
+        return {"outcome": "created" if created else "already_synced", "record": verified}
+
+    def accept_invitation(self, membership_id, owner_identity_ref, actor="system"):
+        """Accept a pending invitation. Transition invited -> active."""
+        membership_id = str(membership_id).strip()
+        owner_identity_ref = str(owner_identity_ref).strip()
+        if not membership_id or not owner_identity_ref:
+            raise ValidationError("membership_id y owner_identity_ref requeridos")
+        try:
+            with self.repo.transaction() as tx:
+                membership = tx.get("hive_collective_memberships", membership_id)
+                if membership is None:
+                    raise NotFoundError(membership_id)
+                if str(membership.get("owner_identity_ref", "")).strip() != owner_identity_ref:
+                    raise NotFoundError(membership_id)
+                current_status = membership.get("status")
+                if current_status != "invited":
+                    raise ValidationError(f"transicion invalida: {current_status} -> active")
+                changes = {"status": "active", "accepted_at": _now_iso()}
+                updated = tx.update("hive_collective_memberships", membership_id, changes, membership["version"])
+                tx.append_audit({
+                    "actor": actor,
+                    "action": "hive.membership.accept",
+                    "resource": "hive_collective_memberships",
+                    "resource_id": membership_id,
+                    "status": "success",
+                    "detail": {"collective_id": membership.get("collective_id")},
+                })
+        except PersistenceError:
+            raise
+        except Exception as exc:
+            self._audit_failure_generic(actor, "hive.membership.accept", "hive_collective_memberships", membership_id, exc)
+            raise StorageError(type(exc).__name__) from exc
+        verified = self.repo.get("hive_collective_memberships", membership_id)
+        if verified is None or verified.get("status") != "active":
+            raise VerificationError("aceptacion no confirmada")
+        return verified
+
+    def stage_sync_outbox(self, consent_id, envelope_data, recipients,
+                          actor="system"):
+        """Create outbox entries for each recipient in one transaction.
+
+        envelope_data: dict with event_id, publication_id, collective_id,
+                       sender_instance_id, sender_membership_id, event_type,
+                       envelope_hash, envelope, content_hash,
+                       knowledge_lineage_id, revision_id, sender_sequence.
+        recipients: list of dicts with recipient_instance_id, recipient_membership_id,
+                    membership_generation.
+        """
+        consent_id = str(consent_id).strip()
+        if not consent_id or not recipients:
+            raise ValidationError("consent_id y recipients requeridos")
+        try:
+            with self.repo.transaction() as tx:
+                consent = tx.get("hive_share_consents", consent_id)
+                if consent is None:
+                    raise NotFoundError(f"consent {consent_id}")
+                if consent.get("status") != "active":
+                    raise ValidationError("consentimiento no activo")
+                created_entries = []
+                for recipient in recipients:
+                    event_id = str(envelope_data.get("event_id", "")).strip()
+                    if not event_id:
+                        event_id = new_id("hevt")
+                    record = {
+                        "id": new_id("hout"),
+                        "event_id": event_id,
+                        "publication_id": str(envelope_data.get("publication_id", "")).strip(),
+                        "consent_id": consent_id,
+                        "collective_id": str(envelope_data.get("collective_id", "")).strip(),
+                        "sender_instance_id": str(envelope_data.get("sender_instance_id", "")).strip(),
+                        "sender_membership_id": str(envelope_data.get("sender_membership_id", "")).strip(),
+                        "recipient_instance_id": str(recipient.get("recipient_instance_id", "")).strip(),
+                        "recipient_membership_id": str(recipient.get("recipient_membership_id", "")).strip(),
+                        "membership_generation": int(recipient.get("membership_generation", 1)),
+                        "sender_sequence": int(envelope_data.get("sender_sequence", 1)),
+                        "event_type": str(envelope_data.get("event_type", "KNOWLEDGE_SNAPSHOT")).strip(),
+                        "envelope_hash": str(envelope_data.get("envelope_hash", "")).strip(),
+                        "envelope": envelope_data.get("envelope", {}),
+                        "content_hash": str(envelope_data.get("content_hash", "")).strip(),
+                        "knowledge_lineage_id": str(envelope_data.get("knowledge_lineage_id", "")).strip(),
+                        "revision_id": str(envelope_data.get("revision_id", "")).strip(),
+                        "status": "pending",
+                        "schema_version": self.HIVE_OUTBOX_SCHEMA,
+                    }
+                    idem_key = f"outbox:{record['recipient_membership_id']}:{event_id}"[:200]
+                    record["idempotency_key"] = idem_key
+                    stored, created = tx.create("hive_sync_outbox", record)
+                    created_entries.append({"outcome": "created" if created else "already_synced", "record": stored})
+                tx.append_audit({
+                    "actor": actor,
+                    "action": "hive.outbox.stage",
+                    "resource": "hive_sync_outbox",
+                    "resource_id": consent_id,
+                    "status": "success",
+                    "detail": {"count": len(created_entries), "consent_id": consent_id},
+                })
+        except PersistenceError:
+            raise
+        except Exception as exc:
+            self._audit_failure_generic(actor, "hive.outbox.stage", "hive_sync_outbox", consent_id, exc)
+            raise StorageError(type(exc).__name__) from exc
+        return created_entries
+
+    def receive_sync_envelope(self, envelope_data, actor="system"):
+        """Create an inbox entry for a received envelope."""
+        event_id = str(envelope_data.get("event_id", "")).strip()
+        recipient_membership_id = str(envelope_data.get("recipient_membership_id", "")).strip()
+        if not event_id or not recipient_membership_id:
+            raise ValidationError("event_id y recipient_membership_id requeridos")
+        record = {
+            "id": new_id("hinb"),
+            "event_id": event_id,
+            "publication_id": str(envelope_data.get("publication_id", "")).strip(),
+            "collective_id": str(envelope_data.get("collective_id", "")).strip(),
+            "sender_instance_id": str(envelope_data.get("sender_instance_id", "")).strip(),
+            "sender_membership_id": str(envelope_data.get("sender_membership_id", "")).strip(),
+            "recipient_instance_id": str(envelope_data.get("recipient_instance_id", "")).strip(),
+            "recipient_membership_id": recipient_membership_id,
+            "membership_generation": int(envelope_data.get("membership_generation", 1)),
+            "sender_sequence": int(envelope_data.get("sender_sequence", 1)),
+            "event_type": str(envelope_data.get("event_type", "KNOWLEDGE_SNAPSHOT")).strip(),
+            "envelope_hash": str(envelope_data.get("envelope_hash", "")).strip(),
+            "envelope": envelope_data.get("envelope", {}),
+            "content_hash": str(envelope_data.get("content_hash", "")).strip(),
+            "knowledge_lineage_id": str(envelope_data.get("knowledge_lineage_id", "")).strip(),
+            "revision_id": str(envelope_data.get("revision_id", "")).strip(),
+            "status": "received",
+            "schema_version": self.HIVE_INBOX_SCHEMA,
+        }
+        idem_key = f"inbox:{recipient_membership_id}:{event_id}"[:200]
+        record["idempotency_key"] = idem_key
+        try:
+            with self.repo.transaction() as tx:
+                # Verify membership is still active
+                membership = tx.get("hive_collective_memberships", recipient_membership_id)
+                if membership is None or membership.get("status") not in ("active",):
+                    raise ValidationError("membership no activa para recibir")
+                stored, created = tx.create("hive_sync_inbox", record)
+                tx.append_audit({
+                    "actor": actor,
+                    "action": "hive.inbox.receive" if created else "hive.inbox.receive.already_synced",
+                    "resource": "hive_sync_inbox",
+                    "resource_id": stored["id"],
+                    "status": "success",
+                    "detail": {"event_id": event_id, "recipient": recipient_membership_id},
+                })
+        except PersistenceError:
+            raise
+        except Exception as exc:
+            self._audit_failure_generic(actor, "hive.inbox.receive", "hive_sync_inbox", None, exc)
+            raise StorageError(type(exc).__name__) from exc
+        verified = self.repo.get("hive_sync_inbox", stored["id"])
+        if verified is None:
+            raise VerificationError("inbox no confirmado")
+        return {"outcome": "created" if created else "already_synced", "record": verified}
+
+    def acknowledge_inbox(self, inbox_id, new_status, owner_identity_ref,
+                          accepted_hash=None, accepted_version=None,
+                          validation_result=None, actor="system"):
+        """Transition an inbox entry status (validated, accepted, rejected, etc.)."""
+        inbox_id = str(inbox_id).strip()
+        new_status = str(new_status).strip()
+        owner_identity_ref = str(owner_identity_ref).strip()
+        if not inbox_id or not new_status or not owner_identity_ref:
+            raise ValidationError("inbox_id, new_status y owner_identity_ref requeridos")
+        valid_statuses = ("validated", "pending_review", "accepted", "rejected", "quarantined")
+        if new_status not in valid_statuses:
+            raise ValidationError(f"status invalido, debe ser uno de {valid_statuses}")
+        try:
+            with self.repo.transaction() as tx:
+                inbox = tx.get("hive_sync_inbox", inbox_id)
+                if inbox is None:
+                    raise NotFoundError(inbox_id)
+                membership = tx.get("hive_collective_memberships", inbox.get("recipient_membership_id"))
+                if membership is None or str(membership.get("owner_identity_ref", "")).strip() != owner_identity_ref:
+                    raise NotFoundError(inbox_id)
+                changes = {"status": new_status}
+                if accepted_hash is not None:
+                    changes["accepted_hash"] = str(accepted_hash).strip()
+                if accepted_version is not None:
+                    changes["accepted_version"] = int(accepted_version)
+                if validation_result is not None:
+                    changes["validation_result"] = validation_result
+                if new_status == "accepted":
+                    changes["receipt"] = {"accepted_at": _now_iso(), "actor": actor}
+                updated = tx.update("hive_sync_inbox", inbox_id, changes, inbox["version"])
+                tx.append_audit({
+                    "actor": actor,
+                    "action": f"hive.inbox.{new_status}",
+                    "resource": "hive_sync_inbox",
+                    "resource_id": inbox_id,
+                    "status": "success",
+                    "detail": {"event_id": inbox.get("event_id"), "new_status": new_status},
+                })
+        except PersistenceError:
+            raise
+        except Exception as exc:
+            self._audit_failure_generic(actor, f"hive.inbox.{new_status}", "hive_sync_inbox", inbox_id, exc)
+            raise StorageError(type(exc).__name__) from exc
+        verified = self.repo.get("hive_sync_inbox", inbox_id)
+        if verified is None or verified.get("status") != new_status:
+            raise VerificationError("inbox update no confirmado")
+        return verified
+
+    def record_revision(self, collective_id, knowledge_lineage_id, revision_id,
+                        content_hash, snapshot, parent_revision_ids=None,
+                        origin="received", event_id=None, provenance=None,
+                        evidence=None, actor="system", idempotency_key=None):
+        """Record an immutable collective revision."""
+        collective_id = str(collective_id).strip()
+        knowledge_lineage_id = str(knowledge_lineage_id).strip()
+        revision_id = str(revision_id).strip()
+        content_hash = str(content_hash).strip()
+        if not collective_id or not knowledge_lineage_id or not revision_id or not content_hash:
+            raise ValidationError("collective_id, knowledge_lineage_id, revision_id y content_hash requeridos")
+        record = {
+            "id": new_id("hrev"),
+            "collective_id": collective_id,
+            "knowledge_lineage_id": knowledge_lineage_id,
+            "revision_id": revision_id,
+            "parent_revision_ids": parent_revision_ids or [],
+            "content_hash": content_hash,
+            "snapshot": snapshot or {},
+            "origin": origin if origin in ("received", "local", "resolution") else "received",
+            "event_id": str(event_id).strip() if event_id else None,
+            "actor": actor,
+            "provenance": provenance or {},
+            "evidence": evidence or [],
+            "schema_version": self.HIVE_REVISION_SCHEMA,
+        }
+        if idempotency_key is not None:
+            if not isinstance(idempotency_key, str) or not 0 < len(idempotency_key.strip()) <= 200:
+                raise ValidationError("idempotency_key debe ser texto de 1 a 200 caracteres")
+            record["idempotency_key"] = idempotency_key.strip()
+        try:
+            with self.repo.transaction() as tx:
+                stored, created = tx.create("hive_collective_revisions", record)
+                tx.append_audit({
+                    "actor": actor,
+                    "action": "hive.revision.record" if created else "hive.revision.record.already_synced",
+                    "resource": "hive_collective_revisions",
+                    "resource_id": stored["id"],
+                    "status": "success",
+                    "detail": {"collective_id": collective_id, "revision_id": revision_id},
+                })
+        except PersistenceError:
+            raise
+        except Exception as exc:
+            self._audit_failure_generic(actor, "hive.revision.record", "hive_collective_revisions", None, exc)
+            raise StorageError(type(exc).__name__) from exc
+        verified = self.repo.get("hive_collective_revisions", stored["id"])
+        if verified is None:
+            raise VerificationError("revision no confirmada")
+        return {"outcome": "created" if created else "already_synced", "record": verified}
+
+    def record_conflict(self, collective_id, knowledge_lineage_id,
+                        competing_revision_ids, base_revision_id=None,
+                        actor="system", idempotency_key=None):
+        """Record a factual conflict between revisions. No auto-resolution."""
+        collective_id = str(collective_id).strip()
+        knowledge_lineage_id = str(knowledge_lineage_id).strip()
+        if not collective_id or not knowledge_lineage_id or not competing_revision_ids:
+            raise ValidationError("collective_id, knowledge_lineage_id y competing_revision_ids requeridos")
+        if not isinstance(competing_revision_ids, list) or len(competing_revision_ids) < 2:
+            raise ValidationError("competing_revision_ids debe tener al menos 2 revisiones")
+        record = {
+            "id": new_id("hcon"),
+            "collective_id": collective_id,
+            "knowledge_lineage_id": knowledge_lineage_id,
+            "base_revision_id": str(base_revision_id).strip() if base_revision_id else None,
+            "competing_revision_ids": competing_revision_ids,
+            "status": "pending",
+            "schema_version": self.HIVE_CONFLICT_SCHEMA,
+        }
+        if idempotency_key is not None:
+            if not isinstance(idempotency_key, str) or not 0 < len(idempotency_key.strip()) <= 200:
+                raise ValidationError("idempotency_key debe ser texto de 1 a 200 caracteres")
+            record["idempotency_key"] = idempotency_key.strip()
+        try:
+            with self.repo.transaction() as tx:
+                stored, created = tx.create("hive_collective_conflicts", record)
+                tx.append_audit({
+                    "actor": actor,
+                    "action": "hive.conflict.record" if created else "hive.conflict.record.already_synced",
+                    "resource": "hive_collective_conflicts",
+                    "resource_id": stored["id"],
+                    "status": "success",
+                    "detail": {"collective_id": collective_id, "lineage": knowledge_lineage_id},
+                })
+        except PersistenceError:
+            raise
+        except Exception as exc:
+            self._audit_failure_generic(actor, "hive.conflict.record", "hive_collective_conflicts", None, exc)
+            raise StorageError(type(exc).__name__) from exc
+        verified = self.repo.get("hive_collective_conflicts", stored["id"])
+        if verified is None:
+            raise VerificationError("conflict no confirmado")
+        return {"outcome": "created" if created else "already_synced", "record": verified}
+
+    def record_revocation(self, collective_id, consent_id, knowledge_lineage_id,
+                          content_hash, revocation_generation,
+                          revision_id=None, event_id=None,
+                          actor="system", idempotency_key=None):
+        """Create a revocation tombstone and cancel pending outbox in one transaction."""
+        collective_id = str(collective_id).strip()
+        consent_id = str(consent_id).strip()
+        knowledge_lineage_id = str(knowledge_lineage_id).strip()
+        content_hash = str(content_hash).strip()
+        if not collective_id or not consent_id or not knowledge_lineage_id or not content_hash:
+            raise ValidationError("collective_id, consent_id, knowledge_lineage_id y content_hash requeridos")
+        if isinstance(revocation_generation, bool) or not isinstance(revocation_generation, int) or revocation_generation < 1:
+            raise ValidationError("revocation_generation debe ser entero positivo")
+        record = {
+            "id": new_id("htmb"),
+            "collective_id": collective_id,
+            "consent_id": consent_id,
+            "knowledge_lineage_id": knowledge_lineage_id,
+            "revision_id": str(revision_id).strip() if revision_id else None,
+            "content_hash": content_hash,
+            "revocation_generation": revocation_generation,
+            "event_id": str(event_id).strip() if event_id else None,
+            "actor": actor,
+            "schema_version": self.HIVE_TOMBSTONE_SCHEMA,
+        }
+        if idempotency_key is not None:
+            if not isinstance(idempotency_key, str) or not 0 < len(idempotency_key.strip()) <= 200:
+                raise ValidationError("idempotency_key debe ser texto de 1 a 200 caracteres")
+            record["idempotency_key"] = idempotency_key.strip()
+        try:
+            with self.repo.transaction() as tx:
+                # Verify consent exists and revoke it
+                consent = tx.get("hive_share_consents", consent_id)
+                if consent is None:
+                    raise NotFoundError(f"consent {consent_id}")
+                if consent.get("status") == "active":
+                    tx.update("hive_share_consents", consent_id,
+                              {"status": "revoked", "revocation_generation": revocation_generation},
+                              consent["version"])
+                # Cancel pending outbox entries for this consent
+                pending = tx.search("hive_sync_outbox",
+                                    {"consent_id": consent_id, "status": "pending"},
+                                    limit=200, order_by="created_at", descending=False)
+                for entry in pending:
+                    tx.update("hive_sync_outbox", entry["id"],
+                              {"status": "cancelled"}, entry["version"])
+                # Create tombstone
+                stored, created = tx.create("hive_revocation_tombstones", record)
+                tx.append_audit({
+                    "actor": actor,
+                    "action": "hive.revocation.record" if created else "hive.revocation.record.already_synced",
+                    "resource": "hive_revocation_tombstones",
+                    "resource_id": stored["id"],
+                    "status": "success",
+                    "detail": {
+                        "collective_id": collective_id,
+                        "consent_id": consent_id,
+                        "generation": revocation_generation,
+                        "cancelled_outbox": len(pending),
+                    },
+                })
+        except PersistenceError:
+            raise
+        except Exception as exc:
+            self._audit_failure_generic(actor, "hive.revocation.record", "hive_revocation_tombstones", None, exc)
+            raise StorageError(type(exc).__name__) from exc
+        verified = self.repo.get("hive_revocation_tombstones", stored["id"])
+        if verified is None:
+            raise VerificationError("tombstone no confirmado")
+        return {"outcome": "created" if created else "already_synced", "record": verified}
