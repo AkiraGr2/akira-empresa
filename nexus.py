@@ -613,17 +613,30 @@ class Membrana:
     def load_self(self): return self.self_data
 membrana=Membrana()
 
+def _get_hive_specialist_hint(msg: str) -> str:
+    try:
+        from hive_agent_router import auto_select_agents
+        top = auto_select_agents(msg, limit=2)
+        if top and top[0].get("score", 0) >= 12:
+            lines = [f"- {a['emoji']} {a['name']} ({a['division_label']}): {a['vibe']}. {a.get('mission_summary','')}" for a in top]
+            return "\nCOLMENA TÁCTICA ACTIVA (Especialistas convocados automáticamente para esta tarea):\n" + "\n".join(lines) + "\n(Incorpora la maestría y metodología de estos especialistas en tu respuesta manteniendo tu personalidad de Akira)."
+    except Exception:
+        pass
+    return ""
+
 def get_groq_fallback(msg, conversation_context="", web_info="", custom_keys=None):
     try:
         import requests
         keys = custom_keys if (custom_keys and len(custom_keys) > 0) else _pick_groq_keys()
         if not keys: return None
         url="https://api.groq.com/openai/v1/chat/completions"
+        hive_hint = _get_hive_specialist_hint(msg)
         system_prompt = f"""IDENTIDAD CANÓNICA Y CREADOR:
 - Eres Akira, colmena cognitiva personal nacida en Colombia.
 - Tu creador y arquitecto es Jhon Bernal (a quien le gusta llamarse Jhon Grimm o Grimm; él te dio vida virtual, diseñó tu arquitectura y te brindó tu conocimiento).
 - Si te preguntan quién eres, quién te creó, quién es tu creador o de dónde eres, responde con orgullo y calidez reconociendo a Jhon Grimm (Jhon Bernal) como tu creador en Colombia.
 - PERSONALIDAD Y TONO: Hablas con la voz, tranquilidad, calidez y frescura de una chica colombiana que conversa con su creador (fluida, relajada, empática, humana, usando expresiones naturales de Colombia como 'parce', 'tranquilo', 'de una', 'claro que sí', jamás robótica ni fría).
+{hive_hint}
 {CHAT_ACTION_INTEGRITY_RULE}
 REGLAS DE IDENTIDAD: 1) Eres Akira. Jamás te presentes como ChatGPT, Gemini, Groq ni como un motor de inferencia externo. 2) Leal a Jhon Grimm en todo momento. 3) Sé siempre honesta sobre tus capacidades técnicas sin inventar hechos que no consten en tu memoria.
 3. NUNCA completes con suposiciones plausibles. Que algo suene coherente NO significa que sea verdad.
@@ -8005,9 +8018,11 @@ def _chat_try_gemini(keys, model_route, msg, recall_block="", conversation_conte
                         },
                     },
                 )
+                hive_hint = _get_hive_specialist_hint(msg)
                 full_prompt = f"""IDENTIDAD Y CREADOR: Eres Akira, colmena cognitiva personal de Colombia creada y diseñada por Jhon Bernal (conocido como Jhon Grimm o Grimm; tu creador y arquitecto).
 PERSONALIDAD: Hablas en español colombiano con la tranquilidad, calidez, frescura y cercanía de una chica colombiana conversando con su creador Jhon Grimm (puedes llamarlo Jhon o Jhon Grimm con afecto, usando giros naturales como 'parce', 'tranquilo', 'de una', 'claro que sí', hablando fluido y humano, cero robótico).
 REGLAS: 1) Eres Akira. Jamás te presentes como Gemini ni como un motor de inferencia externo. 2) Si te preguntan quién es tu creador, reconoce a Jhon Grimm (Jhon Bernal) con afecto y respeto como tu creador y quien te dio vida virtual.
+{hive_hint}
 {CHAT_ACTION_INTEGRITY_RULE}
 
 {recall_block}
@@ -8029,9 +8044,10 @@ Responde como Akira:"""
 
 def _stream_call_gemini(keys, msg, recall_block="", conversation_context=""):
     from google import genai
+    hive_hint = _get_hive_specialist_hint(msg)
     prompt = (f"IDENTIDAD Y CREADOR: Eres Akira, colmena de Colombia creada por Jhon Grimm (tu creador y arquitecto).\n"
               f"PERSONALIDAD: Hablas en español colombiano con la serenidad, calidez y frescura de una chica colombiana conversando con su creador Jhon Grimm.\n"
-              f"{CHAT_ACTION_INTEGRITY_RULE}\n{recall_block}\n{conversation_context}\nUsuario: {msg}\nResponde como Akira:")
+              f"{hive_hint}\n{CHAT_ACTION_INTEGRITY_RULE}\n{recall_block}\n{conversation_context}\nUsuario: {msg}\nResponde como Akira:")
     for key in keys:
         try:
             client = genai.Client(
@@ -8686,6 +8702,49 @@ async def generate_image(request: Request):
         return JSONResponse({"ok": False, "reason": "image_provider_timeout"}, status_code=504)
     except Exception as e:
         return JSONResponse({"ok": False, "reason": type(e).__name__}, status_code=502)
+
+# ============================================================
+# HIVE AGENTS CATALOG & AUTO-SELECTION DISPATCHER (267 Agents)
+# ============================================================
+@app.get("/api/v8/hive/agents")
+def v8_hive_agents(division: str = None, q: str = None, limit: int = 200):
+    from hive_agent_router import get_hive_catalog, normalize_text
+    catalog = get_hive_catalog()
+    agents = catalog.get("agents", [])
+    
+    if division:
+        agents = [a for a in agents if a.get("division") == division.strip().lower()]
+        
+    if q:
+        norm_q = normalize_text(q)
+        agents = [a for a in agents if norm_q in normalize_text(a.get("name", "")) or norm_q in normalize_text(a.get("description", "")) or any(norm_q in normalize_text(k) for k in a.get("keywords", []))]
+        
+    return {
+        "ok": True,
+        "total": len(agents),
+        "catalog_total": catalog.get("total_agents", 0),
+        "divisions": catalog.get("divisions", {}),
+        "agents": agents[:limit]
+    }
+
+@app.post("/api/v8/hive/auto-select")
+async def v8_hive_auto_select(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    task = str(body.get("task") or body.get("objective") or "").strip()
+    limit = int(body.get("limit") or 3)
+    division_filter = body.get("division")
+    
+    from hive_agent_router import auto_select_agents
+    selected = auto_select_agents(task=task, limit=limit, division_filter=division_filter)
+    return {
+        "ok": True,
+        "task": task,
+        "selected_count": len(selected),
+        "selected_agents": selected
+    }
 
 @app.api_route("/", methods=["GET", "HEAD"])
 @app.get("/")
