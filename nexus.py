@@ -8325,6 +8325,23 @@ async def chat(request: Request):
         recall_block = _format_recall_block(memories)
         conversation_context = await asyncio.to_thread(_format_conversation_context, service, conversation_id, msg, session["email"] if session else None)
 
+        hive_context = ""
+        try:
+            from hive_agent_router import auto_select_agents
+            matched_agents = auto_select_agents(msg, limit=2)
+            if matched_agents:
+                hive_context = "\n[COLMENA DE AGENTES DE AKIRA (267 DISPONIBLES)]\n"
+                hive_context += "Especialistas convocados para esta consulta:\n"
+                for ag in matched_agents:
+                    hive_context += f"- {ag.get('name')} ({ag.get('division_label', ag.get('division'))}): {ag.get('description', '')}\n"
+                    if ag.get('vibe'):
+                        hive_context += f"  Pauta: {ag.get('vibe')}\n"
+                hive_context += "Responde como Akira con el conocimiento y maestría de este especialista cuando la consulta lo requiera.\n[FIN COLMENA]\n"
+        except Exception:
+            pass
+        if hive_context:
+            conversation_context = (conversation_context + hive_context)
+
         github_context = ""
         github_read = _detect_github_read_request(msg)
         if github_read and persist:
