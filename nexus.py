@@ -8044,6 +8044,32 @@ def _log_gemini_error(context, model, key, error):
     return code
 
 
+
+def _chat_try_gemini_fast_voice(keys, query, conversation_context=""):
+    try:
+        from google import genai
+        fast_system = "IDENTIDAD: Eres Akira, colmena cognitiva colombiana de Jhon Grimm (Jhon Bernal). Responde con calidez y frescura de una chica colombiana. REGLA ORAL OBLIGATORIA: Responde en maximo 1 o 2 oraciones muy breves y directas, sin introducciones largas ni rodeos."
+        prompt = f"{fast_system}\n{conversation_context}\nUsuario: {query}\nAkira:"
+        for m in ["gemini-2.0-flash", "gemini-1.5-flash", PRIMARY_CHAT_MODEL]:
+            m, _ = validate_model_before_call(m, "voice")
+            for key in keys:
+                try:
+                    client = genai.Client(api_key=key, http_options={"timeout": 4000})
+                    resp = client.models.generate_content(
+                        model=m,
+                        contents=prompt,
+                        config={"max_output_tokens": 120, "temperature": 0.6}
+                    )
+                    ans = resp.text if hasattr(resp, "text") else str(resp)
+                    ans = enforce_akira_identity_global(ans)
+                    if ans and len(ans) > 2:
+                        return {"response": ans.strip(), "model": m}
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return None
+
 def _chat_try_gemini(keys, model_route, msg, recall_block="", conversation_context=""):
     from google import genai
     for m in [model_route, PRIMARY_CHAT_MODEL, GEMINI_CHAT_FALLBACK_VARIANT]:
@@ -8362,11 +8388,21 @@ async def chat(request: Request):
                 ),
             }
 
-        memories = (
-            await asyncio.to_thread(_recall_memories, service, msg)
-            if session and session.get("is_owner")
-            else []
+        is_fast_voice = bool(
+            data.get("fast_voice")
+            or data.get("voice_mode")
+            or msg.startswith("[MODO VOZ AKIRA LIVE")
         )
+        clean_msg = msg.split("]: ", 1)[-1].strip() if (is_fast_voice and "]: " in msg) else msg
+
+        if is_fast_voice:
+            memories = []
+        else:
+            memories = (
+                await asyncio.to_thread(_recall_memories, service, msg)
+                if session and session.get("is_owner")
+                else []
+            )
         recall_block = _format_recall_block(memories)
         conversation_context = await asyncio.to_thread(_format_conversation_context, service, conversation_id, msg, session["email"] if session else None)
 
@@ -8388,7 +8424,7 @@ async def chat(request: Request):
             conversation_context = (conversation_context + hive_context)
 
         github_context = ""
-        github_read = _detect_github_read_request(msg)
+        github_read = None if is_fast_voice else _detect_github_read_request(msg)
         if github_read and persist:
             try:
                 github_outputs, github_error = _invoke_tool(
@@ -8444,14 +8480,21 @@ async def chat(request: Request):
                 _run_absorption_shadow(msg, memories, conversation_context)
             )
         elif persist and ABSORPTION_MODE == "candidate":
-            await _run_absorption_candidate(
-                msg,
-                service,
-                session["email"],
-                memories,
-                conversation_context,
-                conversation_id,
-            )
+            if is_fast_voice:
+                asyncio.create_task(
+                    _run_absorption_candidate(
+                        clean_msg, service, session["email"], memories, conversation_context, conversation_id
+                    )
+                )
+            else:
+                await _run_absorption_candidate(
+                    msg,
+                    service,
+                    session["email"],
+                    memories,
+                    conversation_context,
+                    conversation_id,
+                )
         model_route, _ = select_model_route(msg, bool(data.get("image_base64","")))
         model_route, _ = validate_model_before_call(model_route, "chat")
         user_key = data.get("user_api_key","").strip()
@@ -8465,6 +8508,22 @@ async def chat(request: Request):
         final_response = None
         model_used = "fallback"
         error_meta = None
+
+        if is_fast_voice:
+            # VOICE FAST PATH: Ultra-low latency (< 500ms). Try Groq LPU first, then fast Gemini Flash.
+            voice_query = clean_msg
+            groq_keys = _pick_groq_keys() or ([user_key] if is_groq_byok else None)
+            if groq_keys:
+                g = await asyncio.to_thread(get_groq_fallback, voice_query, conversation_context, "", groq_keys)
+                if g:
+                    final_response = enforce_akira_identity_global(g)
+                    model_used = "groq-fast-voice"
+
+            if not final_response and gemini_keys:
+                g_res = await asyncio.to_thread(_chat_try_gemini_fast_voice, gemini_keys, voice_query, conversation_context)
+                if g_res:
+                    final_response = g_res.get("response")
+                    model_used = g_res.get("model") or "gemini-fast-voice"
 
         if not gemini_keys:
             byok_keys = [user_key] if is_groq_byok else None
@@ -8531,7 +8590,25 @@ async def chat(request: Request):
 
         duration_ms = int((time.time() - t0) * 1000)
 
-        if persist and final_response:
+        if persist and final_response and is_fast_voice:
+            # Async background persistence: return HTTP to mobile phone in 0ms delay
+            try:
+                asyncio.create_task(
+                    asyncio.to_thread(
+                        service.add_message,
+                        conversation_id, "assistant", final_response,
+                        model=model_used,
+                        memories_used=[],
+                        duration_ms=duration_ms,
+                        error=error_meta,
+                        actor=session["email"],
+                        owner=session["email"],
+                        idempotency_key=assistant_message_key,
+                    )
+                )
+            except Exception as bg_err:
+                print(f"[fast_voice] async persistence task error: {type(bg_err).__name__}")
+        elif persist and final_response:
             try:
                 stored_assistant = service.add_message(
                     conversation_id, "assistant", final_response,

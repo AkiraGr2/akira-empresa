@@ -11,6 +11,8 @@ MODEL_ROUTES = (
     {"provider": "gemini", "model": "gemini-3.8-flash", "role": "primary_chat"},
     {"provider": "gemini", "model": "gemini-3.1-pro-preview", "role": "reasoning"},
     {"provider": "gemini", "model": "gemini-flash-latest", "role": "chat_fallback_variant"},
+    {"provider": "groq", "model": "llama-3.1-8b-instant", "role": "voice_fast"},
+    {"provider": "groq", "model": "llama-3.3-70b-versatile", "role": "fallback"},
     {"provider": "groq", "model": "openai/gpt-oss-120b", "role": "fallback"},
     {"provider": "groq", "model": "openai/gpt-oss-20b", "role": "fallback"},
     {"provider": "groq", "model": "qwen/qwen3.8-27b", "role": "fallback"},
@@ -29,7 +31,13 @@ def model_registry_snapshot():
 PRIMARY_CHAT_MODEL = "gemini-3.8-flash"
 GEMINI_REASONING_MODEL = "gemini-3.1-pro-preview"
 GEMINI_CHAT_FALLBACK_VARIANT = "gemini-flash-latest"
-GROQ_FALLBACK_MODELS = ("openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b")
+GROQ_FALLBACK_MODELS = (
+    "llama-3.1-8b-instant",
+    "llama-3.3-70b-versatile",
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "qwen/qwen3.8-27b",
+)
 OPENROUTER_MODEL_ROUTE = "openrouter/free"
 MISTRAL_MODEL_ROUTE = "mistral-small-latest"
 MEMORY_EMBEDDING_MODEL = "gemini-embedding-2"
