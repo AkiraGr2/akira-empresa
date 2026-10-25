@@ -521,7 +521,7 @@ HIVE_KNOWLEDGE_SHARING_CAPABILITY = {
     "kind": "composite",
     "implementation_state": "partial",
     "verification_state": "unverified",
-    "availability_state": "available",
+    "availability_state": "degraded",
     "maturity": "experimental",
     "cost_compatibility": "free",
     "dependencies": [
