@@ -8977,6 +8977,39 @@ async def upwork_generate_proposal(request: Request):
         "proposal": answer
     }
 
+@app.api_route("/api/tts", methods=["GET", "POST"])
+async def tts_endpoint(request: Request, text: str = None):
+    """Motor de Voz Neural Colombiana en Vivo (Salomé Neural). 100% gratuito ($0 COP/USD)."""
+    if request.method == "POST":
+        try:
+            body = await request.json()
+            text = body.get("text", text)
+        except Exception:
+            pass
+    if not text or not text.strip():
+        return JSONResponse({"ok": False, "reason": "text_required"}, status_code=400)
+    
+    clean_text = str(text)[:900].strip()
+    
+    async def stream_audio():
+        try:
+            import edge_tts
+            communicate = edge_tts.Communicate(clean_text, "es-CO-SalomeNeural", rate="+3%", pitch="+1Hz")
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    yield chunk["data"]
+        except Exception as exc:
+            print(f"[tts] error streaming audio: {exc}")
+    
+    return StreamingResponse(
+        stream_audio(),
+        media_type="audio/mpeg",
+        headers={
+            "Cache-Control": "public, max-age=3600",
+            "Accept-Ranges": "bytes",
+        }
+    )
+
 @app.api_route("/", methods=["GET", "HEAD"])
 @app.get("/")
 @app.head("/")
