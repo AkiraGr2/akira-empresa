@@ -991,6 +991,20 @@ def _build_mission_plan_prompt(objective, service):
     for a in agents:
         allowed = ", ".join(a.get("allowed_tools") or [])
         agents_lines.append(f'- {a["name"]} (tools permitidas: {allowed})')
+
+    # Incorporar Comandantes de Division y Especialistas de la Colmena sugeridos
+    try:
+        from hive_agent_router import COMMANDERS, auto_select_agents
+        comm_lines = [f'- {c["name"]} ({c["title"]})' for c in COMMANDERS.values()]
+        selected = auto_select_agents(objective, limit=3)
+        spec_lines = [f'- {s["name"]} ({s["division_label"]} - bajo Comandante {s.get("commander", {}).get("name", "Akira")})' for s in selected]
+        if comm_lines:
+            agents_lines.extend(comm_lines[:4])
+        if spec_lines:
+            agents_lines.extend(spec_lines)
+    except Exception:
+        pass
+
     agents_list = "\n".join(agents_lines) or "(ningun agente disponible)"
 
     obj_safe = _escape_objective(objective)
@@ -1054,9 +1068,40 @@ def _validate_mission_plan(plan, service):
     for a in service.list_agents(limit=200):
         if a.get("status") == "disabled": continue
         agents_by_name[a["name"]] = a
+        agents_by_name[a["name"].lower()] = a
     tools_by_name = {}
     for t in service.list_tools(limit=200):
         tools_by_name[t["name"]] = t
+
+    all_tool_names = list(tools_by_name.keys())
+
+    # Incorporar Comandantes de Division y Especialistas de la Colmena como agentes validos
+    try:
+        from hive_agent_router import COMMANDERS, get_hive_catalog
+        for c in COMMANDERS.values():
+            c_entry = {
+                "name": c["name"],
+                "role": c["role"],
+                "allowed_tools": all_tool_names,
+                "status": "active"
+            }
+            agents_by_name[c["name"]] = c_entry
+            agents_by_name[c["name"].lower()] = c_entry
+
+        catalog = get_hive_catalog()
+        for ag in catalog.get("agents", []):
+            ag_entry = {
+                "name": ag["name"],
+                "role": ag.get("division", "specialist"),
+                "allowed_tools": all_tool_names,
+                "status": "active"
+            }
+            agents_by_name[ag["name"]] = ag_entry
+            agents_by_name[ag["name"].lower()] = ag_entry
+            if "id" in ag:
+                agents_by_name[ag["id"]] = ag_entry
+    except Exception:
+        pass
 
     orders_seen = set()
     for i, step in enumerate(steps):
@@ -8721,10 +8766,10 @@ async def generate_image(request: Request):
         return JSONResponse({"ok": False, "reason": type(e).__name__}, status_code=502)
 
 # ============================================================
-# HIVE AGENTS CATALOG & AUTO-SELECTION DISPATCHER (267 Agents)
+# HIVE AGENTS CATALOG, COMMANDERS & UPWORK DISPATCHER
 # ============================================================
-@app.get("/api/v8/hive/agents")
-def v8_hive_agents(division: str = None, q: str = None, limit: int = 200):
+@app.get("/api/hive/agents")
+def hive_agents_catalog(division: str = None, q: str = None, limit: int = 200):
     from hive_agent_router import get_hive_catalog, normalize_text
     catalog = get_hive_catalog()
     agents = catalog.get("agents", [])
@@ -8744,8 +8789,16 @@ def v8_hive_agents(division: str = None, q: str = None, limit: int = 200):
         "agents": agents[:limit]
     }
 
-@app.post("/api/v8/hive/auto-select")
-async def v8_hive_auto_select(request: Request):
+@app.get("/api/hive/commanders")
+def hive_commanders_catalog():
+    from hive_agent_router import get_commanders_catalog
+    return {
+        "ok": True,
+        "commanders": get_commanders_catalog()
+    }
+
+@app.post("/api/hive/auto-select")
+async def hive_auto_select_dispatcher(request: Request):
     try:
         body = await request.json()
     except Exception:
@@ -8761,6 +8814,108 @@ async def v8_hive_auto_select(request: Request):
         "task": task,
         "selected_count": len(selected),
         "selected_agents": selected
+    }
+
+@app.post("/api/upwork/generate")
+async def upwork_generate_proposal(request: Request):
+    """
+    Generador de Propuestas Upwork de Alta Conversion.
+    Orquesta a Nexo (Comandante de Bidding) y Especialistas Tacticos de la Colmena.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    
+    job_description = str(body.get("job_description") or body.get("description") or "").strip()
+    if not job_description:
+        return JSONResponse({"ok": False, "reason": "job_description_required"}, status_code=400)
+    
+    tone = str(body.get("tone") or "persuasive").lower()
+    budget = str(body.get("budget") or "").strip()
+    
+    from hive_agent_router import auto_select_agents, COMMANDERS, get_commander_for_division
+    
+    # 1. Identificar especialistas de la colmena mas afines
+    specialists = auto_select_agents(job_description, limit=3)
+    
+    # 2. Identificar el Comandante lider segun la division principal
+    if specialists:
+        lead_division = specialists[0].get("division", "sales")
+        commander = get_commander_for_division(lead_division)
+    else:
+        commander = COMMANDERS["nexo"]
+    
+    bidding_commander = COMMANDERS["nexo"]
+    
+    # 3. Construir Prompt de Alto Impacto
+    specs_desc = ", ".join([f"{s['name']} ({s['division_label']})" for s in specialists]) or "Especialistas de Desarrollo y Estrategia"
+    
+    tone_directives = {
+        "persuasive": "Enfoque altamente persuasivo, empatico, orientado a resultados tangibles y ROI del cliente.",
+        "technical": "Enfoque tecnico de arquitectura profunda, mejores practicas, stack exacto y escalabilidad.",
+        "concise": "Enfoque ultra directo, conciso, de alto impacto al grano, sin rodeos ni saludos innecesarios."
+    }
+    tone_instruction = tone_directives.get(tone, tone_directives["persuasive"])
+    
+    prompt = (
+        f"Eres el equipo de licitacion de elite de Akira para Upwork.\n"
+        f"Comandante Lider: {commander['name']} ({commander['title']})\n"
+        f"Comandante de Bidding: {bidding_commander['name']} ({bidding_commander['title']})\n"
+        f"Especialistas Convocados: {specs_desc}\n\n"
+        f"DESCRIPCION DEL PROYECTO DEL CLIENTE:\n\"\"\"{job_description[:3000]}\"\"\"\n\n"
+        f"DIRECTIVA DE TONO: {tone_instruction}\n"
+        f"{f'PRESUPUESTO ESTIMADO: {budget}' if budget else ''}\n\n"
+        f"ESTRUCTURA OBLIGATORIA DE LA PROPUESTA (en espanol o en el idioma del cliente):\n"
+        f"1. GANCHO DE ENTRADA (Primera linea demoledora que demuestre comprension inmediata del dolor central, CERO saludos genericos).\n"
+        f"2. DIAGNOSTICO Y SOLUCION (Como lo resolveremos con el equipo de especialistas).\n"
+        f"3. PLAN DE HITOS (Milestones claros con entregables y tiempos estimados).\n"
+        f"4. PREGUNTAS CLAVE DETONANTES (1 o 2 preguntas tecnicas/estrategicas que motiven al cliente a responder).\n"
+        f"5. LLAMADO A LA ACCION (CTA claro para llamada de 10 min o chat).\n"
+        f"Firma: Jhon Grimm & Akira Enterprise Collective."
+    )
+    
+    answer = None
+    try:
+        answer = _groq_general_chat(prompt, max_tokens=1200)
+    except Exception:
+        pass
+        
+    if not answer:
+        try:
+            answer = _gemini_general_chat(prompt, max_tokens=1200)
+        except Exception:
+            pass
+            
+    if not answer:
+        answer = (
+            f"🎯 **Propuesta Estrategica para tu Proyecto**\n\n"
+            f"He analizado los requerimientos y el objetivo central es claro: ejecucion rapida, calidad y arquitectura limpia sin friccion.\n\n"
+            f"⚡ **Nuestra Solucion con la Colmena ({specs_desc}):**\n"
+            f"Abordaremos el proyecto resolviendo directamente los puntos criticos mencionados en la descripcion.\n\n"
+            f"📋 **Plan de Hitos Propuesto:**\n"
+            f"- Hito 1: Analisis y arquitectura base inicial (1-2 dias)\n"
+            f"- Hito 2: Implementacion completa y validacion funcional (3-5 dias)\n"
+            f"- Hito 3: QA, pruebas exhaustivas y entrega lista para produccion\n\n"
+            f"¿Tienes algun requerimiento prioritario con el que desees que iniciemos hoy mismo? Quedo disponible en el chat."
+        )
+        
+    return {
+        "ok": True,
+        "commander": {
+            "name": commander["name"],
+            "title": commander["title"],
+            "avatar": commander["avatar"],
+            "color": commander["color"]
+        },
+        "bidding_commander": {
+            "name": bidding_commander["name"],
+            "title": bidding_commander["title"],
+            "avatar": bidding_commander["avatar"]
+        },
+        "specialists": specialists,
+        "tone": tone,
+        "proposal": answer
     }
 
 @app.api_route("/", methods=["GET", "HEAD"])
