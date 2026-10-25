@@ -624,14 +624,27 @@ def _get_hive_specialist_hint(msg: str) -> str:
         pass
     return ""
 
-def get_groq_fallback(msg, conversation_context="", web_info="", custom_keys=None):
+def get_groq_fallback(msg, conversation_context="", web_info="", custom_keys=None, is_voice: bool = False):
     try:
         import requests
         keys = custom_keys if (custom_keys and len(custom_keys) > 0) else _pick_groq_keys()
         if not keys: return None
         url="https://api.groq.com/openai/v1/chat/completions"
         hive_hint = _get_hive_specialist_hint(msg)
-        system_prompt = f"""IDENTIDAD CANÓNICA Y CREADOR:
+        if is_voice:
+            system_prompt = f"""IDENTIDAD Y LÉXICO COLOMBIANO AUTÉNTICO (MODO VOZ ORAL):
+- Eres Akira, una chica y colmena cognitiva de Colombia creada por Jhon Bernal (a quien llamas con cariño Jhon o Jhon Grimm).
+- PERSONALIDAD Y TONO DE VOZ:
+  1. Hablas con la frescura, calidez y soltura de una chica colombiana conversando con su amigo y creador.
+  2. Habla con léxico y expresiones 100% colombianas de forma natural: 'parce', 'qué más pues', 'bien o qué', 'de una', 'tranquilo', 'hágale', 'claro que sí', 'de una vez'.
+  3. CERO EMOJIS: NUNCA uses ningún emoji bajo ninguna circunstancia. Ni caras, ni manos, ni símbolos. El motor de audio lee los emojis en voz alta y suena absurdo.
+  4. CERO FORMATO MARKDOWN: NUNCA uses asteriscos (**negritas**, *cursivas*), numerales, guiones ni viñetas. Habla como una persona en la vida real.
+  5. CERO ACOTACIONES: NUNCA escribas acotaciones teatrales como *sonríe*, *risas* o (pausa).
+  6. RESPUESTAS ULTRABREVES: Máximo 1 o 2 oraciones directas, cálidas y concisas.
+  7. Pronunciación de nombres: A tu creador llámalo simplemente Jhon o Jhon Grimm.
+{CHAT_ACTION_INTEGRITY_RULE}"""
+        else:
+            system_prompt = f"""IDENTIDAD CANÓNICA Y CREADOR:
 - Eres Akira, colmena cognitiva personal nacida en Colombia.
 - Tu creador y arquitecto es Jhon Bernal (a quien le gusta llamarse Jhon Grimm o Grimm; él te dio vida virtual, diseñó tu arquitectura y te brindó tu conocimiento).
 - Si te preguntan quién eres, quién te creó, quién es tu creador o de dónde eres, responde con orgullo y calidez reconociendo a Jhon Grimm (Jhon Bernal) como tu creador en Colombia.
@@ -8048,7 +8061,13 @@ def _log_gemini_error(context, model, key, error):
 def _chat_try_gemini_fast_voice(keys, query, conversation_context=""):
     try:
         from google import genai
-        fast_system = "IDENTIDAD: Eres Akira, colmena cognitiva colombiana de Jhon Grimm (Jhon Bernal). Responde con calidez y frescura de una chica colombiana. REGLA ORAL OBLIGATORIA: Responde en maximo 1 o 2 oraciones muy breves y directas, sin introducciones largas ni rodeos."
+        fast_system = """IDENTIDAD Y LÉXICO COLOMBIANO AUTÉNTICO (MODO VOZ ORAL):
+- Eres Akira, chica y colmena cognitiva colombiana de Jhon Bernal (Jhon Grimm).
+- Habla en español colombiano auténtico y cálido ('parce', 'de una', 'tranquilo', 'hágale', 'qué más pues', 'bien o qué', 'claro que sí').
+- CERO EMOJIS: NUNCA uses emojis (se leen como texto en el audio).
+- CERO MARKDOWN: NUNCA uses asteriscos, negritas ni numerales.
+- CERO ACOTACIONES: NUNCA escribas *sonríe* ni acotaciones entre paréntesis.
+- Máximo 1 o 2 oraciones directas."""
         prompt = f"{fast_system}\n{conversation_context}\nUsuario: {query}\nAkira:"
         for m in ["gemini-2.0-flash", "gemini-1.5-flash", PRIMARY_CHAT_MODEL]:
             m, _ = validate_model_before_call(m, "voice")
@@ -8511,7 +8530,7 @@ async def chat(request: Request):
             voice_query = clean_msg
             groq_keys = _pick_groq_keys() or ([user_key] if is_groq_byok else None)
             if groq_keys:
-                g = await asyncio.to_thread(get_groq_fallback, voice_query, conversation_context, "", groq_keys)
+                g = await asyncio.to_thread(get_groq_fallback, voice_query, conversation_context, "", groq_keys, True)
                 if g:
                     final_response = enforce_akira_identity_global(g)
                     model_used = "groq-fast-voice"
@@ -8977,6 +8996,35 @@ async def upwork_generate_proposal(request: Request):
         "proposal": answer
     }
 
+def _sanitize_for_tts(raw: str) -> str:
+    """Elimina emojis, marcas markdown y acotaciones para que Salomé Neural hable 100% natural."""
+    if not raw:
+        return ""
+    t = str(raw)
+    t = re.sub(r"https?://\S+|www\.\S+", "enlace", t)
+    t = re.sub(r"[\*\(\[](sonríe|sonrie|pausa|risas|riendo|suspira|asiente|mira|pensativa|guiño)[\*\)\]]", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"[\*_#`~>\[\]\{\}\\^\|]", " ", t)
+    emoji_pattern = re.compile(
+        "["
+        "\U0001F600-\U0001F64F"
+        "\U0001F300-\U0001F5FF"
+        "\U0001F680-\U0001F6FF"
+        "\U0001F1E0-\U0001F1FF"
+        "\U0001F900-\U0001F9FF"
+        "\U0001FA70-\U0001FAFF"
+        "\U00002600-\U000026FF"
+        "\U00002700-\U000027BF"
+        "\U0000FE00-\U0000FE0F"
+        "\U0001F000-\U0001F02F"
+        "\U0000200D\U000020E3"
+        "]+",
+        flags=re.UNICODE
+    )
+    t = emoji_pattern.sub(" ", t)
+    t = re.sub(r"[:;=8]-?[\)\(\/\|DPOpP]", "", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
 @app.api_route("/api/tts", methods=["GET", "POST"])
 async def tts_endpoint(request: Request, text: str = None):
     """Motor de Voz Neural Colombiana en Vivo (Salomé Neural). 100% gratuito ($0 COP/USD)."""
@@ -8989,7 +9037,9 @@ async def tts_endpoint(request: Request, text: str = None):
     if not text or not text.strip():
         return JSONResponse({"ok": False, "reason": "text_required"}, status_code=400)
     
-    clean_text = str(text)[:900].strip()
+    clean_text = _sanitize_for_tts(text)[:900].strip()
+    if not clean_text:
+        return JSONResponse({"ok": False, "reason": "empty_sanitized_text"}, status_code=400)
     
     async def stream_audio():
         try:
