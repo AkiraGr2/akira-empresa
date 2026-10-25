@@ -8480,21 +8480,18 @@ async def chat(request: Request):
                 _run_absorption_shadow(msg, memories, conversation_context)
             )
         elif persist and ABSORPTION_MODE == "candidate":
-            if is_fast_voice:
-                asyncio.create_task(
-                    _run_absorption_candidate(
-                        clean_msg, service, session["email"], memories, conversation_context, conversation_id
-                    )
-                )
-            else:
-                await _run_absorption_candidate(
-                    msg,
+            # High-speed conversational response: run candidate absorption in background task
+            # so the user never has to wait 3 seconds for background learning evaluation.
+            asyncio.create_task(
+                _run_absorption_candidate(
+                    clean_msg if is_fast_voice else msg,
                     service,
                     session["email"],
                     memories,
                     conversation_context,
                     conversation_id,
                 )
+            )
         model_route, _ = select_model_route(msg, bool(data.get("image_base64","")))
         model_route, _ = validate_model_before_call(model_route, "chat")
         user_key = data.get("user_api_key","").strip()
@@ -8525,68 +8522,53 @@ async def chat(request: Request):
                     final_response = g_res.get("response")
                     model_used = g_res.get("model") or "gemini-fast-voice"
 
-        if not gemini_keys:
-            byok_keys = [user_key] if is_groq_byok else None
-            g = await asyncio.to_thread(get_groq_fallback, msg, conversation_context, "", byok_keys)
+            if not final_response:
+                m_res = await asyncio.to_thread(get_mistral_fallback, voice_query, conversation_context, "")
+                if m_res:
+                    final_response = m_res.get("response")
+                    model_used = m_res.get("model") or "mistral-fast-voice"
+
+        has_image = bool(data.get("image_base64", ""))
+        all_groq_keys = _pick_groq_keys() or ([user_key] if is_groq_byok else None)
+
+        # 1. PRIORITY 1: Ultra-fast Groq LPU engine (~300ms) for lightning-fast chat (when no image)
+        if not final_response and all_groq_keys and not has_image:
+            g = await asyncio.to_thread(get_groq_fallback, msg, conversation_context, "", all_groq_keys)
             if g:
                 final_response = enforce_akira_identity_global(g)
-                model_used = "groq-byok" if is_groq_byok else "groq"
-            else:
-                o = await asyncio.to_thread(
-                    get_openrouter_fallback, msg, conversation_context, recall_block
-                )
-                if o:
-                    final_response = o.get("response")
-                    model_used = o.get("model") or OPENROUTER_MODEL_ROUTE
-                else:
-                    m = await asyncio.to_thread(
-                        get_mistral_fallback, msg, conversation_context, recall_block
-                    )
-                    if m:
-                        final_response = m.get("response")
-                        model_used = m.get("model") or MISTRAL_MODEL_ROUTE
-                    else:
-                        final_response = "No hay ningún proveedor disponible en este momento."
-                        model_used = "fallback"
-                        error_meta = {
-                            "type": "no_response",
-                            "message": "Groq, OpenRouter y Mistral sin respuesta"
-                        }
-        else:
+                model_used = "groq-lpu-chat"
+
+        # 2. PRIORITY 2: Gemini (for Vision or when Groq is not configured / rate-limited)
+        if not final_response and gemini_keys:
             result = await asyncio.to_thread(
                 _chat_try_gemini, gemini_keys, model_route, msg, recall_block, conversation_context
             )
             if result:
                 final_response = result.get("response")
                 model_used = result.get("model") or "gemini"
+
+        # 3. PRIORITY 3: Fallbacks to OpenRouter and Mistral
+        if not final_response:
+            o = await asyncio.to_thread(
+                get_openrouter_fallback, msg, conversation_context, recall_block
+            )
+            if o:
+                final_response = o.get("response")
+                model_used = o.get("model") or OPENROUTER_MODEL_ROUTE
             else:
-                g = await asyncio.to_thread(
-                    get_groq_fallback, msg, conversation_context
+                m = await asyncio.to_thread(
+                    get_mistral_fallback, msg, conversation_context, recall_block
                 )
-                if g:
-                    final_response = enforce_akira_identity_global(g)
-                    model_used = "groq"
+                if m:
+                    final_response = m.get("response")
+                    model_used = m.get("model") or MISTRAL_MODEL_ROUTE
                 else:
-                    o = await asyncio.to_thread(
-                        get_openrouter_fallback, msg, conversation_context, recall_block
-                    )
-                    if o:
-                        final_response = o.get("response")
-                        model_used = o.get("model") or OPENROUTER_MODEL_ROUTE
-                    else:
-                        m = await asyncio.to_thread(
-                            get_mistral_fallback, msg, conversation_context, recall_block
-                        )
-                        if m:
-                            final_response = m.get("response")
-                            model_used = m.get("model") or MISTRAL_MODEL_ROUTE
-                        else:
-                            final_response = "No fue posible obtener respuesta de ningún proveedor configurado."
-                            model_used = "fallback"
-                            error_meta = {
-                                "type": "no_response",
-                                "message": "Gemini, Groq, OpenRouter y Mistral sin respuesta"
-                            }
+                    final_response = "No fue posible obtener respuesta de ningún proveedor configurado."
+                    model_used = "fallback"
+                    error_meta = {
+                        "type": "no_response",
+                        "message": "Groq, Gemini, OpenRouter y Mistral sin respuesta"
+                    }
 
         duration_ms = int((time.time() - t0) * 1000)
 
