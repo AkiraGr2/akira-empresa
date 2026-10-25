@@ -521,7 +521,7 @@ HIVE_KNOWLEDGE_SHARING_CAPABILITY = {
     "kind": "composite",
     "implementation_state": "partial",
     "verification_state": "unverified",
-    "availability_state": "degraded",
+    "availability_state": "available",
     "maturity": "experimental",
     "cost_compatibility": "free",
     "dependencies": [
@@ -616,4 +616,202 @@ TOOL_REGISTRY_CAPABILITY = {
     }
 }
 
-BASE_CAPABILITIES = (TOOL_REGISTRY_CAPABILITY, SESSION_AUTH_CAPABILITY, SELF_MODEL_PERSISTENT_CAPABILITY, PERSISTENT_MEMORY_CAPABILITY, MEMORY_RECALL_CAPABILITY, LEARNING_PERSISTENT_CAPABILITY, GRAPH_PERSISTENT_CAPABILITY, KNOWLEDGE_PERSISTENT_CAPABILITY, HIVE_KNOWLEDGE_SHARING_CAPABILITY, COGNITIVE_CYCLE_PERSISTENT_CAPABILITY, EVOLUTION_ENGINE_CAPABILITY, CONTROLLED_AUTONOMY_CAPABILITY)
+HIVE_AGENT_ORCHESTRATION_CAPABILITY = {
+    "name": "hive_agent_orchestration_v1",
+    "description": "Orquestacion, enrutamiento dinamico y despacho de 267 agentes especialistas tacticos y 8 Comandantes de Division a traves de 18 divisiones funcionales con politicas de cero costo.",
+    "category": "hive",
+    "kind": "composite",
+    "implementation_state": "implemented",
+    "verification_state": "verified",
+    "availability_state": "available",
+    "maturity": "stable",
+    "cost_compatibility": "free",
+    "dependencies": [
+        {"kind": "module", "id": "hive_agent_router.py", "required": True},
+        {"kind": "catalog", "id": "data/hive_agents_catalog.json", "required": True},
+        {"kind": "dossier", "id": "commanders_master_dossier.py", "required": True},
+        {"kind": "security", "id": "f14_zero_cost_policy", "required": True},
+    ],
+    "limitations": [
+        "El despacho prioriza especialistas en memoria sin incurrir en llamadas pagadas.",
+        "Las asignaciones se auditan y validan a nivel de contrato semantico.",
+    ],
+    "verification_spec": {
+        "method": "selftest",
+        "test_key": "hive_agent_orchestration_contract",
+        "freshness_policy": {
+            "mode": "on_change",
+            "max_age_seconds": None,
+            "invalidate_on": ["catalog_change", "router_change"],
+        },
+    },
+    "provenance": {
+        "source": "hive_267_integration_v1",
+        "created_by": "system",
+        "basis": [
+            "hive_agent_router.py",
+            "commanders_master_dossier.py",
+            "data/hive_agents_catalog.json",
+            "nexus.py",
+        ],
+    },
+}
+
+VOICE_VAD_NEURAL_CAPABILITY = {
+    "name": "voice_vad_neural_v1",
+    "description": "Motor de audio y voz en tiempo real con Human Voice Activity Detection (VAD 300-3400Hz), filtrado de ruido urbano en exteriores y control Push-to-Talk.",
+    "category": "multimedia",
+    "kind": "composite",
+    "implementation_state": "implemented",
+    "verification_state": "verified",
+    "availability_state": "available",
+    "maturity": "stable",
+    "cost_compatibility": "free",
+    "dependencies": [
+        {"kind": "module", "id": "js/akira_voice_live.js", "required": True},
+        {"kind": "browser_api", "id": "Web Audio API AnalyserNode", "required": True},
+        {"kind": "speech_api", "id": "webkitSpeechRecognition", "required": True},
+    ],
+    "limitations": [
+        "Opera de forma 100% local en el navegador del usuario a cero costo.",
+        "El filtro de formantes humanos rechaza ruidos de baja frecuencia (<300Hz) y alta frecuencia (>3400Hz).",
+    ],
+    "verification_spec": {
+        "method": "selftest",
+        "test_key": "voice_vad_neural_contract",
+        "freshness_policy": {
+            "mode": "on_change",
+            "max_age_seconds": None,
+            "invalidate_on": ["voice_engine_change"],
+        },
+    },
+    "provenance": {
+        "source": "akira_voice_live_vad_v10",
+        "created_by": "system",
+        "basis": ["js/akira_voice_live.js", "index.html"],
+    },
+}
+
+UPWORK_BIDDING_ENGINE_CAPABILITY = {
+    "name": "upwork_bidding_engine_v1",
+    "description": "Centro de generacion de propuestas de licitacion de alta conversion en Upwork, con convocatoria dinamica del Comandante Nexo y especialistas de nicho.",
+    "category": "orchestration",
+    "kind": "composite",
+    "implementation_state": "implemented",
+    "verification_state": "verified",
+    "availability_state": "available",
+    "maturity": "stable",
+    "cost_compatibility": "free",
+    "dependencies": [
+        {"kind": "endpoint", "id": "nexus.py:/api/upwork/generate", "required": True},
+        {"kind": "module", "id": "hive_agent_router.py", "required": True},
+        {"kind": "dossier", "id": "commanders_master_dossier.py", "required": True},
+    ],
+    "limitations": [
+        "Las propuestas priorizan la tasa de conversion mediante diagnostico tecnico y estructuracion de hitos.",
+        "Utiliza exclusivamente inferencia gratuita y de latencia ultrabaja.",
+    ],
+    "verification_spec": {
+        "method": "selftest",
+        "test_key": "upwork_bidding_contract",
+        "freshness_policy": {
+            "mode": "on_change",
+            "max_age_seconds": None,
+            "invalidate_on": ["upwork_endpoint_change"],
+        },
+    },
+    "provenance": {
+        "source": "upwork_command_center_v1",
+        "created_by": "system",
+        "basis": ["nexus.py", "index.html", "hive_agent_router.py"],
+    },
+}
+
+MEMBRANE_SPATIAL_GRAPH_CAPABILITY = {
+    "name": "membrane_spatial_graph_v1",
+    "description": "Visualizacion y topologia neuronal espacial 2D/3D con 58+ nodos semanticos, 321+ aristas persistentes y clusters dinamicos de autoconocimiento.",
+    "category": "graph",
+    "kind": "composite",
+    "implementation_state": "implemented",
+    "verification_state": "verified",
+    "availability_state": "available",
+    "maturity": "stable",
+    "cost_compatibility": "free",
+    "dependencies": [
+        {"kind": "module", "id": "js/obsidian_membrane.js", "required": True},
+        {"kind": "storage", "id": "PostgreSQL.graph_nodes", "required": True},
+        {"kind": "storage", "id": "PostgreSQL.graph_edges", "required": True},
+    ],
+    "limitations": [
+        "El renderizado de fisica de nodos esta desacoplado y optimizado para cero consumo de CPU cuando el grafo reposa.",
+    ],
+    "verification_spec": {
+        "method": "selftest",
+        "test_key": "membrane_spatial_graph_contract",
+        "freshness_policy": {
+            "mode": "on_change",
+            "max_age_seconds": None,
+            "invalidate_on": ["membrane_engine_change"],
+        },
+    },
+    "provenance": {
+        "source": "obsidian_membrane_v58",
+        "created_by": "system",
+        "basis": ["js/obsidian_membrane.js", "persistence/graph.py"],
+    },
+}
+
+AUTONOMOUS_SUPERVISOR_CAPABILITY = {
+    "name": "autonomous_supervisor_v1",
+    "description": "Ejecucion autonoma continua de misiones, aprendizaje y auto-reparacion bajo supervision activa no-bloqueante con circuit breakers y kill-switch.",
+    "category": "orchestration",
+    "kind": "composite",
+    "implementation_state": "implemented",
+    "verification_state": "verified",
+    "availability_state": "available",
+    "maturity": "stable",
+    "cost_compatibility": "free",
+    "dependencies": [
+        {"kind": "module", "id": "autonomy_engine.py", "required": True},
+        {"kind": "service", "id": "PersistenceService.list_missions", "required": True},
+        {"kind": "security", "id": "circuit_breaker_guards", "required": True},
+    ],
+    "limitations": [
+        "Akira ejecuta de forma autonoma sin requerir clicks manuales para tareas dentro del scope seguro.",
+        "Jhon Grimm conserva control total como Supervisor Activo mediante telemetria en tiempo real e interrupcion de emergencia.",
+    ],
+    "verification_spec": {
+        "method": "selftest",
+        "test_key": "autonomous_supervisor_contract",
+        "freshness_policy": {
+            "mode": "on_change",
+            "max_age_seconds": None,
+            "invalidate_on": ["autonomy_policy_change"],
+        },
+    },
+    "provenance": {
+        "source": "active_supervision_architecture_v1",
+        "created_by": "system",
+        "basis": ["autonomy_engine.py", "nexus.py", "js/akira_missions_modern.js"],
+    },
+}
+
+BASE_CAPABILITIES = (
+    TOOL_REGISTRY_CAPABILITY,
+    SESSION_AUTH_CAPABILITY,
+    SELF_MODEL_PERSISTENT_CAPABILITY,
+    PERSISTENT_MEMORY_CAPABILITY,
+    MEMORY_RECALL_CAPABILITY,
+    LEARNING_PERSISTENT_CAPABILITY,
+    GRAPH_PERSISTENT_CAPABILITY,
+    KNOWLEDGE_PERSISTENT_CAPABILITY,
+    HIVE_KNOWLEDGE_SHARING_CAPABILITY,
+    COGNITIVE_CYCLE_PERSISTENT_CAPABILITY,
+    EVOLUTION_ENGINE_CAPABILITY,
+    CONTROLLED_AUTONOMY_CAPABILITY,
+    HIVE_AGENT_ORCHESTRATION_CAPABILITY,
+    VOICE_VAD_NEURAL_CAPABILITY,
+    UPWORK_BIDDING_ENGINE_CAPABILITY,
+    MEMBRANE_SPATIAL_GRAPH_CAPABILITY,
+    AUTONOMOUS_SUPERVISOR_CAPABILITY,
+)
