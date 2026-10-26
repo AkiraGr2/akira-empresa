@@ -2685,6 +2685,175 @@ async def v8_knowledge_ingest(request: Request):
     }
 
 
+@app.post("/api/v8/knowledge/radar")
+async def v8_knowledge_radar(request: Request):
+    """
+    Radar Autonomo de Tendencias y Feeds de Tecnologia (Opcion A).
+    Consume feeds RSS/Atom publicos gratuitos, extrae articulos y teje la red neuronal.
+    Costo: $0.00 COP / USD (HTTP GET sobre fuentes abiertas).
+    """
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None:
+        return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+
+    PRESET_FEEDS = {
+        "hn": {"name": "Hacker News Tech", "url": "https://hnrss.org/frontpage", "domain": "tecnologia_ia"},
+        "github": {"name": "GitHub Engineering", "url": "https://github.blog/feed/", "domain": "desarrollo_software"},
+        "devto": {"name": "Dev.to Architecture", "url": "https://dev.to/feed", "domain": "desarrollo_software"},
+        "python": {"name": "Python News", "url": "https://blog.python.org/feeds/posts/default?alt=rss", "domain": "desarrollo_software"},
+    }
+
+    feed_key = str(payload.get("feed_key") or "hn").lower().strip()
+    custom_url = str(payload.get("url") or payload.get("feed_url") or "").strip()
+    feed_info = PRESET_FEEDS.get(feed_key, PRESET_FEEDS["hn"])
+    feed_url = custom_url or feed_info["url"]
+    feed_name = feed_info["name"] if not custom_url else "Feed Personalizado"
+    domain = str(payload.get("domain") or feed_info["domain"]).strip().lower()[:64]
+    max_items = max(1, min(int(payload.get("max_items", 4)), 8))
+    auto_weave = bool(payload.get("auto_weave_graph", True))
+
+    import xml.etree.ElementTree as ET
+
+    try:
+        resp = requests.get(
+            feed_url,
+            timeout=10,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AkiraRadar/1.0"}
+        )
+        if resp.status_code != 200:
+            return JSONResponse({"ok": False, "reason": f"feed_http_{resp.status_code}"}, status_code=502)
+        xml_content = resp.text
+    except Exception as ex:
+        return JSONResponse({"ok": False, "reason": f"feed_fetch_failed: {str(ex)[:100]}"}, status_code=502)
+
+    try:
+        root = ET.fromstring(xml_content)
+    except Exception as ex:
+        return JSONResponse({"ok": False, "reason": f"feed_xml_parse_failed: {str(ex)[:100]}"}, status_code=400)
+
+    items_parsed = []
+    rss_items = root.findall(".//item")
+    if rss_items:
+        for it in rss_items[:max_items]:
+            title = (it.findtext("title") or "").strip()
+            link = (it.findtext("link") or "").strip()
+            desc = (it.findtext("description") or "").strip()
+            clean_desc = re.sub(r"<[^>]+>", " ", desc).strip()
+            if title:
+                items_parsed.append({"title": title, "link": link, "desc": clean_desc})
+    else:
+        atom_entries = root.findall(".//{http://www.w3.org/2005/Atom}entry")
+        if not atom_entries:
+            atom_entries = root.findall(".//entry")
+        for entry in atom_entries[:max_items]:
+            title = (entry.findtext("{http://www.w3.org/2005/Atom}title") or entry.findtext("title") or "").strip()
+            link_el = entry.find("{http://www.w3.org/2005/Atom}link")
+            if link_el is None:
+                link_el = entry.find("link")
+            link = link_el.get("href") if link_el is not None else ""
+            summary = (entry.findtext("{http://www.w3.org/2005/Atom}summary") or entry.findtext("summary") or "").strip()
+            clean_summary = re.sub(r"<[^>]+>", " ", summary).strip()
+            if title:
+                items_parsed.append({"title": title, "link": link, "desc": clean_summary})
+
+    if not items_parsed:
+        return JSONResponse({"ok": False, "reason": "no_items_in_feed"}, status_code=400)
+
+    knowledge_created = 0
+    nodes_created = 0
+    edges_created = 0
+    assimilated_titles = []
+
+    radar_node_id = f"radar_{hashlib.md5(feed_name.encode()).hexdigest()[:10]}"
+    if auto_weave:
+        try:
+            service.create_node({
+                "id": radar_node_id,
+                "label": f"\U0001f4e1 {feed_name}",
+                "node_type": "document",
+                "properties": {"feed_url": feed_url, "type": "radar_feed"},
+                "owner_scope": s["owner_scope"]
+            }, actor=s["email"], idempotency_key=f"node_{radar_node_id}")
+            nodes_created += 1
+        except Exception:
+            pass
+
+    for i, it in enumerate(items_parsed):
+        title = it["title"][:120]
+        desc = it["desc"][:1500] or title
+        link = it["link"][:256]
+        assimilated_titles.append(title)
+
+        k_data = {
+            "title": f"[Radar: {feed_name}] {title}",
+            "content": f"{title}\n\n{desc}\n\nFuente: {link}",
+            "domain": domain,
+            "verification_status": "verified",
+            "confidence_score": 0.90,
+            "source_uri": link or f"radar://{feed_key}/{i}",
+            "created_by": s["email"]
+        }
+        try:
+            service.save_knowledge(
+                k_data,
+                actor=s["email"],
+                idempotency_key=f"radar_k_{hashlib.md5((link or title).encode()).hexdigest()[:12]}",
+                owner_scope=s["owner_scope"]
+            )
+            knowledge_created += 1
+        except Exception:
+            pass
+
+        if auto_weave:
+            it_node_id = f"item_{hashlib.md5(title.encode()).hexdigest()[:10]}"
+            try:
+                service.create_node({
+                    "id": it_node_id,
+                    "label": title[:50],
+                    "node_type": "concept",
+                    "properties": {"url": link, "domain": domain, "source_feed": feed_name},
+                    "owner_scope": s["owner_scope"]
+                }, actor=s["email"], idempotency_key=f"node_{it_node_id}")
+                nodes_created += 1
+            except Exception:
+                pass
+
+            try:
+                service.create_edge({
+                    "source_id": radar_node_id,
+                    "target_id": it_node_id,
+                    "relation": "broadcasts",
+                    "weight": 1.0,
+                    "owner_scope": s["owner_scope"]
+                }, actor=s["email"], idempotency_key=f"edge_{radar_node_id}_{it_node_id}")
+                edges_created += 1
+            except Exception:
+                pass
+
+    _cache_invalidate("knowledge")
+    _cache_invalidate("graph_overview")
+
+    return {
+        "ok": True,
+        "feed_name": feed_name,
+        "feed_url": feed_url,
+        "items_ingested": len(items_parsed),
+        "knowledge_created": knowledge_created,
+        "nodes_created": nodes_created,
+        "edges_created": edges_created,
+        "articles": assimilated_titles,
+        "message": f"Radar activo: {knowledge_created} articulos asimilados y {nodes_created} nodos neuronales tejidos."
+    }
+
+
 @app.patch("/api/v8/knowledge/{knowledge_id}")
 def v8_knowledge_update(request: Request, knowledge_id: str, payload: dict):
     s, _owner_error = _require_owner(request)

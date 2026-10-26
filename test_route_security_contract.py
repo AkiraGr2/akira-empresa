@@ -118,6 +118,7 @@ class SensitiveRouteSecurityContract(unittest.TestCase):
             ("POST", "/api/v8/knowledge/{knowledge_id}/verify"),
             ("POST", "/api/v8/knowledge/{knowledge_id}/archive"),
             ("POST", "/api/v8/knowledge/ingest"),
+            ("POST", "/api/v8/knowledge/radar"),
         }
         found = {
             (r["method"], r["path"])
