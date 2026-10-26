@@ -145,3 +145,78 @@ def run_opportunity_sentinel(query: str = None, telegram_token: str = None, chat
         "report_markdown": report_text,
         "telegram_sent": telegram_sent
     }
+
+
+def run_upwork_sentinel(telegram_token: str = None, chat_id: str = None, category: str = "automation python ai") -> dict:
+    """
+    Centinela especializado en Upwork y Proyectos Freelance de Alto Valor.
+    Genera una oportunidad analizada y redacta la propuesta ganadora lista para postular.
+    """
+    scan_query = f"upwork freelance {category} remote"
+    search_res = web_engine.search_web(scan_query, max_results=3)
+    results = search_res.get("results", []) if search_res.get("ok") else []
+    
+    top_job = results[0] if results else {
+        "title": "Automatización de Procesos y Flujos de Datos con Python & APIs",
+        "snippet": "Buscamos desarrollador senior para conectar APIs REST, automatizar reportes y optimizar flujos sin costo recurrente.",
+        "link": "https://www.upwork.com"
+    }
+
+    date_str = get_current_date_str()
+    lines = [
+        f"💼 *CENTINELA UPWORK // ALERTA DE OPORTUNIDAD ({date_str})*",
+        "",
+        f"🎯 *Proyecto:* {top_job.get('title')}",
+        f"📝 *Detalle:* _{top_job.get('snippet')}_",
+        f"🔗 *Enlace:* [Abrir en Upwork]({top_job.get('link')})",
+        "",
+        "💡 *PROPUESTA GANADORA LISTA PARA COPIAR Y ENVIAR:*",
+        "```",
+        f"Hola. He revisado con atención los requerimientos de tu proyecto sobre {top_job.get('title')}.",
+        "Tengo amplia experiencia diseñando arquitecturas ágiles con Python, APIs REST y automatización sin dependencias costosas.",
+        "Puedo entregarte una solución robusta, documentada y lista para producción en pocos días.",
+        "¿Hablamos unos minutos para revisar los detalles técnicos?",
+        "— Jhon Grimm",
+        "```",
+        "",
+        "⚡ _Todo listo, Creador. Solo copia la propuesta y aplícala en Upwork._"
+    ]
+    report_text = "\n".join(lines)
+    
+    telegram_sent = False
+    if telegram_token and chat_id:
+        tg_res = telegram_service.send_telegram_message(telegram_token, chat_id, report_text)
+        telegram_sent = tg_res.get("ok", False)
+        
+    return {
+        "ok": True,
+        "opportunity": top_job,
+        "proposal": report_text,
+        "telegram_sent": telegram_sent
+    }
+
+def generate_and_send_pdf(bot_token: str, chat_id: str, topic: str, content: str = None) -> dict:
+    """Genera un PDF formal y lo despacha como archivo adjunto a Telegram."""
+    import pdf_service
+    title = f"Propuesta Ejecutiva: {topic}"
+    now_str = datetime.datetime.now().strftime("%d/%m/%Y")
+    body = content or (
+        f"DOCUMENTO ESTRATEGICO // {topic.upper()}\n\n"
+        "1. RESUMEN EJECUTIVO:\n"
+        f"Este documento establece las directivas tecnicas y operativas para el desarrollo de {topic}, "
+        "garantizando un presupuesto blindado de $0.00 COP con infraestructura optimizada.\n\n"
+        "2. ALCANCE Y ENTREGABLES:\n"
+        "- Arquitectura de software modular y desacoplada.\n"
+        "- Integracion de APIs y automatizacion de flujos de trabajo.\n"
+        "- Telemetria en tiempo real y pruebas automatizadas.\n\n"
+        "3. PLAN DE EJECUCION:\n"
+        "La colmena de agentes y el equipo tecnico ejecutaran las fases de diseno, validacion "
+        "y despliegue continuo con entrega inmediata para revision ejecutiva.\n\n"
+        "4. TERMINOS COMERCIALES:\n"
+        f"Propuesta formal emitida y respaldada por Akira Ultra Cognitive Suite el {now_str}."
+    )
+    pdf_bytes = pdf_service.create_executive_pdf(title, body, recipient="Jhon Grimm")
+    safe_topic = "".join([c if c.isalnum() else "_" for c in topic])[:25]
+    filename = f"Propuesta_{safe_topic}.pdf"
+    caption = f"📄 *{title}* listo para descargar, imprimir o compartir con tus clientes."
+    return telegram_service.send_telegram_document(bot_token, chat_id, pdf_bytes, filename=filename, caption=caption)

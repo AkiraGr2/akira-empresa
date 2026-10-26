@@ -9800,28 +9800,54 @@ async def api_telegram_test(request: Request):
     token = body.get("token", "")
     chat_id = body.get("chat_id")
     import telegram_service
-    return telegram_service.test_telegram_connection(token, chat_id, reply_generator=generate_telegram_reply)
+    return telegram_service.test_telegram_connection(token, chat_id, reply_generator=generate_telegram_reply, groq_keys=_pick_groq_keys())
 
 @app.post("/api/v8/telegram/webhook/{token}")
 async def api_telegram_webhook(token: str, request: Request):
-    """Webhook oficial de Telegram: recibe y responde mensajes en tiempo real."""
+    """Webhook oficial de Telegram: recibe y responde mensajes en tiempo real (texto y notas de voz)."""
     try:
         body = await request.json()
     except Exception:
         body = {}
     import telegram_service
-    return telegram_service.handle_telegram_update(token, body, reply_generator=generate_telegram_reply)
+    return telegram_service.handle_telegram_update(token, body, reply_generator=generate_telegram_reply, groq_keys=_pick_groq_keys())
 
 @app.post("/api/v8/telegram/poll")
 async def api_telegram_poll(request: Request):
-    """Consulta y responde inmediatamente a cualquier mensaje pendiente en Telegram."""
+    """Consulta y responde inmediatamente a cualquier mensaje o nota de voz pendiente en Telegram."""
     try:
         body = await request.json()
     except Exception:
         body = {}
     token = body.get("token") or os.getenv("TELEGRAM_BOT_TOKEN", "")
     import telegram_service
-    return telegram_service.process_pending_telegram_updates(token, reply_generator=generate_telegram_reply)
+    return telegram_service.process_pending_telegram_updates(token, reply_generator=generate_telegram_reply, groq_keys=_pick_groq_keys())
+
+@app.post("/api/v8/executive/upwork-sentinel")
+async def api_executive_upwork(request: Request):
+    """Centinela especializado en Upwork: encuentra ofertas clave y redacta propuestas de alta conversion."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    token = body.get("telegram_token") or os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id = body.get("chat_id") or os.getenv("TELEGRAM_CHAT_ID", "")
+    import executive_service
+    return executive_service.run_upwork_sentinel(telegram_token=token, chat_id=chat_id)
+
+@app.post("/api/v8/executive/generate-pdf")
+async def api_executive_pdf(request: Request):
+    """Genera un documento PDF formal y lo envia como archivo adjunto a Telegram."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    token = body.get("telegram_token") or os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id = body.get("chat_id") or os.getenv("TELEGRAM_CHAT_ID", "")
+    topic = body.get("topic") or "Propuesta de Servicios Tecnicos"
+    content = body.get("content")
+    import executive_service
+    return executive_service.generate_and_send_pdf(token, chat_id, topic, content)
 
 @app.post("/api/v8/telegram/send")
 async def api_telegram_send(request: Request):
