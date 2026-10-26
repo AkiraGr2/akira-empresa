@@ -1,7 +1,9 @@
 """
-TEST TELEGRAM CONTRACT
-Verifies the zero-cost Telegram integration contract, auto-discovery of chat_id,
-and executive notification delivery.
+TEST TELEGRAM CONTRACT v2.0
+Verifies the zero-cost Telegram integration contract:
+- Auto-discovery of chat_id
+- Webhook registration & updates processing
+- Bidirectional conversational replies
 """
 
 import unittest
@@ -55,16 +57,49 @@ class TestTelegramContract(unittest.TestCase):
         self.assertEqual(res["chat_id"], "123456789")
         self.assertEqual(res["message_id"], 99)
 
+    @patch("telegram_service.set_telegram_webhook")
+    @patch("telegram_service.process_pending_telegram_updates")
     @patch("telegram_service.get_last_chat_id")
     @patch("telegram_service.send_telegram_message")
-    def test_test_telegram_connection_success(self, mock_send, mock_get_id):
+    def test_test_telegram_connection_success(self, mock_send, mock_get_id, mock_poll, mock_webhook):
         mock_get_id.return_value = "987654321"
+        mock_webhook.return_value = {"ok": True, "webhook_url": "https://example.com/api/v8/telegram/webhook"}
+        mock_poll.return_value = {"ok": True, "processed": 0}
         mock_send.return_value = {"ok": True, "chat_id": "987654321", "message_id": 101}
 
         res = telegram_service.test_telegram_connection("bot123456:ABC-DEF")
         self.assertTrue(res["ok"])
         self.assertEqual(res["chat_id"], "987654321")
-        self.assertIn("éxito", res["message"])
+        self.assertTrue(res["webhook_registered"])
+        self.assertIn("bidireccional", res["message"])
+
+    @patch("urllib.request.urlopen")
+    def test_set_telegram_webhook(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b'{"ok": true, "description": "Webhook was set"}'
+        mock_resp.__enter__.return_value = mock_resp
+        mock_urlopen.return_value = mock_resp
+
+        res = telegram_service.set_telegram_webhook("dummy_token")
+        self.assertTrue(res["ok"])
+        self.assertIn("/api/v8/telegram/webhook/dummy_token", res["webhook_url"])
+
+    @patch("telegram_service.send_telegram_message")
+    def test_handle_telegram_update_chat_reply(self, mock_send):
+        mock_send.return_value = {"ok": True, "message_id": 55}
+        update = {
+            "update_id": 123,
+            "message": {
+                "chat": {"id": 999},
+                "text": "Hola Akira, ¿cómo estás?"
+            }
+        }
+        generator = lambda q: f"¡Hola Jhon! Recibí: {q}"
+        res = telegram_service.handle_telegram_update("dummy_token", update, reply_generator=generator)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["chat_id"], "999")
+        self.assertEqual(res["action"], "chat_reply")
+        mock_send.assert_called_once_with("dummy_token", "999", "¡Hola Jhon! Recibí: Hola Akira, ¿cómo estás?")
 
 if __name__ == "__main__":
     unittest.main()

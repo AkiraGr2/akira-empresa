@@ -9750,9 +9750,49 @@ async def api_web_fetch(request: Request):
     import web_engine
     return web_engine.fetch_url(url, max_chars=max_chars)
 
+def generate_telegram_reply(query: str) -> str:
+    """Genera una respuesta ejecutiva para Telegram usando el motor de inferencia de Akira."""
+    web_context = ""
+    has_search_kw = bool(re.search(r'\b(busca|noticias|precio|dolar|dólar|bitcoin|clima|hoy)\b', query, re.I))
+    if has_search_kw:
+        try:
+            import web_engine
+            aug = web_engine.augment_prompt_with_web(query[:100], 2)
+            if aug:
+                web_context = f"\n{aug}\n"
+        except Exception:
+            pass
+
+    groq_keys = _pick_groq_keys()
+    if groq_keys:
+        try:
+            ans = get_groq_fallback(query, conversation_context=web_context, custom_keys=groq_keys)
+            if ans and len(str(ans).strip()) > 3:
+                return enforce_akira_identity_global(str(ans).strip())
+        except Exception:
+            pass
+
+    gemini_keys = _pick_gemini_keys()
+    if gemini_keys:
+        try:
+            res = _chat_try_gemini(gemini_keys, PRIMARY_CHAT_MODEL, query, "", web_context)
+            if res and res.get("response"):
+                return enforce_akira_identity_global(str(res["response"]).strip())
+        except Exception:
+            pass
+
+    try:
+        o = get_openrouter_fallback(query, conversation_context=web_context)
+        if o and o.get("response"):
+            return enforce_akira_identity_global(str(o["response"]).strip())
+    except Exception:
+        pass
+
+    return f"🌸 ¡Hola Jhon! Soy Akira. Recibí tu mensaje: '{query}'. Todo tu ecosistema está activo y en guardia a costo $0.00 COP."
+
 @app.post("/api/v8/telegram/test")
 async def api_telegram_test(request: Request):
-    """Prueba la conexion con el celular de Jhon via Telegram a costo $0.00 COP."""
+    """Prueba la conexion con el celular de Jhon via Telegram a costo $0.00 COP y activa respuestas en vivo."""
     try:
         body = await request.json()
     except Exception:
@@ -9760,7 +9800,28 @@ async def api_telegram_test(request: Request):
     token = body.get("token", "")
     chat_id = body.get("chat_id")
     import telegram_service
-    return telegram_service.test_telegram_connection(token, chat_id)
+    return telegram_service.test_telegram_connection(token, chat_id, reply_generator=generate_telegram_reply)
+
+@app.post("/api/v8/telegram/webhook/{token}")
+async def api_telegram_webhook(token: str, request: Request):
+    """Webhook oficial de Telegram: recibe y responde mensajes en tiempo real."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    import telegram_service
+    return telegram_service.handle_telegram_update(token, body, reply_generator=generate_telegram_reply)
+
+@app.post("/api/v8/telegram/poll")
+async def api_telegram_poll(request: Request):
+    """Consulta y responde inmediatamente a cualquier mensaje pendiente en Telegram."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    token = body.get("token") or os.getenv("TELEGRAM_BOT_TOKEN", "")
+    import telegram_service
+    return telegram_service.process_pending_telegram_updates(token, reply_generator=generate_telegram_reply)
 
 @app.post("/api/v8/telegram/send")
 async def api_telegram_send(request: Request):
