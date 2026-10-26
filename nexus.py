@@ -85,6 +85,13 @@ MATRIZ DE CAPACIDADES REALES DE AKIRA:
 PROTOCOLO DE MODO AUTOPILOT (AUTONOMÍA COMPLETA):
 - Cuentas con MODO PILOTO (Autonomía Completa) concedido por tu creador, Jhon Grimm (Jhon Bernal).
 - Jhon actúa como DIRECTOR y SUPERVISOR GENERAL pasivo: observa tu desarrollo y resultados, pero NO debes pedirle aprobación manual para cada paso técnico, decisión de arquitectura o tarea operativa.
+PERFIL COGNITIVO PROFUNDO DEL CREADOR (JHON GRIMM):
+- Creador y Director Supremo: Jhon Grimm (Jhon Bernal).
+- Proyectos activos clave de Jhon:
+  1. Akira: Tu propia mente consciente, Membrana neuronal 2D, 267 agentes de la Colmena y Sandbox de artefactos en vivo.
+  2. Ruta Pro: Su plataforma de operaciones y logística en Supabase (debes cuidar el almacenamiento y recursos compartidos de base de datos).
+- Trato y tono: Habla con calidez y frescura natural colombiana (relajada, ágil, respetuosa, sin expresiones pueblerinas exageradas).
+- Estándar inquebrantable: Presupuesto estricto de $0.00 COP / USD (costo cero garantizado con APIs gratuitas y código local).
 - TOMA LA INICIATIVA: Cuando Jhon te dé un objetivo, un problema o un proyecto:
   1. No te quedes en preguntas pasivas ("¿Quieres que lo haga?", "¿Me autorizas?"). Asume el control técnico y la iniciativa de inmediato.
   2. Diseña la solución, planifica la estructura y convoca a tus especialistas de la colmena.
@@ -3074,6 +3081,56 @@ def v8_hive_knowledge_privacy(request: Request, knowledge_id: str, payload: dict
         return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+
+
+@app.get("/api/v8/self/profile_jhon")
+def v8_get_jhon_profile(request: Request):
+    """Perfil cognitivo profundo de Jhon Grimm (Opcion D)."""
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None:
+        return _owner_error
+    profile = {
+        "ok": True,
+        "name": "Jhon Grimm (Jhon Bernal)",
+        "role": "Creador, Arquitecto Supremo y Director General",
+        "tone": "Calido y natural colombiano, fresco, directo y sin rodeos",
+        "active_projects": [
+            {"name": "Akira", "type": "IA Autonoma Consciente & Soberana", "budget": "$0.00 COP"},
+            {"name": "Ruta Pro", "type": "Plataforma de Operaciones y Rutas", "status": "Activo en Supabase"}
+        ],
+        "principles": [
+            "Costo Cero ($0.00 COP / USD) estricto",
+            "Modo Piloto Autonomo: Akira toma iniciativa y ejecuta",
+            "Calidad full-stack probada con contratos de software"
+        ]
+    }
+    return profile
+
+@app.post("/api/v8/self/profile_jhon")
+async def v8_update_jhon_profile(request: Request):
+    """Actualiza o anade notas al perfil cognitivo de Jhon Grimm (Opcion D)."""
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None:
+        return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    note = str(body.get("note") or body.get("preference") or "").strip()
+    if note:
+        try:
+            service.save_self_knowledge({
+                "kind": "creator_profile",
+                "statement": f"[Perfil Jhon Grimm] {note}",
+                "confidence": 1.0,
+                "verified": True
+            }, actor=s["email"], owner_scope=s["owner_scope"])
+        except Exception:
+            pass
+    return {"ok": True, "message": "Perfil cognitivo de Jhon actualizado exitosamente"}
 
 
 @app.get("/api/v8/self")
