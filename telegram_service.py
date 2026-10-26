@@ -1,5 +1,5 @@
 """
-AKIRA TELEGRAM NOTIFICATION & CONVERSATIONAL SERVICE v4.0
+AKIRA TELEGRAM NOTIFICATION & CONVERSATIONAL SERVICE v4.1
 Zero-Cost ($0.00 COP/USD) private executive communication channel with Jhon's mobile phone.
 Uses the official Telegram Bot API (free, unlimited, instant).
 
@@ -36,8 +36,101 @@ import json
 import logging
 import uuid
 import re
+import os
 
 logger = logging.getLogger("akira.telegram")
+
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "data", "telegram_config.json")
+
+def save_telegram_config(bot_token: str, chat_id: str = None) -> bool:
+    """Persiste el token y chat_id en el almacenamiento local del backend."""
+    try:
+        os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+        data = {"bot_token": bot_token.strip()}
+        if chat_id:
+            data["chat_id"] = str(chat_id).strip()
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        return True
+    except Exception as e:
+        logger.warning(f"Error saving telegram config: {e}")
+        return False
+
+def load_telegram_config() -> dict:
+    """Carga la configuración persistida de Telegram."""
+    try:
+        if os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        logger.warning(f"Error loading telegram config: {e}")
+    return {}
+
+def get_bot_info(bot_token: str) -> dict:
+    """Consulta la identidad oficial del bot en Telegram (getMe)."""
+    clean_token = bot_token.strip()
+    url = f"https://api.telegram.org/bot{clean_token}/getMe"
+    req = urllib.request.Request(url, headers={"User-Agent": "AkiraAssistant/4.1"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data.get("ok"):
+                return {"ok": True, "result": data.get("result", {})}
+            return {"ok": False, "error": data.get("description", "Error getMe")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+def get_webhook_diagnostics(bot_token: str) -> dict:
+    """Diagnóstico integral de la salud de conexión del bot en Telegram."""
+    clean_token = bot_token.strip()
+    bot_info = get_bot_info(clean_token)
+    url = f"https://api.telegram.org/bot{clean_token}/getWebhookInfo"
+    req = urllib.request.Request(url, headers={"User-Agent": "AkiraAssistant/4.1"})
+    webhook_info = {}
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data.get("ok"):
+                webhook_info = data.get("result", {})
+    except Exception as e:
+        webhook_info = {"error": str(e)}
+
+    # Consultar comandos registrados
+    url_cmd = f"https://api.telegram.org/bot{clean_token}/getMyCommands"
+    commands = []
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url_cmd, headers={"User-Agent": "AkiraAssistant/4.1"}), timeout=8) as c_resp:
+            c_data = json.loads(c_resp.read().decode("utf-8"))
+            if c_data.get("ok"):
+                commands = c_data.get("result", [])
+    except Exception:
+        pass
+
+    res_user = bot_info.get("result", {})
+    username = res_user.get("username", "")
+    bot_name = res_user.get("first_name", "Akira")
+    return {
+        "ok": bool(bot_info.get("ok")),
+        "bot_name": bot_name,
+        "bot_username": f"@{username}" if username else "Desconocido",
+        "bot_link": f"https://t.me/{username}" if username else None,
+        "webhook_url": webhook_info.get("url", ""),
+        "pending_update_count": webhook_info.get("pending_update_count", 0),
+        "last_error_message": webhook_info.get("last_error_message", None),
+        "last_error_date": webhook_info.get("last_error_date", None),
+        "commands_count": len(commands),
+        "commands": commands
+    }
+
+def repair_telegram_webhook(bot_token: str, base_url: str = "https://akira-empresa.onrender.com") -> dict:
+    """Autorepara el webhook, comandos oficiales y pendientes del bot de Telegram."""
+    clean_token = bot_token.strip()
+    cmd_res = set_telegram_commands(clean_token)
+    wh_res = set_telegram_webhook(clean_token, base_url=base_url)
+    diag = get_webhook_diagnostics(clean_token)
+    diag["commands_registered"] = cmd_res.get("ok", False)
+    diag["webhook_registered"] = wh_res.get("ok", False)
+    return diag
 
 def get_default_quick_keyboard() -> list[list[dict]]:
     """Genera la botonera táctil principal para la pantalla del celular de Jhon."""
@@ -57,7 +150,7 @@ def get_default_quick_keyboard() -> list[list[dict]]:
     ]
 
 def set_telegram_commands(bot_token: str) -> dict:
-    """Registra los 12 comandos ejecutivos en el menú nativo '/' de la aplicación Telegram."""
+    """Registra los 13 comandos ejecutivos en el menú nativo '/' de la aplicación Telegram."""
     clean_token = bot_token.strip()
     url = f"https://api.telegram.org/bot{clean_token}/setMyCommands"
     commands = [
@@ -79,7 +172,7 @@ def set_telegram_commands(bot_token: str) -> dict:
     req = urllib.request.Request(
         url,
         data=payload,
-        headers={"Content-Type": "application/json", "User-Agent": "AkiraAssistant/4.0"}
+        headers={"Content-Type": "application/json", "User-Agent": "AkiraAssistant/4.1"}
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -99,7 +192,7 @@ def answer_callback_query(bot_token: str, callback_query_id: str, text: str = ""
     req = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json", "User-Agent": "AkiraAssistant/4.0"}
+        headers={"Content-Type": "application/json", "User-Agent": "AkiraAssistant/4.1"}
     )
     try:
         with urllib.request.urlopen(req, timeout=8) as resp:
@@ -112,7 +205,7 @@ def get_last_chat_id(bot_token: str) -> str | None:
     """Auto-detecta el chat_id de Jhon consultando las últimas interacciones del bot."""
     clean_token = bot_token.strip()
     url = f"https://api.telegram.org/bot{clean_token}/getUpdates"
-    req = urllib.request.Request(url, headers={"User-Agent": "AkiraAssistant/4.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "AkiraAssistant/4.1"})
     try:
         with urllib.request.urlopen(req, timeout=8) as resp:
             data = json.loads(resp.read().decode("utf-8"))
@@ -134,6 +227,10 @@ def send_telegram_message(bot_token: str, chat_id: str, text: str, parse_mode: s
     clean_chat_id = str(chat_id).strip()
     clean_text = text[:4000] if len(text) > 4000 else text
 
+    # Si es Markdown, proteger corchetes que no sean enlaces [texto](url)
+    if parse_mode == "Markdown":
+        clean_text = re.sub(r'\[([^\]\n]+)\](?!\()', r'(\1)', clean_text)
+
     url = f"https://api.telegram.org/bot{clean_token}/sendMessage"
     payload = {
         "chat_id": clean_chat_id,
@@ -150,12 +247,12 @@ def send_telegram_message(bot_token: str, chat_id: str, text: str, parse_mode: s
         data=data,
         headers={
             "Content-Type": "application/json",
-            "User-Agent": "AkiraAssistant/4.0"
+            "User-Agent": "AkiraAssistant/4.1"
         }
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=12) as resp:
             result = json.loads(resp.read().decode("utf-8"))
             if result.get("ok"):
                 return {"ok": True, "chat_id": clean_chat_id, "message_id": result["result"].get("message_id")}
@@ -200,7 +297,7 @@ def send_telegram_document(bot_token: str, chat_id: str, file_bytes: bytes, file
         data=body,
         headers={
             "Content-Type": f"multipart/form-data; boundary={boundary}",
-            "User-Agent": "AkiraAssistant/4.0"
+            "User-Agent": "AkiraAssistant/4.1"
         }
     )
     try:
@@ -234,7 +331,7 @@ def send_telegram_photo(bot_token: str, chat_id: str, photo_bytes: bytes, captio
         data=body,
         headers={
             "Content-Type": f"multipart/form-data; boundary={boundary}",
-            "User-Agent": "AkiraAssistant/4.0"
+            "User-Agent": "AkiraAssistant/4.1"
         }
     )
     try:
@@ -268,7 +365,7 @@ def send_telegram_voice(bot_token: str, chat_id: str, audio_bytes: bytes, captio
         data=body,
         headers={
             "Content-Type": f"multipart/form-data; boundary={boundary}",
-            "User-Agent": "AkiraAssistant/4.0"
+            "User-Agent": "AkiraAssistant/4.1"
         }
     )
     try:
@@ -284,7 +381,7 @@ def get_telegram_file_bytes(bot_token: str, file_id: str) -> tuple[bytes | None,
     """Descarga los bytes de un archivo, foto o nota de voz desde Telegram."""
     clean_token = bot_token.strip()
     url = f"https://api.telegram.org/bot{clean_token}/getFile?file_id={file_id}"
-    req = urllib.request.Request(url, headers={"User-Agent": "AkiraAssistant/4.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "AkiraAssistant/4.1"})
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
@@ -295,7 +392,7 @@ def get_telegram_file_bytes(bot_token: str, file_id: str) -> tuple[bytes | None,
                 return None, "No file_path returned"
                 
         dl_url = f"https://api.telegram.org/file/bot{clean_token}/{file_path}"
-        req_dl = urllib.request.Request(dl_url, headers={"User-Agent": "AkiraAssistant/4.0"})
+        req_dl = urllib.request.Request(dl_url, headers={"User-Agent": "AkiraAssistant/4.1"})
         with urllib.request.urlopen(req_dl, timeout=20) as dl_resp:
             return dl_resp.read(), file_path
     except Exception as e:
@@ -321,7 +418,7 @@ def transcribe_telegram_voice(audio_bytes: bytes, groq_keys: list = None, filena
             headers={
                 "Authorization": f"Bearer {key}",
                 "Content-Type": f"multipart/form-data; boundary={boundary}",
-                "User-Agent": "AkiraAssistant/4.0"
+                "User-Agent": "AkiraAssistant/4.1"
             }
         )
         try:
@@ -347,7 +444,7 @@ def set_telegram_webhook(bot_token: str, base_url: str = "https://akira-empresa.
     req = urllib.request.Request(
         url,
         data=payload,
-        headers={"Content-Type": "application/json", "User-Agent": "AkiraAssistant/4.0"}
+        headers={"Content-Type": "application/json", "User-Agent": "AkiraAssistant/4.1"}
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -362,7 +459,7 @@ def get_telegram_updates(bot_token: str, offset: int = None, limit: int = 20) ->
     url = f"https://api.telegram.org/bot{clean_token}/getUpdates?limit={limit}"
     if offset is not None:
         url += f"&offset={offset}"
-    req = urllib.request.Request(url, headers={"User-Agent": "AkiraAssistant/4.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "AkiraAssistant/4.1"})
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             res = json.loads(resp.read().decode("utf-8"))
@@ -391,7 +488,6 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
 
         answer_callback_query(clean_token, cb_id, text=f"Ejecutando {data_text}...")
 
-        # Simular que el usuario envió el comando del botón
         fake_msg_update = {
             "message": {
                 "chat": {"id": chat_id},
@@ -410,10 +506,13 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
     if not chat_id:
         return {"ok": False, "reason": "missing_chat_id"}
 
+    # Guardar chat_id activo para futuras alertas
+    save_telegram_config(clean_token, chat_id)
+
     # 2. AUDITORÍA DE FOTOS Y RECIBOS OCR (message.photo)
     if msg.get("photo"):
         photos = msg["photo"]
-        best_photo = photos[-1]  # La de mayor resolución
+        best_photo = photos[-1]
         file_id = best_photo.get("file_id")
         send_telegram_message(clean_token, chat_id, "🔍 _Examinando documento físico con OCR Vision..._")
         img_bytes, _ = get_telegram_file_bytes(clean_token, file_id)
@@ -459,7 +558,6 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
         
         if transcribed:
             if is_forwarded:
-                # MODO ESPÍA: Análisis de audios reenviados
                 spy_report = (
                     "🕵️ *ANÁLISIS MODO ESPÍA // AUDIO REENVIADO*\n\n"
                     f"📝 *Transcripción Completa:*\n_{transcribed}_\n\n"
@@ -526,19 +624,19 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
     if text == "/start":
         set_telegram_commands(clean_token)
         welcome_text = (
-            "🌸 *¡Hola Jhon! Soy Akira Suite 4.0.*\n\n"
+            "🌸 *¡Hola Jhon! Soy Akira Suite 4.1.*\n\n"
             "✨ Tu conexión privada conmigo está blindada y 100% activa a costo $0.00 COP.\n\n"
             "💬 *Puedes hablarme o enviarme notas de voz:*\n"
             "Escríbeme o háblame con total naturalidad; te responderé en tiempo real.\n\n"
             "📌 *Acciones Ejecutivas Rápidas:*\n"
-            "• `/cotizar [proyecto]` — Genera y envía cotización formal en PDF con ROI.\n"
-            "• `/deck [tema]` — Genera presentación ejecutiva de 5 diapositivas en PDF.\n"
+            "• `/cotizar (proyecto)` — Genera y envía cotización formal en PDF con ROI.\n"
+            "• `/deck (tema)` — Genera presentación ejecutiva de 5 diapositivas en PDF.\n"
             "• `/upwork` — Radar de oportunidades y propuesta ganadora.\n"
             "• `/grafico` — Genera infografía financiera o métricas en PNG.\n"
-            "• `/redactar [idea]` — Ghostwriter en 3 versiones (Formal, Ágil, Comercial).\n"
-            "• `/tarifa [horas]` — Calculadora de tarifas y rentabilidad Upwork.\n"
-            "• `/recordar [tiempo] [texto]` — Despertador y recordatorio autónomo.\n"
-            "• `/py [script]` — Consola segura de Python.\n"
+            "• `/redactar (idea)` — Ghostwriter en 3 versiones (Formal, Ágil, Comercial).\n"
+            "• `/tarifa (horas)` — Calculadora de tarifas y rentabilidad Upwork.\n"
+            "• `/recordar (tiempo) (texto)` — Despertador y recordatorio autónomo.\n"
+            "• `/py (script)` — Consola segura de Python.\n"
             "• `/backup` — Descargar respaldo de emergencia en ZIP.\n"
             "• `/resumen_semanal` — Balance dominical de logros y productividad.\n"
             "• `/estado` — Estado del sistema y telemetría.\n\n"
@@ -588,7 +686,7 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
         send_telegram_interactive_message(clean_token, chat_id, tasks_text)
         return {"ok": True, "chat_id": chat_id, "action": "tasks"}
 
-    # /cotizar [proyecto]
+    # /cotizar
     if text.startswith("/cotizar"):
         proj = text.replace("/cotizar", "").strip() or "Sistema de Automatizacion e IA para Clientes"
         send_telegram_message(clean_token, chat_id, f"📊 _Compilando cotización formal y cálculo de ROI para '{proj}'..._")
@@ -600,7 +698,7 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
             send_telegram_message(clean_token, chat_id, f"⚠️ Error generando cotización: {e}")
             return {"ok": False, "error": str(e)}
 
-    # /deck [tema]
+    # /deck
     if text.startswith("/deck"):
         topic = text.replace("/deck", "").strip() or "Arquitectura Modular y Reduccion de Costos Operativos"
         send_telegram_message(clean_token, chat_id, f"📑 _Diseñando Pitch Deck de 5 diapositivas en PDF para '{topic}'..._")
@@ -622,7 +720,7 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
             send_telegram_message(clean_token, chat_id, f"⚠️ Error en centinela Upwork: {e}")
             return {"ok": False, "error": str(e)}
 
-    # /pdf [tema]
+    # /pdf
     if text.startswith("/pdf"):
         topic = text.replace("/pdf", "").strip() or "Servicios Profesionales de Desarrollo y Automatizacion"
         try:
@@ -645,7 +743,7 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
             send_telegram_message(clean_token, chat_id, f"⚠️ Error generando gráfico: {e}")
             return {"ok": False, "error": str(e)}
 
-    # /redactar [idea]
+    # /redactar
     if text.startswith("/redactar"):
         idea = text.replace("/redactar", "").strip() or "Confirmar al cliente que su requerimiento está listo y coordinar entrega"
         try:
@@ -657,7 +755,7 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
             send_telegram_message(clean_token, chat_id, f"⚠️ Error en ghostwriter: {e}")
             return {"ok": False, "error": str(e)}
 
-    # /tarifa [alcance]
+    # /tarifa
     if text.startswith("/tarifa"):
         scope = text.replace("/tarifa", "").strip()
         try:
@@ -669,11 +767,11 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
             send_telegram_message(clean_token, chat_id, f"⚠️ Error en calculadora de tarifas: {e}")
             return {"ok": False, "error": str(e)}
 
-    # /recordar [tiempo] [texto]
+    # /recordar
     if text.startswith("/recordar"):
         parts = text.replace("/recordar", "").strip().split(maxsplit=1)
         if len(parts) < 2:
-            send_telegram_message(clean_token, chat_id, "⚠️ Uso: `/recordar [tiempo] [texto]`. Ejemplo: `/recordar 15m Llamar al cliente de Upwork`")
+            send_telegram_message(clean_token, chat_id, "⚠️ Uso: `/recordar (tiempo) (texto)`. Ejemplo: `/recordar 15m Llamar al cliente de Upwork`")
             return {"ok": True, "chat_id": chat_id, "action": "remind_usage"}
         dur_str, rem_text = parts[0], parts[1]
         try:
@@ -689,7 +787,7 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
             send_telegram_message(clean_token, chat_id, f"⚠️ Error programando recordatorio: {e}")
             return {"ok": False, "error": str(e)}
 
-    # /silencio [tiempo]
+    # /silencio
     if text.startswith("/silencio"):
         dur = text.replace("/silencio", "").strip() or "2h"
         try:
@@ -701,7 +799,7 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
             send_telegram_message(clean_token, chat_id, f"⚠️ Error activando modo silencio: {e}")
             return {"ok": False, "error": str(e)}
 
-    # /py [codigo]
+    # /py
     if text.startswith("/py"):
         code_input = text.replace("/py", "").strip()
         if not code_input:
@@ -733,7 +831,7 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
             send_telegram_message(clean_token, chat_id, f"⚠️ Error generando respaldo: {e}")
             return {"ok": False, "error": str(e)}
 
-    # /consolidar [ideas]
+    # /consolidar
     if text.startswith("/consolidar"):
         ideas = text.replace("/consolidar", "").strip() or "Ideas de automatización y servicios para nuevos clientes"
         try:
@@ -745,7 +843,7 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
             send_telegram_message(clean_token, chat_id, f"⚠️ Error consolidando ideas: {e}")
             return {"ok": False, "error": str(e)}
 
-    # /negociar [contexto]
+    # /negociar
     if text.startswith("/negociar"):
         context_arg = text.replace("/negociar", "").strip() or "El cliente solicita un 40% de descuento sobre la cotización"
         try:
@@ -757,7 +855,7 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
             send_telegram_message(clean_token, chat_id, f"⚠️ Error en simulador: {e}")
             return {"ok": False, "error": str(e)}
 
-    # /voz [texto]
+    # /voz
     if text.startswith("/voz"):
         speech_text = text.replace("/voz", "").strip() or "Hola Jhon, todas las capacidades de Akira están operativas."
         send_telegram_message(clean_token, chat_id, "🎙️ _Sintetizando nota de voz con es-CO-SalomeNeural..._")
@@ -794,7 +892,7 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
             send_telegram_message(clean_token, chat_id, f"⚠️ Error al generar briefing: {e}")
             return {"ok": False, "error": str(e)}
 
-    # /buscar [tema]
+    # /buscar
     if text.startswith("/buscar"):
         query = text.replace("/buscar", "").strip()
         if not query:
@@ -819,17 +917,17 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
     if text == "/ayuda":
         help_text = (
             "💡 *SUITE COMPLETA DE COMANDOS EN TELEGRAM:*\n\n"
-            "• `/cotizar [proyecto]` — Cotización formal en PDF con cálculo de ROI.\n"
-            "• `/deck [tema]` — Presentación ejecutiva en PDF (5 diapositivas).\n"
+            "• `/cotizar (proyecto)` — Cotización formal en PDF con cálculo de ROI.\n"
+            "• `/deck (tema)` — Presentación ejecutiva en PDF (5 diapositivas).\n"
             "• `/upwork` — Centinela de oportunidades y propuesta lista.\n"
             "• `/grafico` — Infografía financiera y métricas en imagen PNG.\n"
-            "• `/redactar [idea]` — Ghostwriter en 3 versiones listas para enviar.\n"
-            "• `/tarifa [horas]` — Calculadora inteligente de rentabilidad y precios.\n"
-            "• `/recordar [tiempo] [texto]` — Recordatorio autónomo proactivo.\n"
-            "• `/py [script]` — Ejecutar código o cálculos en consola Python.\n"
+            "• `/redactar (idea)` — Ghostwriter en 3 versiones listas para enviar.\n"
+            "• `/tarifa (horas)` — Calculadora inteligente de rentabilidad y precios.\n"
+            "• `/recordar (tiempo) (texto)` — Recordatorio autónomo proactivo.\n"
+            "• `/py (script)` — Ejecutar código o cálculos en consola Python.\n"
             "• `/backup` — Descargar respaldo de emergencia en ZIP.\n"
             "• `/resumen_semanal` — Balance dominical de productividad.\n"
-            "• `/buscar [consulta]` — Búsqueda web DuckDuckGo en vivo.\n"
+            "• `/buscar (consulta)` — Búsqueda web DuckDuckGo en vivo.\n"
             "• `/estado` — Métricas del sistema y presupuesto $0.00 COP.\n\n"
             "🎙️ *Notas de voz:* Habla y Akira te responderá de inmediato.\n"
             "📸 *Fotos y Recibos:* Envíale una foto y leerá los importes con OCR Vision.\n"
@@ -896,29 +994,38 @@ def test_telegram_connection(bot_token: str, chat_id: str = None, reply_generato
             "requires_start": True
         }
 
-    # 1. Registrar comandos nativos en el menú '/' de Telegram
+    # 1. Obtener detalles del bot
+    bot_info = get_bot_info(clean_token)
+    bot_res = bot_info.get("result", {})
+    bot_username = bot_res.get("username", "")
+    bot_link = f"https://t.me/{bot_username}" if bot_username else None
+
+    # 2. Persistir configuración en backend
+    save_telegram_config(clean_token, active_chat_id)
+
+    # 3. Registrar comandos nativos en el menú '/' de Telegram
     set_telegram_commands(clean_token)
 
-    # 2. Registrar webhook para recibir mensajes y notas de voz en vivo
+    # 4. Registrar webhook para recibir mensajes y notas de voz en vivo
     wh_res = set_telegram_webhook(clean_token)
 
-    # 3. Procesar mensajes que Jhon ya haya escrito antes de activar el webhook
+    # 5. Procesar mensajes que Jhon ya haya escrito antes de activar el webhook
     poll_res = process_pending_telegram_updates(clean_token, reply_generator=reply_generator, groq_keys=groq_keys, gemini_api_key=gemini_api_key)
 
     welcome_text = (
-        "🌸 *¡Hola Jhon! Soy Akira Suite 4.0.*\n\n"
+        "🌸 *¡Hola Jhon! Soy Akira Suite 4.1.*\n\n"
         "✨ Tu conexión privada conmigo está blindada y 100% activa a costo $0.00 COP.\n\n"
         "💬 *Puedes hablarme o enviarme notas de voz:*\n"
         "Escríbeme o háblame de lo que quieras y te responderé en tiempo real.\n\n"
         "📌 *Acciones Ejecutivas Rápidas:*\n"
-        "• `/cotizar [proyecto]` — Genera cotización en PDF con cálculo de ROI.\n"
-        "• `/deck [tema]` — Presentación ejecutiva en PDF (5 slides).\n"
+        "• `/cotizar (proyecto)` — Genera cotización en PDF con cálculo de ROI.\n"
+        "• `/deck (tema)` — Presentación ejecutiva en PDF (5 slides).\n"
         "• `/upwork` — Radar de oportunidades y propuesta lista.\n"
         "• `/grafico` — Genera infografía de métricas en imagen PNG.\n"
-        "• `/redactar [idea]` — Ghostwriter en 3 versiones ejecutivas.\n"
-        "• `/tarifa [horas]` — Calculadora de tarifas Upwork.\n"
-        "• `/recordar [tiempo] [texto]` — Recordatorio autónomo.\n"
-        "• `/py [script]` — Consola segura de Python.\n"
+        "• `/redactar (idea)` — Ghostwriter en 3 versiones ejecutivas.\n"
+        "• `/tarifa (horas)` — Calculadora de tarifas Upwork.\n"
+        "• `/recordar (tiempo) (texto)` — Recordatorio autónomo.\n"
+        "• `/py (script)` — Consola segura de Python.\n"
         "• `/backup` — Descargar respaldo en ZIP.\n"
         "• `/estado` — Estado del sistema y telemetría.\n\n"
         "👑 _Lista y a tu servicio, Creador._"
@@ -929,9 +1036,11 @@ def test_telegram_connection(bot_token: str, chat_id: str = None, reply_generato
         return {
             "ok": True,
             "chat_id": active_chat_id,
+            "bot_username": f"@{bot_username}" if bot_username else "",
+            "bot_link": bot_link,
             "webhook_registered": wh_res.get("ok", False),
             "pending_messages_processed": poll_res.get("processed", 0),
             "commands_registered": True,
-            "message": "¡Conexión bidireccional blindada lista! Akira te envió la confirmación táctil y el menú de comandos en tu Telegram."
+            "message": f"¡Conexión bidireccional blindada lista! Akira vinculó tu bot ({f'@{bot_username}' if bot_username else 'Telegram'}) y te envió la confirmación táctil con el menú de comandos."
         }
     return send_res

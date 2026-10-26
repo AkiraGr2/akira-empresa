@@ -3,10 +3,12 @@ AKIRA VOICE SERVICE
 Zero-Cost ($0.00 COP/USD) hyper-realistic neural voice generator using edge-tts.
 Default Voice: 'es-CO-SalomeNeural' (Warm, executive Colombian female voice).
 Fallback Voice: 'es-CO-GonzaloNeural' or standard synthesis.
+Safe execution inside both standalone scripts and active async event loops (FastAPI / Uvicorn).
 """
 
 import asyncio
 import logging
+import concurrent.futures
 
 logger = logging.getLogger("akira.voice")
 
@@ -25,7 +27,17 @@ def generate_voice_bytes(text: str, voice: str = "es-CO-SalomeNeural") -> bytes 
     if not text or not text.strip():
         return None
     try:
-        return asyncio.run(_synthesize_edge_tts(text, voice))
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            # Si se invoca dentro de un event loop activo (FastAPI), ejecutar en threadpool aislado
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(lambda: asyncio.run(_synthesize_edge_tts(text, voice))).result(timeout=25)
+        else:
+            return asyncio.run(_synthesize_edge_tts(text, voice))
     except Exception as e:
         logger.warning(f"Error generando voz con edge-tts: {e}")
         return None

@@ -718,7 +718,7 @@ REGLAS DE IDENTIDAD Y FACTUALIDAD:
         pass
     return None
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse, JSONResponse, Response, RedirectResponse
 import json as json_lib
 @asynccontextmanager
@@ -9804,17 +9804,63 @@ async def api_telegram_test(request: Request):
     gem_key = gk[0] if gk else None
     return telegram_service.test_telegram_connection(token, chat_id, reply_generator=generate_telegram_reply, groq_keys=_pick_groq_keys(), gemini_api_key=gem_key)
 
+def _process_telegram_update_bg(token: str, body: dict):
+    try:
+        import telegram_service
+        gk = _pick_gemini_keys()
+        gem_key = gk[0] if gk else None
+        telegram_service.handle_telegram_update(token, body, reply_generator=generate_telegram_reply, groq_keys=_pick_groq_keys(), gemini_api_key=gem_key)
+    except Exception as e:
+        print(f"[telegram_webhook] background error: {e}")
+
 @app.post("/api/v8/telegram/webhook/{token}")
-async def api_telegram_webhook(token: str, request: Request):
-    """Webhook oficial de Telegram: recibe y responde mensajes en tiempo real (texto y notas de voz)."""
+async def api_telegram_webhook(token: str, request: Request, background_tasks: BackgroundTasks):
+    """Webhook oficial de Telegram: responde en <50ms a Telegram y procesa en background."""
     try:
         body = await request.json()
     except Exception:
         body = {}
+    background_tasks.add_task(_process_telegram_update_bg, token, body)
+    return {"ok": True}
+
+@app.get("/api/v8/telegram/diagnostics")
+@app.post("/api/v8/telegram/diagnostics")
+async def api_telegram_diagnostics(request: Request):
+    """Audita la salud del webhook, conexion, comandos y estado del bot en Telegram."""
+    token = ""
+    try:
+        if request.method == "POST":
+            body = await request.json()
+            token = body.get("token", "")
+        else:
+            token = request.query_params.get("token", "")
+    except Exception:
+        pass
+    if not token:
+        import telegram_service
+        cfg = telegram_service.load_telegram_config()
+        token = cfg.get("bot_token") or os.getenv("TELEGRAM_BOT_TOKEN", "")
+    if not token:
+        return {"ok": False, "error": "No hay token de Telegram configurado en el servidor."}
     import telegram_service
-    gk = _pick_gemini_keys()
-    gem_key = gk[0] if gk else None
-    return telegram_service.handle_telegram_update(token, body, reply_generator=generate_telegram_reply, groq_keys=_pick_groq_keys(), gemini_api_key=gem_key)
+    return telegram_service.get_webhook_diagnostics(token)
+
+@app.post("/api/v8/telegram/repair")
+async def api_telegram_repair(request: Request):
+    """Autorepara el webhook, comandos oficiales y pendientes del bot de Telegram."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    token = body.get("token", "")
+    if not token:
+        import telegram_service
+        cfg = telegram_service.load_telegram_config()
+        token = cfg.get("bot_token") or os.getenv("TELEGRAM_BOT_TOKEN", "")
+    if not token:
+        return {"ok": False, "error": "No hay token de Telegram configurado en el servidor."}
+    import telegram_service
+    return telegram_service.repair_telegram_webhook(token)
 
 @app.post("/api/v8/telegram/poll")
 async def api_telegram_poll(request: Request):

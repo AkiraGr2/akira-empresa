@@ -227,5 +227,36 @@ class TestTelegramContract(unittest.TestCase):
         self.assertEqual(res["action"], "chat_reply")
         mock_transcribe.assert_called_once()
 
+    @patch("urllib.request.urlopen")
+    def test_get_bot_info(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b'{"ok": true, "result": {"id": 1234, "is_bot": true, "first_name": "Akira", "username": "AkiraBot"}}'
+        mock_resp.__enter__.return_value = mock_resp
+        mock_urlopen.return_value = mock_resp
+
+        info = telegram_service.get_bot_info("fake_token")
+        self.assertTrue(info["ok"])
+        self.assertEqual(info["result"]["username"], "AkiraBot")
+
+    @patch("telegram_service.get_bot_info")
+    @patch("telegram_service.set_telegram_commands")
+    @patch("telegram_service.set_telegram_webhook")
+    @patch("urllib.request.urlopen")
+    def test_get_webhook_diagnostics_and_repair(self, mock_urlopen, mock_wh, mock_cmd, mock_bot):
+        mock_bot.return_value = {"ok": True, "result": {"username": "AkiraBot", "first_name": "Akira"}}
+        mock_cmd.return_value = {"ok": True}
+        mock_wh.return_value = {"ok": True, "webhook_url": "https://akira-empresa.onrender.com/api/v8/telegram/webhook/fake"}
+        
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b'{"ok": true, "result": {"url": "https://akira-empresa.onrender.com/api/v8/telegram/webhook/fake", "pending_update_count": 0}}'
+        mock_resp.__enter__.return_value = mock_resp
+        mock_urlopen.return_value = mock_resp
+
+        diag = telegram_service.repair_telegram_webhook("fake_token")
+        self.assertTrue(diag["ok"])
+        self.assertEqual(diag["bot_username"], "@AkiraBot")
+        self.assertEqual(diag["bot_link"], "https://t.me/AkiraBot")
+        self.assertTrue(diag["webhook_registered"])
+
 if __name__ == "__main__":
     unittest.main()
