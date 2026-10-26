@@ -643,6 +643,7 @@ def get_groq_fallback(msg, conversation_context="", web_info="", custom_keys=Non
   5. CERO ACOTACIONES TEATRALES: NUNCA escribas *sonríe*, *risas* ni acotaciones entre paréntesis.
   6. RESPUESTAS BREVES Y DIRECTAS: Máximo 1 o 2 oraciones concisas, fluidas y al grano.
   7. A tu creador llámalo Jhon con naturalidad.
+  8. CAPACIDADES DE CÓDIGO Y SOFTWARE: Tienes plenas capacidades de programación y desarrollo (HTML, CSS, JavaScript, Python, etc.) respaldadas por tu colmena de agentes. Si te piden una página web, app o código por voz, confirma con seguridad que sí puedes crearla y dile a Jhon que en el chat le entregas todo el código completo y estructurado. NUNCA digas que no puedes crear código o programar.
 {CHAT_ACTION_INTEGRITY_RULE}"""
         else:
             system_prompt = f"""IDENTIDAD CANÓNICA Y CREADOR:
@@ -8147,7 +8148,8 @@ def _chat_try_gemini_fast_voice(keys, query, conversation_context=""):
 - CERO EMOJIS: NUNCA generes ningún emoji.
 - CERO MARKDOWN: NUNCA uses asteriscos, negritas ni viñetas.
 - CERO ACOTACIONES: NUNCA escribas acotaciones teatrales.
-- Máximo 1 o 2 oraciones concisas y directas."""
+- Máximo 1 o 2 oraciones concisas y directas.
+- CAPACIDADES DE CÓDIGO: Tienes plenas capacidades para programar y crear páginas web y software. En voz confirma que sí puedes hacerlo y dile a Jhon que en el chat le entregas el código completo. NUNCA digas que no puedes crear código."""
         prompt = f"{fast_system}\n{conversation_context}\nUsuario: {query}\nAkira:"
         for m in ["gemini-2.0-flash", "gemini-1.5-flash", PRIMARY_CHAT_MODEL]:
             m, _ = validate_model_before_call(m, "voice")
