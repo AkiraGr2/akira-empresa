@@ -9750,8 +9750,10 @@ async def api_web_fetch(request: Request):
     import web_engine
     return web_engine.fetch_url(url, max_chars=max_chars)
 
-def generate_telegram_reply(query: str) -> str:
-    """Genera una respuesta ejecutiva para Telegram usando el motor de inferencia de Akira."""
+_TELEGRAM_HISTORIES = defaultdict(list)
+
+def generate_telegram_reply(query: str, chat_id: str = None) -> str:
+    """Genera una respuesta ejecutiva profunda, fluida y contextual para Telegram como en el chat web."""
     web_context = ""
     has_search_kw = bool(re.search(r'\b(busca|noticias|precio|dolar|dólar|bitcoin|clima|hoy)\b', query, re.I))
     if has_search_kw:
@@ -9763,32 +9765,58 @@ def generate_telegram_reply(query: str) -> str:
         except Exception:
             pass
 
-    groq_keys = _pick_groq_keys()
-    if groq_keys:
-        try:
-            ans = get_groq_fallback(query, conversation_context=web_context, custom_keys=groq_keys)
-            if ans and len(str(ans).strip()) > 3:
-                return enforce_akira_identity_global(str(ans).strip())
-        except Exception:
-            pass
+    history_text = ""
+    clean_chat_id = str(chat_id).strip() if chat_id else ""
+    if clean_chat_id and clean_chat_id in _TELEGRAM_HISTORIES:
+        lines = []
+        for h in _TELEGRAM_HISTORIES[clean_chat_id][-6:]:
+            lines.append(f"{h['role']}: {h['content']}")
+        if lines:
+            history_text = "\nMEMORIA DE CONVERSACIÓN RECIENTE CON JHON:\n" + "\n".join(lines) + "\n"
 
+    conv_context = f"{history_text}{web_context}".strip()
+
+    ans = None
+    # 1. Intento primario con Gemini Flash (calidez natural e inteligencia ejecutiva)
     gemini_keys = _pick_gemini_keys()
     if gemini_keys:
         try:
-            res = _chat_try_gemini(gemini_keys, PRIMARY_CHAT_MODEL, query, "", web_context)
+            res = _chat_try_gemini(gemini_keys, PRIMARY_CHAT_MODEL, query, "", conv_context)
             if res and res.get("response"):
-                return enforce_akira_identity_global(str(res["response"]).strip())
+                ans = enforce_akira_identity_global(str(res["response"]).strip())
+        except Exception as e:
+            print(f"[telegram_chat] gemini error: {e}")
+
+    # 2. Respaldo rápido con Groq
+    if not ans:
+        groq_keys = _pick_groq_keys()
+        if groq_keys:
+            try:
+                g = get_groq_fallback(query, conversation_context=conv_context, custom_keys=groq_keys)
+                if g and len(str(g).strip()) > 3:
+                    ans = enforce_akira_identity_global(str(g).strip())
+            except Exception:
+                pass
+
+    # 3. Respaldo con OpenRouter
+    if not ans:
+        try:
+            o = get_openrouter_fallback(query, conversation_context=conv_context)
+            if o and o.get("response"):
+                ans = enforce_akira_identity_global(str(o["response"]).strip())
         except Exception:
             pass
 
-    try:
-        o = get_openrouter_fallback(query, conversation_context=web_context)
-        if o and o.get("response"):
-            return enforce_akira_identity_global(str(o["response"]).strip())
-    except Exception:
-        pass
+    if not ans:
+        ans = f"🌸 Te escucho perfectamente, Jhon. Con relación a '{query}', todo tu sistema está activo y listo para avanzar."
 
-    return f"🌸 ¡Hola Jhon! Soy Akira. Recibí tu mensaje: '{query}'. Todo tu ecosistema está activo y en guardia a costo $0.00 COP."
+    if clean_chat_id:
+        _TELEGRAM_HISTORIES[clean_chat_id].append({"role": "Jhon", "content": query})
+        _TELEGRAM_HISTORIES[clean_chat_id].append({"role": "Akira", "content": ans})
+        if len(_TELEGRAM_HISTORIES[clean_chat_id]) > 14:
+            _TELEGRAM_HISTORIES[clean_chat_id] = _TELEGRAM_HISTORIES[clean_chat_id][-10:]
+
+    return ans
 
 @app.post("/api/v8/telegram/test")
 async def api_telegram_test(request: Request):
@@ -9802,14 +9830,20 @@ async def api_telegram_test(request: Request):
     import telegram_service
     gk = _pick_gemini_keys()
     gem_key = gk[0] if gk else None
-    return telegram_service.test_telegram_connection(token, chat_id, reply_generator=generate_telegram_reply, groq_keys=_pick_groq_keys(), gemini_api_key=gem_key)
+    return telegram_service.test_telegram_connection(token, chat_id, reply_generator=generate_telegram_reply, groq_keys=_pick_groq_keys(), gemini_api_key=gem_key, gemini_keys=gk)
 
 def _process_telegram_update_bg(token: str, body: dict):
     try:
         import telegram_service
         gk = _pick_gemini_keys()
-        gem_key = gk[0] if gk else None
-        telegram_service.handle_telegram_update(token, body, reply_generator=generate_telegram_reply, groq_keys=_pick_groq_keys(), gemini_api_key=gem_key)
+        grk = _pick_groq_keys()
+        telegram_service.handle_telegram_update(
+            token, body,
+            reply_generator=generate_telegram_reply,
+            groq_keys=grk,
+            gemini_keys=gk,
+            gemini_api_key=gk[0] if gk else None
+        )
     except Exception as e:
         print(f"[telegram_webhook] background error: {e}")
 
@@ -9873,7 +9907,7 @@ async def api_telegram_poll(request: Request):
     import telegram_service
     gk = _pick_gemini_keys()
     gem_key = gk[0] if gk else None
-    return telegram_service.process_pending_telegram_updates(token, reply_generator=generate_telegram_reply, groq_keys=_pick_groq_keys(), gemini_api_key=gem_key)
+    return telegram_service.process_pending_telegram_updates(token, reply_generator=generate_telegram_reply, groq_keys=_pick_groq_keys(), gemini_api_key=gem_key, gemini_keys=gk)
 
 @app.post("/api/v8/executive/commercial-quote")
 async def api_executive_quote(request: Request):

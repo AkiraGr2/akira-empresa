@@ -398,37 +398,91 @@ def get_telegram_file_bytes(bot_token: str, file_id: str) -> tuple[bytes | None,
     except Exception as e:
         return None, str(e)
 
-def transcribe_telegram_voice(audio_bytes: bytes, groq_keys: list = None, filename: str = "voice.oga") -> str | None:
-    """Transcribe una nota de voz de Telegram a texto usando Whisper a costo $0.00 COP."""
-    if not audio_bytes or not groq_keys:
+def transcribe_audio_with_gemini(audio_bytes: bytes, gemini_keys: list = None) -> str | None:
+    """Transcribe audio usando la capacidad multimodal nativa de Gemini Flash a costo $0.00 COP."""
+    if not audio_bytes or not gemini_keys:
         return None
-    boundary = "----WebKitFormBoundaryAkiraVoice" + uuid.uuid4().hex[:12]
-    parts = []
-    parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nwhisper-large-v3-turbo\r\n".encode("utf-8"))
-    parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"language\"\r\n\res\r\n".encode("utf-8"))
-    parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: audio/ogg\r\n\r\n".encode("utf-8"))
-    parts.append(audio_bytes)
-    parts.append(f"\r\n--{boundary}--\r\n".encode("utf-8"))
-    body = b"".join(parts)
-    
-    for key in groq_keys:
+    import base64
+    b64_audio = base64.b64encode(audio_bytes).decode("utf-8")
+    for key in gemini_keys:
+        clean_key = str(key).strip()
+        if not clean_key:
+            continue
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={clean_key}"
+        payload = {
+            "contents": [{
+                "parts": [
+                    {"text": "Transcribe con maxima precision el contenido de este audio en espanol. Devuelve EXCLUSIVAMENTE el texto hablado tal cual, sin anadir comentarios, sin comillas ni explicaciones."},
+                    {"inline_data": {"mime_type": "audio/ogg", "data": b64_audio}}
+                ]
+            }],
+            "generationConfig": {"temperature": 0.0, "maxOutputTokens": 1000}
+        }
         req = urllib.request.Request(
-            "https://api.groq.com/openai/v1/audio/transcriptions",
-            data=body,
-            headers={
-                "Authorization": f"Bearer {key}",
-                "Content-Type": f"multipart/form-data; boundary={boundary}",
-                "User-Agent": "AkiraAssistant/4.1"
-            }
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "User-Agent": "AkiraAssistant/4.2"}
         )
         try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                res = json.loads(resp.read().decode("utf-8"))
-                text = res.get("text", "").strip()
-                if text:
-                    return text
-        except Exception:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                candidates = data.get("candidates", [])
+                if candidates:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    if parts and "text" in parts[0]:
+                        text = parts[0]["text"].strip()
+                        if text:
+                            return text
+        except Exception as e:
+            logger.warning(f"Error en Gemini Flash Audio Transcription: {e}")
             continue
+    return None
+
+def transcribe_telegram_voice(audio_bytes: bytes, groq_keys: list = None, gemini_keys: list = None, filename: str = "voice.oga") -> str | None:
+    """
+    Transcribe notas de voz de Telegram con alta fidelidad a costo $0.00 COP.
+    1. Intento primario con Groq Whisper Large v3 Turbo.
+    2. Fallback de respaldo con Gemini Flash Native Audio.
+    """
+    if not audio_bytes:
+        return None
+    
+    # 1. Groq Whisper
+    if groq_keys:
+        boundary = "----WebKitFormBoundaryAkiraVoice" + uuid.uuid4().hex[:12]
+        parts = []
+        parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nwhisper-large-v3-turbo\r\n".encode("utf-8"))
+        parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"language\"\r\n\res\r\n".encode("utf-8"))
+        parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: audio/ogg\r\n\r\n".encode("utf-8"))
+        parts.append(audio_bytes)
+        parts.append(f"\r\n--{boundary}--\r\n".encode("utf-8"))
+        body = b"".join(parts)
+        
+        for key in groq_keys:
+            req = urllib.request.Request(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                data=body,
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": f"multipart/form-data; boundary={boundary}",
+                    "User-Agent": "AkiraAssistant/4.2"
+                }
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    res = json.loads(resp.read().decode("utf-8"))
+                    text = res.get("text", "").strip()
+                    if text:
+                        return text
+            except Exception:
+                continue
+
+    # 2. Gemini Flash Multimodal Audio Fallback
+    if gemini_keys:
+        gemini_text = transcribe_audio_with_gemini(audio_bytes, gemini_keys)
+        if gemini_text:
+            return gemini_text
+
     return None
 
 def set_telegram_webhook(bot_token: str, base_url: str = "https://akira-empresa.onrender.com") -> dict:
@@ -467,7 +521,7 @@ def get_telegram_updates(bot_token: str, offset: int = None, limit: int = 20) ->
     except Exception as e:
         return {"ok": False, "error": str(e), "result": []}
 
-def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, groq_keys: list = None, gemini_api_key: str = None) -> dict:
+def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, groq_keys: list = None, gemini_api_key: str = None, gemini_keys: list = None) -> dict:
     """
     Procesa cualquier evento recibido desde Telegram:
     - Botones táctiles (callback_query)
@@ -553,8 +607,9 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
         send_telegram_message(clean_token, chat_id, "🎙️ _Escuchando y transcribiendo tu audio en alta fidelidad..._")
         audio_bytes, _ = get_telegram_file_bytes(clean_token, file_id)
         transcribed = None
-        if audio_bytes and groq_keys:
-            transcribed = transcribe_telegram_voice(audio_bytes, groq_keys)
+        effective_gemini = gemini_keys or ([gemini_api_key] if gemini_api_key else None)
+        if audio_bytes:
+            transcribed = transcribe_telegram_voice(audio_bytes, groq_keys=groq_keys, gemini_keys=effective_gemini)
         
         if transcribed:
             if is_forwarded:
@@ -575,8 +630,8 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
                 text = transcribed
                 send_telegram_message(clean_token, chat_id, f"📝 *Te escuché:* _{transcribed}_")
         else:
-            send_telegram_message(clean_token, chat_id, "🌸 Recibí tu audio, Jhon. Estoy lista para responderte en texto.")
-            text = "Hola Akira"
+            send_telegram_message(clean_token, chat_id, "⚠️ No alcancé a distinguir claramente el audio. ¿Podrías repetirlo o escribírmelo?")
+            return {"ok": True, "chat_id": chat_id, "action": "voice_unclear"}
 
     if not text:
         text = str(msg.get("text", "")).strip()
@@ -940,17 +995,24 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
     reply_text = None
     if reply_generator:
         try:
-            reply_text = reply_generator(text)
+            # Pasar chat_id al reply_generator para mantener memoria de conversación continua
+            reply_text = reply_generator(text, chat_id=chat_id)
+        except TypeError:
+            try:
+                reply_text = reply_generator(text)
+            except Exception as e:
+                logger.error(f"Error en reply_generator: {e}")
         except Exception as e:
             logger.error(f"Error en reply_generator: {e}")
             
     if not reply_text:
-        reply_text = f"🌸 Te escucho fuerte y claro, Jhon. He procesado tu mensaje: '{text}'. Todas las 41 capacidades de Akira están sincronizadas y a tu servicio."
+        reply_text = f"🌸 Te escucho perfectamente, Jhon. He procesado tu mensaje: '{text}'. Todo tu ecosistema está activo y listo para avanzar."
 
-    send_res = send_telegram_interactive_message(clean_token, chat_id, reply_text)
+    # Conversación fluida y limpia: sin saturar la pantalla con botonera en cada mensaje
+    send_res = send_telegram_message(clean_token, chat_id, reply_text)
     return {"ok": True, "chat_id": chat_id, "action": "chat_reply", "send_result": send_res}
 
-def process_pending_telegram_updates(bot_token: str, reply_generator=None, groq_keys: list = None, gemini_api_key: str = None) -> dict:
+def process_pending_telegram_updates(bot_token: str, reply_generator=None, groq_keys: list = None, gemini_api_key: str = None, gemini_keys: list = None) -> dict:
     """Descarga y responde a todos los mensajes pendientes en getUpdates."""
     clean_token = bot_token.strip()
     updates_res = get_telegram_updates(clean_token, limit=20)
@@ -967,7 +1029,7 @@ def process_pending_telegram_updates(bot_token: str, reply_generator=None, groq_
         upd_id = upd.get("update_id", 0)
         if upd_id > highest_id:
             highest_id = upd_id
-        res = handle_telegram_update(clean_token, upd, reply_generator=reply_generator, groq_keys=groq_keys, gemini_api_key=gemini_api_key)
+        res = handle_telegram_update(clean_token, upd, reply_generator=reply_generator, groq_keys=groq_keys, gemini_api_key=gemini_api_key, gemini_keys=gemini_keys)
         if res.get("ok"):
             processed_count += 1
             
@@ -976,7 +1038,7 @@ def process_pending_telegram_updates(bot_token: str, reply_generator=None, groq_
         
     return {"ok": True, "processed": processed_count, "highest_update_id": highest_id}
 
-def test_telegram_connection(bot_token: str, chat_id: str = None, reply_generator=None, groq_keys: list = None, gemini_api_key: str = None) -> dict:
+def test_telegram_connection(bot_token: str, chat_id: str = None, reply_generator=None, groq_keys: list = None, gemini_api_key: str = None, gemini_keys: list = None) -> dict:
     """Prueba y valida la conexión con el celular de Jhon, configura el menú nativo y registra el webhook."""
     if not bot_token or not bot_token.strip():
         return {"ok": False, "error": "Por favor ingresa el Token de tu Bot de Telegram."}
@@ -1010,7 +1072,7 @@ def test_telegram_connection(bot_token: str, chat_id: str = None, reply_generato
     wh_res = set_telegram_webhook(clean_token)
 
     # 5. Procesar mensajes que Jhon ya haya escrito antes de activar el webhook
-    poll_res = process_pending_telegram_updates(clean_token, reply_generator=reply_generator, groq_keys=groq_keys, gemini_api_key=gemini_api_key)
+    poll_res = process_pending_telegram_updates(clean_token, reply_generator=reply_generator, groq_keys=groq_keys, gemini_api_key=gemini_api_key, gemini_keys=gemini_keys)
 
     welcome_text = (
         "🌸 *¡Hola Jhon! Soy Akira Suite 4.1.*\n\n"
