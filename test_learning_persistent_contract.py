@@ -83,6 +83,20 @@ class LearningPersistentContractTests(unittest.TestCase):
         self.assertIn('"result": "pass" if ok else "fail"', fn_source)
         self.assertIn('effective_state") == "verified"', fn_source)
 
+    def test_knowledge_ingest_contract_and_guard(self):
+        source = Path("nexus.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        fn = next(
+            node for node in tree.body
+            if (isinstance(node, ast.FunctionDef) or isinstance(node, ast.AsyncFunctionDef))
+            and node.name == "v8_knowledge_ingest"
+        )
+        fn_source = ast.get_source_segment(source, fn) or ""
+        self.assertIn("_require_owner(request)", fn_source)
+        self.assertIn('s["owner_scope"]', fn_source)
+        self.assertIn('service.save_knowledge', fn_source)
+        self.assertIn('service.create_node', fn_source)
+
     def test_canonical_capability_metadata(self):
         source = Path("persistence/capability_catalog.py").read_text(encoding="utf-8")
         self.assertIn('"name": "learning_persistent"', source)

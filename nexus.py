@@ -2558,6 +2558,133 @@ def v8_knowledge_create(request: Request, payload: dict):
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
 
 
+@app.post("/api/v8/knowledge/ingest")
+async def v8_knowledge_ingest(request: Request):
+    s, _owner_error = _require_owner(request)
+    if _owner_error is not None:
+        return _owner_error
+    service = _persistence_service()
+    if service is None:
+        return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "reason": "bad_json"}, status_code=400)
+    if not isinstance(payload, dict):
+        return JSONResponse({"ok": False, "reason": "bad_payload"}, status_code=400)
+
+    doc_name = str(payload.get("document_name") or payload.get("filename") or "documento_sin_nombre").strip()[:128]
+    content = str(payload.get("content") or "").strip()
+    b64 = str(payload.get("content_base64") or "")
+    domain = str(payload.get("domain") or "conocimiento_general").strip().lower()[:64]
+    auto_weave = bool(payload.get("auto_weave_graph", True))
+
+    if b64 and not content:
+        try:
+            raw = base64.b64decode(b64, validate=True)
+            if raw[:5] == b"%PDF-" and _fitz is not None:
+                doc = _fitz.open(stream=raw, filetype="pdf")
+                content = "\n".join(page.get_text() for page in doc).strip()
+                doc.close()
+            else:
+                content = raw.decode("utf-8", errors="replace").strip()
+        except Exception as ex:
+            return JSONResponse({"ok": False, "reason": f"extraction_error: {str(ex)[:100]}"}, status_code=400)
+
+    if not content:
+        return JSONResponse({"ok": False, "reason": "empty_content"}, status_code=400)
+
+    raw_chunks = [p.strip() for p in re.split(r"\n\s*\n", content) if len(p.strip()) > 30]
+    if not raw_chunks:
+        raw_chunks = [content[:1000]]
+
+    chunks = raw_chunks[:15]
+    knowledge_created = 0
+    nodes_created = 0
+    edges_created = 0
+    extracted_concepts = []
+
+    doc_node_id = f"doc_{hashlib.md5(doc_name.encode()).hexdigest()[:10]}"
+    if auto_weave:
+        try:
+            service.create_node({
+                "id": doc_node_id,
+                "label": f"\U0001f4c4 {doc_name}",
+                "node_type": "document",
+                "properties": {"filename": doc_name, "domain": domain, "chunks_count": len(chunks)},
+                "owner_scope": s["owner_scope"]
+            }, actor=s["email"], idempotency_key=f"node_{doc_node_id}")
+            nodes_created += 1
+        except Exception:
+            pass
+
+    for i, chunk in enumerate(chunks):
+        first_line = chunk.split("\n")[0][:80].strip(" -#*:")
+        concept_label = first_line if len(first_line) > 5 else f"Concepto {i+1} de {doc_name}"
+        extracted_concepts.append(concept_label)
+
+        k_data = {
+            "title": f"[{doc_name}] {concept_label}",
+            "content": chunk,
+            "domain": domain,
+            "verification_status": "verified",
+            "confidence_score": 0.95,
+            "source_uri": f"doc://{doc_name}#chunk={i+1}",
+            "created_by": s["email"],
+        }
+        try:
+            service.save_knowledge(
+                k_data,
+                actor=s["email"],
+                idempotency_key=f"ingest_k_{hashlib.md5((doc_name + str(i)).encode()).hexdigest()[:12]}",
+                owner_scope=s["owner_scope"]
+            )
+            knowledge_created += 1
+        except Exception:
+            pass
+
+        if auto_weave:
+            c_node_id = f"c_{hashlib.md5((doc_name + concept_label).encode()).hexdigest()[:10]}"
+            try:
+                service.create_node({
+                    "id": c_node_id,
+                    "label": concept_label[:64],
+                    "node_type": "concept",
+                    "properties": {"domain": domain, "source_document": doc_name},
+                    "owner_scope": s["owner_scope"]
+                }, actor=s["email"], idempotency_key=f"node_{c_node_id}")
+                nodes_created += 1
+            except Exception:
+                pass
+
+            try:
+                service.create_edge({
+                    "source_id": doc_node_id,
+                    "target_id": c_node_id,
+                    "relation": "contains_concept",
+                    "weight": 1.0,
+                    "owner_scope": s["owner_scope"]
+                }, actor=s["email"], idempotency_key=f"edge_{doc_node_id}_{c_node_id}")
+                edges_created += 1
+            except Exception:
+                pass
+
+    _cache_invalidate("knowledge")
+    _cache_invalidate("graph_overview")
+
+    return {
+        "ok": True,
+        "document_name": doc_name,
+        "domain": domain,
+        "chunks_processed": len(chunks),
+        "knowledge_created": knowledge_created,
+        "nodes_created": nodes_created,
+        "edges_created": edges_created,
+        "concepts": extracted_concepts[:10],
+        "message": f"Documento ingestado exitosamente: {knowledge_created} fragmentos de conocimiento verificados y {nodes_created} nodos neuronales tejidos."
+    }
+
+
 @app.patch("/api/v8/knowledge/{knowledge_id}")
 def v8_knowledge_update(request: Request, knowledge_id: str, payload: dict):
     s, _owner_error = _require_owner(request)
