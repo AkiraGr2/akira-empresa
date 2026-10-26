@@ -661,6 +661,7 @@ def _get_hive_specialist_hint(msg: str) -> str:
     return ""
 
 def get_groq_fallback(msg, conversation_context="", web_info="", custom_keys=None, is_voice: bool = False):
+    # Este proveedor es un motor de inferencia utilizado por Akira; no es su identidad ni su autoridad.
     try:
         import requests
         keys = custom_keys if (custom_keys and len(custom_keys) > 0) else _pick_groq_keys()
