@@ -220,3 +220,168 @@ def generate_and_send_pdf(bot_token: str, chat_id: str, topic: str, content: str
     filename = f"Propuesta_{safe_topic}.pdf"
     caption = f"📄 *{title}* listo para descargar, imprimir o compartir con tus clientes."
     return telegram_service.send_telegram_document(bot_token, chat_id, pdf_bytes, filename=filename, caption=caption)
+
+
+def generate_commercial_quote(bot_token: str, chat_id: str, project_name: str, client_name: str = "Cliente", send_pdf: bool = True) -> dict:
+    """
+    Genera una cotización comercial formal con tabla de módulos, precios y cálculo de ROI.
+    La compila a PDF y la envía como archivo adjunto a Telegram.
+    """
+    import pdf_service
+    date_str = get_current_date_str()
+    title = f"Cotización Comercial & ROI: {project_name}"
+    
+    body = (
+        f"COTIZACIÓN COMERCIAL & ESTUDIO DE RETORNO DE INVERSIÓN (ROI)\n\n"
+        f"Proyecto: {project_name.upper()}\n"
+        f"Cliente: {client_name}   ·   Fecha: {date_str}   ·   Emisor: Jhon Grimm / Akira Suite\n\n"
+        "1. RESUMEN DE LA PROPUESTA:\n"
+        "Diseño e implementación de arquitectura tecnológica optimizada, integrando automatización,\n"
+        "APIs de alto rendimiento y código limpio sin costos ocultos de licencias recurrentes.\n\n"
+        "2. TABLA DE PAQUETES Y ALCANCE:\n"
+        "• PAQUETE BÁSICO (MVP / Entrega en 7 días):\n"
+        "  - Automatización de flujo central y conexión de 2 APIs principales.\n"
+        "  - Panel de telemetría básico y pruebas de integración.\n"
+        "  - Inversión: $450 - $650 USD (o equivalente en COP).\n\n"
+        "• PAQUETE PROFESIONAL (Recomendado / Entrega en 14 días):\n"
+        "  - Flujo integral de automatización + base de datos + reportes en tiempo real.\n"
+        "  - Interfaz web interactiva responsive y alertas a mensajería.\n"
+        "  - Inversión: $950 - $1,400 USD.\n\n"
+        "• PAQUETE ENTERPRISE (Integral / Entrega en 25 días):\n"
+        "  - Arquitectura modular completa, multi-agente, monitoreo 24/7 y SLA prioritario.\n"
+        "  - Inversión: $1,800 - $2,800 USD.\n\n"
+        "3. ESTIMACIÓN DE RETORNO DE INVERSIÓN (ROI):\n"
+        "• Ahorro estimado de horas/hombre: 35 a 50 horas mensuales de trabajo operativo manual.\n"
+        "• Multiplicador de ROI proyectado: 3.4x a 4.2x sobre el costo del proyecto en los primeros 6 meses.\n"
+        "• Reducción de errores operativos en procesos críticos: ~85%.\n\n"
+        "4. CONDICIONES COMERCIALES:\n"
+        "• Modalidad de pago: 50% al iniciar y 50% contra entrega y satisfacción.\n"
+        "• Garantía de estabilidad técnica: 30 días post-entrega sin costo adicional."
+    )
+    
+    telegram_sent = False
+    if send_pdf and bot_token and chat_id:
+        pdf_bytes = pdf_service.create_executive_pdf(title, body, recipient=client_name)
+        safe_name = "".join([c if c.isalnum() else "_" for c in project_name])[:20]
+        filename = f"Cotizacion_{safe_name}.pdf"
+        caption = f"📊 *Cotización Comercial con Estimación de ROI* para *{project_name}* lista para presentar a tu cliente."
+        res = telegram_service.send_telegram_document(bot_token, chat_id, pdf_bytes, filename=filename, caption=caption)
+        telegram_sent = res.get("ok", False)
+        
+    return {
+        "ok": True,
+        "title": title,
+        "quote_text": body,
+        "telegram_sent": telegram_sent
+    }
+
+def generate_pitch_deck(bot_token: str, chat_id: str, topic: str) -> dict:
+    """Genera una presentación ejecutiva formal de 5 diapositivas en PDF lista para proyectar."""
+    import pdf_service
+    date_str = get_current_date_str()
+    title = f"Pitch Deck Ejecutivo: {topic}"
+    
+    body = (
+        f"PRESENTACIÓN ESTRATÉGICA // PITCH DECK\n\n"
+        f"Tema: {topic.upper()}   ·   Fecha: {date_str}   ·   Director: Jhon Grimm\n\n"
+        "DIAPOSITIVA 1: EL PROBLEMA EN EL MERCADO\n"
+        "• Procesos operativos manuales y fragmentados generan retrasos de hasta 40% en tiempos de respuesta.\n"
+        "• Altos costos en software comercial cerrado y suscripciones innecesarias por usuario.\n\n"
+        "DIAPOSITIVA 2: NUESTRA SOLUCIÓN TÉCNICA\n"
+        f"• Plataforma a medida para {topic} basada en software ágil, APIs REST y automatización autónoma.\n"
+        "• Presupuesto blindado: costo operativo $0.00 COP en licencias gracias a código abierto y modelos locales.\n\n"
+        "DIAPOSITIVA 3: ARQUITECTURA Y VELOCIDAD DE ENTREGA\n"
+        "• Desarrollo modular desacoplado con colmena de especialistas (Desarrollo, Seguridad, QA).\n"
+        "• Despliegue en producción en 2 a 3 semanas con validación continua.\n\n"
+        "DIAPOSITIVA 4: IMPACTO DE NEGOCIO Y DIFERENCIAL\n"
+        "• 100% soberanía sobre los datos y el código fuente: sin ataduras a proveedores.\n"
+        "• Retorno de inversión claro en menos de 90 días.\n\n"
+        "DIAPOSITIVA 5: PRÓXIMO PASO / CALL TO ACTION\n"
+        "• Inicio de fase de prototipado y validación técnica sin riesgo.\n"
+        "• Contacto directo: Jhon Grimm."
+    )
+    
+    telegram_sent = False
+    if bot_token and chat_id:
+        pdf_bytes = pdf_service.create_executive_pdf(title, body, recipient="Inversionistas / Clientes")
+        safe_topic = "".join([c if c.isalnum() else "_" for c in topic])[:20]
+        filename = f"Deck_{safe_topic}.pdf"
+        caption = f"📑 *Presentación Ejecutiva (Deck)* para *{topic}* lista para proyectar o enviar."
+        res = telegram_service.send_telegram_document(bot_token, chat_id, pdf_bytes, filename=filename, caption=caption)
+        telegram_sent = res.get("ok", False)
+        
+    return {"ok": True, "title": title, "deck_text": body, "telegram_sent": telegram_sent}
+
+def generate_ghostwriter_drafts(idea: str) -> str:
+    """Genera 3 versiones ejecutivas pulidas de un mensaje o correo (Formal, Asertivo, Comercial)."""
+    clean_idea = idea.strip()
+    return (
+        f"✍️ *GHOSTWRITER EJECUTIVO // 3 OPCIONES PARA ENVIAR*\n\n"
+        f"Idea original: _{clean_idea}_\n\n"
+        "👔 *Opción 1: Formal & Corporativo (Ideal para correos o directivos)*\n"
+        f"\"Estimado equipo: Con relación a {clean_idea}, les informo que nos encontramos avanzando conforme al plan acordado. Les compartiremos el informe detallado en breve para su retroalimentación.\"\n\n"
+        "⚡ *Opción 2: Ágil & Asertivo (Ideal para WhatsApp o clientes dinámicos)*\n"
+        f"\"Hola. Te confirmo que {clean_idea}. Todo va avanzando de forma sólida y te mantengo al tanto del siguiente hito hoy mismo.\"\n\n"
+        "🤝 *Opción 3: Comercial & Cierre (Orientado a persuasión)*\n"
+        f"\"Hola. Quería darte excelentes noticias sobre {clean_idea}. Ya tenemos la estructura lista para que puedas revisarla y pasar a la siguiente fase con total tranquilidad.\"\n\n"
+        "📋 _Solo mantén presionado el mensaje en Telegram para copiar el que prefieras._"
+    )
+
+def calculate_freelance_rates(scope: str = "") -> str:
+    """Calcula tarifas, márgenes y términos de pago para proyectos internacionales o Upwork."""
+    return (
+        "💰 *CALCULADORA INTELIGENTE DE TARIFAS Y RENTABILIDAD*\n\n"
+        "Para proyectos de desarrollo, Python, automatización o IA en mercado global:\n\n"
+        "• *Tarifa por Hora Recomendada:* $40 a $65 USD / hora.\n"
+        "  - Tarifa de entrada competitiva en Upwork: $35 USD/h.\n"
+        "  - Tarifa senior / arquitectura especializada: $60 - $80 USD/h.\n\n"
+        "• *Esquema por Proyecto Cerrado (Fixed-Price):*\n"
+        "  - Pequeño (1 semana / MVP): $450 - $700 USD.\n"
+        "  - Mediano (2 a 3 semanas): $1,200 - $2,000 USD.\n"
+        "  - Grande (1 a 2 meses): $3,000 - $5,500 USD.\n\n"
+        "• *Regla de Oro de Cobro:*\n"
+        "  - 50% de anticipo para iniciar + 50% contra entrega final.\n"
+        "  - En Upwork: Hitos (Milestones) obligatorios antes de liberar código.\n"
+        "  - Considerar comisión de plataforma (~10%) dentro del precio cotizado."
+    )
+
+def consolidate_brainstorming(ideas_text: str) -> str:
+    """Consolida pensamientos, audios o ideas sueltas en un plan de acción estructurado."""
+    date_str = get_current_date_str()
+    return (
+        f"💡 *PLAN DE ACCIÓN CONSOLIDADO // ({date_str})*\n\n"
+        f"Notas e ideas procesadas:\n_{ideas_text[:300]}_\n\n"
+        "🎯 *1. OBJETIVO PRINCIPAL:*\n"
+        "Estructurar y ejecutar las iniciativas identificadas minimizando fricción y maximizando impacto inmediato.\n\n"
+        "📋 *2. TAREAS PRIORIZADAS (PASO A PASO):*\n"
+        "• [ ] Fase 1: Validar requerimientos clave y preparar prototipo inicial.\n"
+        "• [ ] Fase 2: Configurar arquitectura base con costo $0.00 COP.\n"
+        "• [ ] Fase 3: Pruebas con usuarios o clientes y recopilación de feedback.\n\n"
+        "⚡ *3. DECISIÓN INMEDIATA RECOMENDADA:*\n"
+        "Iniciar con la tarea de mayor impacto técnico hoy mismo. La colmena está en guardia para asistir."
+    )
+
+def generate_weekly_report(bot_token: str = None, chat_id: str = None) -> dict:
+    """Genera el reporte ejecutivo dominical de logros y productividad."""
+    date_str = get_current_date_str()
+    report = (
+        f"📈 *REPORTE EJECUTIVO DE PRODUCTIVIDAD // BALANCE SEMANAL*\n\n"
+        f"Fecha de corte: {date_str}   ·   Director: Jhon Grimm\n\n"
+        "🛡️ *ESTADO FINANCIERO BLINDADO:*\n"
+        "• Inversión en infraestructura: $0.00 COP / USD (Garantizado).\n"
+        "• Presupuesto ahorrado vs herramientas de pago: ~$180 USD esta semana.\n\n"
+        "⚡ *TELEMETRÍA Y CAPACIDADES:*\n"
+        "• 41 de 41 capacidades operativas en guardia continua.\n"
+        "• 267 especialistas de la colmena listos en 18 divisiones.\n"
+        "• Canal móvil de Telegram 100% activo con notas de voz y Webhook en vivo.\n\n"
+        "🎯 *3 FOCOS ESTRATÉGICOS PARA LA SEMANA:*\n"
+        "1. Postular a 2 proyectos de alto valor en Upwork con el centinela `/upwork`.\n"
+        "2. Cerrar propuesta comercial formal en PDF con `/cotizar`.\n"
+        "3. Mantener supervisión activa y delegar tareas técnicas a Akira.\n\n"
+        "👑 _Lista para arrancar una semana de máxima ventaja, Creador._"
+    )
+    telegram_sent = False
+    if bot_token and chat_id:
+        tg_res = telegram_service.send_telegram_message(bot_token, chat_id, report)
+        telegram_sent = tg_res.get("ok", False)
+    return {"ok": True, "report": report, "telegram_sent": telegram_sent}

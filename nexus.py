@@ -9800,7 +9800,9 @@ async def api_telegram_test(request: Request):
     token = body.get("token", "")
     chat_id = body.get("chat_id")
     import telegram_service
-    return telegram_service.test_telegram_connection(token, chat_id, reply_generator=generate_telegram_reply, groq_keys=_pick_groq_keys())
+    gk = _pick_gemini_keys()
+    gem_key = gk[0] if gk else None
+    return telegram_service.test_telegram_connection(token, chat_id, reply_generator=generate_telegram_reply, groq_keys=_pick_groq_keys(), gemini_api_key=gem_key)
 
 @app.post("/api/v8/telegram/webhook/{token}")
 async def api_telegram_webhook(token: str, request: Request):
@@ -9810,7 +9812,9 @@ async def api_telegram_webhook(token: str, request: Request):
     except Exception:
         body = {}
     import telegram_service
-    return telegram_service.handle_telegram_update(token, body, reply_generator=generate_telegram_reply, groq_keys=_pick_groq_keys())
+    gk = _pick_gemini_keys()
+    gem_key = gk[0] if gk else None
+    return telegram_service.handle_telegram_update(token, body, reply_generator=generate_telegram_reply, groq_keys=_pick_groq_keys(), gemini_api_key=gem_key)
 
 @app.post("/api/v8/telegram/poll")
 async def api_telegram_poll(request: Request):
@@ -9821,7 +9825,59 @@ async def api_telegram_poll(request: Request):
         body = {}
     token = body.get("token") or os.getenv("TELEGRAM_BOT_TOKEN", "")
     import telegram_service
-    return telegram_service.process_pending_telegram_updates(token, reply_generator=generate_telegram_reply, groq_keys=_pick_groq_keys())
+    gk = _pick_gemini_keys()
+    gem_key = gk[0] if gk else None
+    return telegram_service.process_pending_telegram_updates(token, reply_generator=generate_telegram_reply, groq_keys=_pick_groq_keys(), gemini_api_key=gem_key)
+
+@app.post("/api/v8/executive/commercial-quote")
+async def api_executive_quote(request: Request):
+    """Genera cotizacion formal con estimacion de ROI y entrega en PDF."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    token = body.get("telegram_token") or os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id = body.get("chat_id") or os.getenv("TELEGRAM_CHAT_ID", "")
+    project_name = body.get("project_name") or "Sistema Tecnologico de Automatizacion"
+    client_name = body.get("client_name") or "Cliente"
+    import executive_service
+    return executive_service.generate_commercial_quote(token, chat_id, project_name, client_name)
+
+@app.post("/api/v8/executive/pitch-deck")
+async def api_executive_pitch_deck(request: Request):
+    """Genera presentacion estrategica de 5 slides en PDF."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    token = body.get("telegram_token") or os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id = body.get("chat_id") or os.getenv("TELEGRAM_CHAT_ID", "")
+    topic = body.get("topic") or "Arquitectura Modular y Reduccion de Costos Operativos"
+    import executive_service
+    return executive_service.generate_pitch_deck(token, chat_id, topic)
+
+@app.post("/api/v8/executive/ghostwriter")
+async def api_executive_ghostwriter(request: Request):
+    """Genera 3 opciones ejecutivas para enviar por correo o chat (Formal, Agil, Comercial)."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    idea = body.get("idea") or "Actualizacion de avance del proyecto"
+    import executive_service
+    return {"ok": True, "drafts": executive_service.generate_ghostwriter_drafts(idea)}
+
+@app.post("/api/v8/executive/weekly-report")
+async def api_executive_weekly_report(request: Request):
+    """Genera el reporte ejecutivo dominical de productividad y salud financiera."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    token = body.get("telegram_token") or os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id = body.get("chat_id") or os.getenv("TELEGRAM_CHAT_ID", "")
+    import executive_service
+    return executive_service.generate_weekly_report(token, chat_id)
 
 @app.post("/api/v8/executive/upwork-sentinel")
 async def api_executive_upwork(request: Request):

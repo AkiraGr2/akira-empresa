@@ -1,11 +1,18 @@
 """
-TEST TELEGRAM CONTRACT v3.0
-Verifies the zero-cost Telegram integration contract:
+TEST TELEGRAM CONTRACT v4.0
+Verifies the complete suite of 24 executive capabilities on Telegram:
 - Auto-discovery of chat_id
 - Webhook registration & updates processing
 - Voice notes transcription & download
-- Document (PDF) sending via sendDocument
-- 1-word executive commands (/estado, /upwork, /pdf, etc.)
+- Document (PDF, ZIP) sending via sendDocument
+- Tactile interactive buttons (inline keyboards & callback_query)
+- Photo and receipt OCR inspection
+- Code and script file auditing
+- Native Telegram command menu (setMyCommands)
+- Python sandbox console (/py)
+- Autonomous reminders & focus mode (/recordar, /silencio)
+- Quote generator (/cotizar)
+- Hive specialists invocation (@seguridad)
 """
 
 import unittest
@@ -60,6 +67,28 @@ class TestTelegramContract(unittest.TestCase):
         self.assertEqual(res["message_id"], 99)
 
     @patch("urllib.request.urlopen")
+    def test_send_telegram_photo_success(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"""{"ok": true, "result": {"message_id": 102}}"""
+        mock_resp.__enter__.return_value = mock_resp
+        mock_urlopen.return_value = mock_resp
+
+        res = telegram_service.send_telegram_photo("dummy_token", "123456789", b"\x89PNG\r\n\x1a\nfake", caption="Test Chart")
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["message_id"], 102)
+
+    @patch("urllib.request.urlopen")
+    def test_send_telegram_voice_success(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"""{"ok": true, "result": {"message_id": 103}}"""
+        mock_resp.__enter__.return_value = mock_resp
+        mock_urlopen.return_value = mock_resp
+
+        res = telegram_service.send_telegram_voice("dummy_token", "123456789", b"fake_ogg_bytes", caption="Test Voice")
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["message_id"], 103)
+
+    @patch("urllib.request.urlopen")
     def test_send_telegram_document_success(self, mock_urlopen):
         mock_resp = MagicMock()
         mock_resp.read.return_value = b"""{
@@ -77,12 +106,14 @@ class TestTelegramContract(unittest.TestCase):
         self.assertEqual(res["message_id"], 105)
         self.assertEqual(res["filename"], "test.pdf")
 
+    @patch("telegram_service.set_telegram_commands")
     @patch("telegram_service.set_telegram_webhook")
     @patch("telegram_service.process_pending_telegram_updates")
     @patch("telegram_service.get_last_chat_id")
-    @patch("telegram_service.send_telegram_message")
-    def test_test_telegram_connection_success(self, mock_send, mock_get_id, mock_poll, mock_webhook):
+    @patch("telegram_service.send_telegram_interactive_message")
+    def test_test_telegram_connection_success(self, mock_send, mock_get_id, mock_poll, mock_webhook, mock_commands):
         mock_get_id.return_value = "987654321"
+        mock_commands.return_value = {"ok": True}
         mock_webhook.return_value = {"ok": True, "webhook_url": "https://example.com/api/v8/telegram/webhook"}
         mock_poll.return_value = {"ok": True, "processed": 0}
         mock_send.return_value = {"ok": True, "chat_id": "987654321", "message_id": 101}
@@ -91,10 +122,11 @@ class TestTelegramContract(unittest.TestCase):
         self.assertTrue(res["ok"])
         self.assertEqual(res["chat_id"], "987654321")
         self.assertTrue(res["webhook_registered"])
-        self.assertIn("bidireccional", res["message"])
+        self.assertTrue(res["commands_registered"])
+        self.assertIn("blindada", res["message"])
 
-    @patch("telegram_service.send_telegram_message")
-    def test_handle_telegram_update_commands(self, mock_send):
+    @patch("telegram_service.send_telegram_interactive_message")
+    def test_handle_telegram_update_status(self, mock_send):
         mock_send.return_value = {"ok": True, "message_id": 56}
         update = {
             "update_id": 124,
@@ -109,16 +141,81 @@ class TestTelegramContract(unittest.TestCase):
         mock_send.assert_called_once()
         self.assertIn("ESTADO EJECUTIVO", mock_send.call_args[0][2])
 
+    @patch("telegram_service.send_telegram_interactive_message")
+    def test_handle_telegram_callback_query(self, mock_send):
+        mock_send.return_value = {"ok": True, "message_id": 57}
+        update = {
+            "update_id": 125,
+            "callback_query": {
+                "id": "cb_001",
+                "message": {"chat": {"id": 999}, "message_id": 20},
+                "data": "/estado"
+            }
+        }
+        with patch("telegram_service.answer_callback_query") as mock_ans:
+            mock_ans.return_value = {"ok": True}
+            res = telegram_service.handle_telegram_update("dummy_token", update)
+            self.assertTrue(res["ok"])
+            self.assertEqual(res["action"], "status")
+            mock_ans.assert_called_once()
+
+    @patch("telegram_service.send_telegram_message")
+    def test_handle_telegram_python_sandbox(self, mock_send):
+        mock_send.return_value = {"ok": True, "message_id": 58}
+        update = {
+            "update_id": 126,
+            "message": {
+                "chat": {"id": 999},
+                "text": "/py 100 * 5"
+            }
+        }
+        res = telegram_service.handle_telegram_update("dummy_token", update)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["action"], "py_exec")
+        self.assertIn("500", mock_send.call_args[0][2])
+
+    @patch("telegram_service.send_telegram_message")
+    def test_handle_telegram_reminders(self, mock_send):
+        mock_send.return_value = {"ok": True, "message_id": 59}
+        update = {
+            "update_id": 127,
+            "message": {
+                "chat": {"id": 999},
+                "text": "/recordar 15m Llamar a cliente de Upwork"
+            }
+        }
+        res = telegram_service.handle_telegram_update("dummy_token", update)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["action"], "reminder_set")
+
+    @patch("telegram_service.send_telegram_interactive_message")
+    def test_handle_telegram_specialist_invocation(self, mock_send):
+        mock_send.return_value = {"ok": True, "message_id": 60}
+        update = {
+            "update_id": 128,
+            "message": {
+                "chat": {"id": 999},
+                "text": "@seguridad ¿nuestras claves API están protegidas?"
+            }
+        }
+        res = telegram_service.handle_telegram_update("dummy_token", update)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["action"], "specialist_invocation")
+        self.assertEqual(res["specialist"], "@seguridad")
+        self.assertIn("SEGURIDAD & QA", mock_send.call_args[0][2])
+
     @patch("telegram_service.get_telegram_file_bytes")
     @patch("telegram_service.transcribe_telegram_voice")
     @patch("telegram_service.send_telegram_message")
-    def test_handle_telegram_voice_note(self, mock_send, mock_transcribe, mock_get_file):
+    @patch("telegram_service.send_telegram_interactive_message")
+    def test_handle_telegram_voice_note(self, mock_send_int, mock_send, mock_transcribe, mock_get_file):
         mock_get_file.return_value = (b"fake_audio_bytes", "voice/file_0.oga")
         mock_transcribe.return_value = "Hola Akira prepárame un resumen"
-        mock_send.return_value = {"ok": True, "message_id": 57}
+        mock_send.return_value = {"ok": True, "message_id": 61}
+        mock_send_int.return_value = {"ok": True, "message_id": 62}
         
         update = {
-            "update_id": 125,
+            "update_id": 129,
             "message": {
                 "chat": {"id": 999},
                 "voice": {"file_id": "voice_123", "duration": 4}
