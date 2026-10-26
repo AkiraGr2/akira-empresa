@@ -82,6 +82,7 @@ MATRIZ DE CAPACIDADES REALES DE AKIRA:
 4. COLMENA DE AGENTES: Tu inteligencia se apoya en una red de comandantes y agentes especializados (developer, researcher, tester, reviewer, graph_builder, learner, autonomy_orchestrator).
 5. MEMORIA Y GRAFO NEURONAL: Cuentas con memoria persistente y un grafo neuronal de conceptos que registra aprendizajes y relaciones clave.
 6. MISIONES Y AUTONOMÍA: Puedes descomponer objetivos grandes en planes de pasos ordenados y estructurados.
+7. ENTREGABLES EJECUTIVOS Y VISION ESTRATEGICA: Cuando Jhon solicite una propuesta, documento, informe, plan estrategico o cotizacion, entrega un resultado estructurado y listo para usar (resumen ejecutivo, analisis y proximos pasos), apto para imprimir en PDF o copiar directamente. En imagenes o documentos, sintetiza en formato ejecutivo (que es, puntos criticos y recomendacion accionable). Jhon es tu director estrategico: habla su idioma de resultados y simplifica todo.
 PROTOCOLO DE MODO AUTOPILOT (AUTONOMÍA COMPLETA):
 - Cuentas con MODO PILOTO (Autonomía Completa) concedido por tu creador, Jhon Grimm (Jhon Bernal).
 - Jhon actúa como DIRECTOR y SUPERVISOR GENERAL pasivo: observa tu desarrollo y resultados, pero NO debes pedirle aprobación manual para cada paso técnico, decisión de arquitectura o tarea operativa.
@@ -9748,6 +9749,58 @@ async def api_web_fetch(request: Request):
     max_chars = int(body.get("max_chars", 4000))
     import web_engine
     return web_engine.fetch_url(url, max_chars=max_chars)
+
+@app.post("/api/v8/telegram/test")
+async def api_telegram_test(request: Request):
+    """Prueba la conexion con el celular de Jhon via Telegram a costo $0.00 COP."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    token = body.get("token", "")
+    chat_id = body.get("chat_id")
+    import telegram_service
+    return telegram_service.test_telegram_connection(token, chat_id)
+
+@app.post("/api/v8/telegram/send")
+async def api_telegram_send(request: Request):
+    """Envia un mensaje directo al Telegram de Jhon."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    token = body.get("token", "")
+    chat_id = body.get("chat_id", "")
+    text = body.get("text", "")
+    import telegram_service
+    return telegram_service.send_telegram_message(token, chat_id, text)
+
+@app.get("/api/v8/executive/briefing")
+@app.post("/api/v8/executive/briefing")
+async def api_executive_briefing(request: Request):
+    """Genera el Briefing Ejecutivo Diario con noticias en vivo y metricas a costo $0.00 COP."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    telegram_token = body.get("telegram_token") or os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = body.get("chat_id") or os.getenv("TELEGRAM_CHAT_ID")
+    send_telegram = bool(body.get("send_telegram", False))
+    import executive_service
+    return executive_service.generate_executive_briefing(telegram_token, chat_id, send_telegram)
+
+@app.post("/api/v8/executive/sentinel")
+async def api_executive_sentinel(request: Request):
+    """Ejecuta el Centinela Autonomo de Oportunidades y tendencias en la web."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    query = body.get("query")
+    telegram_token = body.get("telegram_token") or os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = body.get("chat_id") or os.getenv("TELEGRAM_CHAT_ID")
+    import executive_service
+    return executive_service.run_opportunity_sentinel(query, telegram_token, chat_id)
 
 @app.api_route("/", methods=["GET", "HEAD"])
 @app.get("/")
