@@ -8986,7 +8986,9 @@ async def chat(request: Request):
             conversation_context = (conversation_context + hive_context)
 
         github_context = ""
-        github_read = None if is_fast_voice else _detect_github_read_request(msg)
+        github_read = _detect_github_read_request(msg)
+        if is_fast_voice:
+            github_read = None
         if github_read and persist:
             try:
                 github_outputs, github_error = _invoke_tool(
@@ -9037,6 +9039,35 @@ async def chat(request: Request):
             )
         if github_context:
             conversation_context = (conversation_context + github_context)[:52000]
+
+        # LIVE REAL-TIME WEB INTELLIGENCE AUGMENTATION ($0.00 COP)
+        web_context = ""
+        web_search_flag = bool(data.get("web_search") or data.get("live_web"))
+        has_url = bool(re.search(r'https?://[^\s]+', clean_msg))
+        has_search_kw = bool(re.search(r'\b(busca en la web|busca en internet|buscar en internet|noticias de hoy|cotización de hoy|clima hoy)\b', clean_msg, re.I))
+
+        if web_search_flag or has_url or has_search_kw:
+            try:
+                import web_engine
+                if has_url:
+                    url_m = re.search(r'https?://[^\s]+', clean_msg)
+                    if url_m:
+                        target_url = url_m.group(0).rstrip('.,;:)')
+                        fetched = await asyncio.to_thread(web_engine.fetch_url, target_url, 3500)
+                        if fetched.get("ok"):
+                            web_context = f"\n[DATOS EN VIVO — CONTENIDO WEB EXTRAÍDO]\nURL: {target_url}\nTítulo: {fetched.get('title')}\nContenido:\n{fetched.get('content')}\n[FIN CONTENIDO WEB]\n"
+                if not web_context:
+                    search_query = clean_msg
+                    search_query = re.sub(r'^(?:akira,?|por favor,?|busca en (?:la web|internet) sobre|busca en (?:la web|internet))\s*', '', search_query, flags=re.I).strip()
+                    aug = await asyncio.to_thread(web_engine.augment_prompt_with_web, search_query[:100], 3)
+                    if aug:
+                        web_context = f"\n{aug}\n"
+            except Exception as web_err:
+                print(f"[live-web] error: {web_err}")
+
+        if web_context:
+            conversation_context = (conversation_context + web_context)[:55000]
+
         if persist and ABSORPTION_MODE == "shadow":
             asyncio.create_task(
                 _run_absorption_shadow(msg, memories, conversation_context)
@@ -9693,6 +9724,30 @@ async def execute_cron_task(request: Request):
         "status": "completed",
         "result": f"Tarea '{task_id}' ejecutada exitosamente a costo $0.00 COP."
     }
+
+@app.post("/api/v8/web/search")
+async def api_web_search(request: Request):
+    """Búsqueda web en vivo a costo cero ($0.00 COP/USD)."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    query = body.get("query", "")
+    max_results = int(body.get("max_results", 5))
+    import web_engine
+    return web_engine.search_web(query, max_results=max_results)
+
+@app.post("/api/v8/web/fetch")
+async def api_web_fetch(request: Request):
+    """Extractor y limpiador de contenido de URL en vivo."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    url = body.get("url", "")
+    max_chars = int(body.get("max_chars", 4000))
+    import web_engine
+    return web_engine.fetch_url(url, max_chars=max_chars)
 
 @app.api_route("/", methods=["GET", "HEAD"])
 @app.get("/")
