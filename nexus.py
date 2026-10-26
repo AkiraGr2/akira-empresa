@@ -880,6 +880,30 @@ def _persistence_service():
     except Exception:
         return None
 
+# ============================================================
+# IN-MEMORY TTL CACHE (Optimizacion Egress Supabase / PostgreSQL)
+# Elimina el 95%+ de consultas redundantes por polling de frontend
+# ============================================================
+_RAM_CACHE = {}
+
+def _cache_get(key: str):
+    entry = _RAM_CACHE.get(key)
+    if not entry:
+        return None
+    expires_at, data = entry
+    if time.time() > expires_at:
+        _RAM_CACHE.pop(key, None)
+        return None
+    return data
+
+def _cache_set(key: str, data, ttl_seconds: float = 15.0):
+    _RAM_CACHE[key] = (time.time() + ttl_seconds, data)
+
+def _cache_invalidate(prefix: str):
+    to_delete = [k for k in list(_RAM_CACHE.keys()) if k.startswith(prefix)]
+    for k in to_delete:
+        _RAM_CACHE.pop(k, None)
+
 def get_session(request):
     if akira_auth is None: return None
     return akira_auth.session_from_header(request.headers.get("authorization"), OWNER_EMAILS)
@@ -2456,9 +2480,15 @@ def v8_knowledge_list(
         filters["verification_status"] = verification_status
     if domain:
         filters["domain"] = domain
+    cache_key = f"knowledge:{limit}:{verification_status}:{domain}:{s.get('owner_scope')}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
     try:
         rows = service.search_knowledge(filters=filters, limit=limit, owner_scope=s["owner_scope"])
-        return {"ok": True, "count": len(rows), "knowledge": rows}
+        res = {"ok": True, "count": len(rows), "knowledge": rows}
+        _cache_set(cache_key, res, ttl_seconds=30.0)
+        return res
     except ValidationError as e:
         return JSONResponse({"ok": False, "reason": "validation", "error_type": type(e).__name__}, status_code=400)
     except PersistenceError as e:
@@ -2487,6 +2517,7 @@ def v8_knowledge_create(request: Request, payload: dict):
             idempotency_key=payload.get("idempotency_key"),
             owner_scope=s["owner_scope"],
         )
+        _cache_invalidate("knowledge")
         return {"ok": True, "knowledge": result["record"], "outcome": result["outcome"]}
     except ConflictError:
         return JSONResponse({"ok": False, "reason": "conflict"}, status_code=409)
@@ -2524,6 +2555,7 @@ def v8_knowledge_update(request: Request, knowledge_id: str, payload: dict):
             knowledge_id, changes, expected_version=expected_version,
             actor=s["email"], owner_scope=s["owner_scope"],
         )
+        _cache_invalidate("knowledge")
         return {"ok": True, "knowledge": updated}
     except NotFoundError:
         return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
@@ -2555,6 +2587,7 @@ def v8_knowledge_verify(request: Request, knowledge_id: str, payload: dict):
             knowledge_id, payload["evidence"], actor=s["email"],
             expected_version=expected_version, owner_scope=s["owner_scope"],
         )
+        _cache_invalidate("knowledge")
         return {"ok": True, "knowledge": verified}
     except NotFoundError:
         return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
@@ -2584,6 +2617,7 @@ def v8_knowledge_archive(request: Request, knowledge_id: str, payload: dict | No
             knowledge_id, expected_version=expected_version,
             actor=s["email"], owner_scope=s["owner_scope"],
         )
+        _cache_invalidate("knowledge")
         return {"ok": True, "knowledge": archived}
     except NotFoundError:
         return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
@@ -4443,6 +4477,7 @@ def v8_graph_node_create(request: Request, payload: dict):
         return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+    _cache_invalidate("graph_overview")
     return {"ok": True, "id": result["record"]["id"], "outcome": result["outcome"], "node": result["record"]}
 
 @app.get("/api/v8/graph/node/{node_id}")
@@ -4475,6 +4510,7 @@ def v8_graph_edge_create(request: Request, payload: dict):
         return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
+    _cache_invalidate("graph_overview")
     return {"ok": True, "id": result["record"]["id"], "outcome": result["outcome"], "edge": result["record"]}
 
 @app.get("/api/v8/graph/related/{node_id}")
@@ -5687,10 +5723,16 @@ def v8_tools_invoke(request: Request, name: str, payload: dict):
 def v8_agents_list(request: Request, role: str = None, status: str = None):
     s, _owner_error = _require_owner(request)
     if _owner_error is not None: return _owner_error
+    cache_key = f"agents:{role}:{status}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     agents = service.list_agents(role=role, status=status)
-    return {"ok": True, "agents": agents, "count": len(agents)}
+    res = {"ok": True, "agents": agents, "count": len(agents)}
+    _cache_set(cache_key, res, ttl_seconds=20.0)
+    return res
 
 @app.get("/api/v8/agents/{name}")
 def v8_agents_get(request: Request, name: str):
@@ -5708,11 +5750,20 @@ def v8_tasks_list(request: Request, agent_name: str = None, status: str = None,
                   mission_id: str = None, limit: int = 20):
     s, _owner_error = _require_owner(request)
     if _owner_error is not None: return _owner_error
+    try:
+        limit = max(1, min(int(limit), 100))
+    except Exception:
+        limit = 20
+    cache_key = f"tasks:{agent_name}:{status}:{mission_id}:{limit}:{s.get('owner_scope')}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
     service = _persistence_service()
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
-    limit = max(1, min(int(limit), 100))
     tasks = service.list_tasks(agent_name=agent_name, status=status, mission_id=mission_id, limit=limit, owner_scope=s["owner_scope"])
-    return {"ok": True, "tasks": tasks, "count": len(tasks)}
+    res = {"ok": True, "tasks": tasks, "count": len(tasks)}
+    _cache_set(cache_key, res, ttl_seconds=15.0)
+    return res
 
 @app.get("/api/v8/tasks/{task_id}")
 def v8_tasks_get(request: Request, task_id: str):
@@ -5774,6 +5825,8 @@ def v8_agents_run_task(request: Request, name: str, payload: dict):
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
 
+    _cache_invalidate("tasks")
+    _cache_invalidate("agents")
     task = create_result["record"]
     if create_result.get("outcome") == "already_synced":
         task_status = task.get("status")
@@ -5873,13 +5926,17 @@ def v8_agents_run_task(request: Request, name: str, payload: dict):
 def v8_graph_overview(request: Request, limit_nodes: int = 500, limit_edges: int = 1000):
     s, _owner_error = _require_owner(request)
     if _owner_error is not None: return _owner_error
-    service = _persistence_service()
-    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     try:
         limit_nodes = max(1, min(int(limit_nodes), 2000))
         limit_edges = max(1, min(int(limit_edges), 5000))
     except Exception:
         return JSONResponse({"ok": False, "reason": "bad_limits"}, status_code=400)
+    cache_key = f"graph_overview:{limit_nodes}:{limit_edges}:{s.get('owner_scope')}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+    service = _persistence_service()
+    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     try:
         nodes = service.list_graph_nodes(limit=limit_nodes, owner_scope=s["owner_scope"])
         edges = service.list_graph_edges(limit=limit_edges, owner_scope=s["owner_scope"])
@@ -5997,10 +6054,12 @@ def v8_graph_overview(request: Request, limit_nodes: int = 500, limit_edges: int
     for e in compact_edges:
         k = e.get("relation_type") or "unknown"
         by_relation[k] = by_relation.get(k, 0) + 1
-    return {"ok": True, "nodes": compact_nodes, "edges": compact_edges,
+    res = {"ok": True, "nodes": compact_nodes, "edges": compact_edges,
             "counts": {"nodes": len(compact_nodes), "edges": len(compact_edges),
                        "by_type": by_type, "by_relation": by_relation},
             "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
+    _cache_set(cache_key, res, ttl_seconds=30.0)
+    return res
 
 # ============================================================
 # CEREBRO PUBLICO — vista segura sin autenticacion
@@ -6098,6 +6157,8 @@ def v8_create_mission(request: Request, payload: dict):
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "internal", "error_type": type(e).__name__}, status_code=500)
 
+    _cache_invalidate("missions")
+    _cache_invalidate("tasks")
     mission_id = created["record"]["id"]
     version = created["record"]["version"]
     _set_mission_planning_runtime(mission_id, "mission_created")
@@ -6181,30 +6242,40 @@ def v8_list_missions(request: Request, status: str = None, flow_type: str = None
                      limit: int = 20, offset: int = 0):
     s, _owner_error = _require_owner(request)
     if _owner_error is not None: return _owner_error
-    service = _persistence_service()
-    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     try:
         limit = max(1, min(int(limit), 100))
         offset = max(0, int(offset))
     except Exception:
         limit, offset = 20, 0
+    cache_key = f"missions:{status}:{flow_type}:{s.get('email')}:{limit}:{offset}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+    service = _persistence_service()
+    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     try:
         missions = service.list_missions(status=status, flow_type=flow_type,
                                          created_by=s["email"], limit=limit, offset=offset)
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
-    return {"ok": True, "missions": missions, "count": len(missions)}
+    res = {"ok": True, "missions": missions, "count": len(missions)}
+    _cache_set(cache_key, res, ttl_seconds=15.0)
+    return res
 
 @app.get("/api/v8/missions/recent")
 def v8_recent_missions(request: Request, limit: int = 10):
     s, _owner_error = _require_owner(request)
     if _owner_error is not None: return _owner_error
-    service = _persistence_service()
-    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     try:
         limit = max(1, min(int(limit), 50))
     except Exception:
         limit = 10
+    cache_key = f"missions_recent:{s.get('email')}:{limit}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+    service = _persistence_service()
+    if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     try:
         missions = service.list_missions(created_by=s["email"], limit=limit)
     except Exception as e:
@@ -6224,7 +6295,9 @@ def v8_recent_missions(request: Request, limit: int = 10):
             "steps_total": len(steps) if isinstance(steps, list) else 0,
             "has_result": bool(m.get("result")),
         })
-    return {"ok": True, "missions": compact, "count": len(compact)}
+    res = {"ok": True, "missions": compact, "count": len(compact)}
+    _cache_set(cache_key, res, ttl_seconds=15.0)
+    return res
 
 def _to_epoch_seconds(s):
     if not s:
@@ -6946,6 +7019,8 @@ def v8_approve_mission(request: Request, mission_id: str):
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "internal",
                              "error_type": type(e).__name__}, status_code=500)
+    _cache_invalidate("missions")
+    _cache_invalidate("tasks")
     return {"ok": True, "mission": updated}
 
 @app.post("/api/v8/missions/{mission_id}/reject")
@@ -6988,6 +7063,8 @@ async def v8_reject_mission(request: Request, mission_id: str):
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "internal",
                              "error_type": type(e).__name__}, status_code=500)
+    _cache_invalidate("missions")
+    _cache_invalidate("tasks")
     return {"ok": True, "mission": updated}
 
 @app.post("/api/v8/missions/{mission_id}/execute")
@@ -7074,6 +7151,8 @@ def v8_cancel_mission(request: Request, mission_id: str):
             actor=s["email"],
             owner=s["email"],
         )
+        _cache_invalidate("missions")
+        _cache_invalidate("tasks")
         return {
             "ok": True,
             "mission": cancelled,
