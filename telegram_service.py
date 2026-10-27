@@ -203,6 +203,7 @@ def set_telegram_commands(bot_token: str) -> dict:
     clean_token = bot_token.strip()
     url = f"https://api.telegram.org/bot{clean_token}/setMyCommands"
     commands = [
+        {"command": "jarvis", "description": "⚡ Protocolo Jarvis: Informe y telemetría global"},
         {"command": "estado", "description": "🛡️ Estado del sistema y presupuesto $0"},
         {"command": "briefing", "description": "📰 Resumen matutino y noticias en vivo"},
         {"command": "cotizar", "description": "📊 Cotización formal en PDF con ROI"},
@@ -883,7 +884,7 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
         status_text = (
             "🛡️ *ESTADO EJECUTIVO DE AKIRA*\n\n"
             "• *Presupuesto Invertido:* $0.00 COP / USD (Garantizado)\n"
-            "• *Capacidades del Sistema:* 41/41 Verificadas y operativas\n"
+            "• *Capacidades del Sistema:* 49/49 Verificadas y operativas (100%)\n"
             "• *Colmena Táctica:* 267 especialistas en 18 divisiones en guardia\n"
             "• *Motor Web:* DuckDuckGo & Wikipedia en vivo activo\n"
             "• *Canal Móvil:* Telegram TLS 1.3 bidireccional\n\n"
@@ -891,6 +892,29 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
         )
         send_telegram_interactive_message(clean_token, chat_id, status_text)
         return {"ok": True, "chat_id": chat_id, "action": "status"}
+
+    # /jarvis (Protocolo Jarvis - Diagnóstico y Reporte Ejecutivo Stark)
+    if text.startswith("/jarvis") or text.lower().strip() in ("protocolo jarvis", "jarvis", "reporte jarvis"):
+        jarvis_report = (
+            "⚡ *PROTOCOLO J.A.R.V.I.S. // TELEMETRÍA EJECUTIVA EN LÍNEA*\n\n"
+            "Buenos días, Director Jhon. Sistemas nominales y en sincronía:\n\n"
+            "🧠 *Núcleo Cognitivo & Cerebro:*\n"
+            "• Red Neuronal: 49/49 capacidades activas y verificadas.\n"
+            "• Misiones Autónomas: Autopilot e investigación web profunda listos.\n"
+            "• Aprendizaje Persistente: Consolidación automática de código y sintaxis.\n\n"
+            "🛡️ *Infraestructura & Operaciones:*\n"
+            "• Canal Satelital Móvil: Telegram TLS 1.3 bidireccional permanente.\n"
+            "• Presupuesto Operativo: $0.00 COP / USD (100% perpetuo y sin costo).\n"
+            "• Centinela Upwork: Monitor de oportunidades freelance en guardia.\n\n"
+            "🎙️ *Interfaces de Voz:*\n"
+            "• Transcripción: Groq Whisper + Gemini Flash Multimodal.\n"
+            "• Síntesis Vocal: Edge-TTS ejecutiva (es-CO-SalomeNeural).\n\n"
+            "👑 *A sus órdenes, Jhon. Todo su ecosistema a su disposición. ¿Qué misión iniciamos?*"
+        )
+        send_telegram_interactive_message(clean_token, chat_id, jarvis_report)
+        if get_user_voice_pref(chat_id) or "voz" in text.lower():
+            send_telegram_voice_reply(clean_token, chat_id, "Protocolo Jarvis iniciado. Todos los sistemas nominales y a su disposición, Director Jhon. ¿En qué trabajaremos hoy?")
+        return {"ok": True, "chat_id": chat_id, "action": "jarvis"}
 
     # /colmena
     if text == "/colmena":

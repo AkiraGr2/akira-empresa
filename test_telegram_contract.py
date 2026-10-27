@@ -126,6 +126,22 @@ class TestTelegramContract(unittest.TestCase):
         self.assertIn("blindada", res["message"])
 
     @patch("telegram_service.send_telegram_interactive_message")
+    def test_handle_telegram_update_jarvis(self, mock_send):
+        mock_send.return_value = {"ok": True, "message_id": 57}
+        update = {
+            "update_id": 125,
+            "message": {
+                "chat": {"id": 999},
+                "text": "/jarvis"
+            }
+        }
+        res = telegram_service.handle_telegram_update("dummy_token", update)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["action"], "jarvis")
+        mock_send.assert_called_once()
+        self.assertIn("PROTOCOLO J.A.R.V.I.S.", mock_send.call_args[0][2])
+
+    @patch("telegram_service.send_telegram_interactive_message")
     def test_handle_telegram_update_status(self, mock_send):
         mock_send.return_value = {"ok": True, "message_id": 56}
         update = {
