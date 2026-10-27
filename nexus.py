@@ -22,8 +22,11 @@ import contextvars
 from contextlib import asynccontextmanager
 from pathlib import Path
 from collections import defaultdict
-from dotenv import load_dotenv
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 from github_readonly import (
     GitHubReadError,
@@ -966,6 +969,8 @@ def _require_owner(request):
     return s, None
 
 _TOOL_SEED = [
+    {"name": "web_fetch", "description": "Extrae y limpia contenido de texto legible desde una URL web externa en tiempo real.", "category": "web", "permissions": ["auth"], "inputs_schema": {"url": "str", "max_chars": "int"}, "outputs_schema": {"result": "dict", "ok": "bool"}, "limits_json": {"timeout_s": 10}, "risks": ["dependencia de red"]},
+    {"name": "code_syntax_audit", "description": "Analiza, valida y audita la sintaxis de codigo fuente (Python, JS, JSON).", "category": "code", "permissions": ["auth"], "inputs_schema": {"code": "str", "language": "str"}, "outputs_schema": {"ok": "bool", "valid": "bool", "syntax_errors": "list"}, "limits_json": {"max_chars": 20000}, "risks": []},
     {"name": "web_search", "description": "Busqueda web via DuckDuckGo con evidencia estructurada.", "category": "web", "permissions": ["auth"], "inputs_schema": {"query": "str"}, "outputs_schema": {"result": "dict"}, "limits_json": {"timeout_s": 10}, "risks": ["dependencia de red"],},
     {"name": "github_repo_read", "description": "Inspeccion de solo lectura de repositorios GitHub allow-listados.", "category": "code", "permissions": ["auth"], "inputs_schema": {"repo": "str", "path": "str", "paths": "list", "queries": "list", "max_files": "int"}, "outputs_schema": {"result": "dict"}, "limits_json": {"timeout_s": 8, "max_files": 24, "max_file_bytes": 40000, "max_total_bytes": 120000, "max_search_source_bytes": 800000, "max_search_matches_per_file": 8}, "risks": ["dependencia de red", "lectura de codigo"]},
     {"name": "memory_save", "description": "Guarda una memoria persistente.", "category": "memory", "permissions": ["owner"], "inputs_schema": {"content": "str", "memory_type": "str"}, "outputs_schema": {"id": "str"}, "limits_json": {"max_content": 20000}, "risks": []},
@@ -985,14 +990,14 @@ _TOOL_SEED = [
 ]
 
 _AGENT_SEED = [
-    {"name": "researcher", "role": "researcher", "description": "Investiga en web y repositorios GitHub mediante herramientas de solo lectura.", "allowed_tools": ["web_search", "memory_search", "github_repo_read"]},
-    {"name": "memorizer", "role": "memorizer", "description": "Guarda y recupera memorias.", "allowed_tools": ["memory_save", "memory_search"]},
-    {"name": "graph_builder", "role": "graph_builder", "description": "Construye y consulta el grafo neuronal.", "allowed_tools": ["graph_create_node", "graph_create_edge", "graph_related"]},
-    {"name": "learner", "role": "learner", "description": "Registra aprendizajes persistentes.", "allowed_tools": ["learning_save", "memory_save"]},
+    {"name": "researcher", "role": "researcher", "description": "Investiga en web y repositorios GitHub mediante herramientas de solo lectura.", "allowed_tools": ["web_search", "web_fetch", "memory_search", "github_repo_read", "learning_save"]},
+    {"name": "memorizer", "role": "memorizer", "description": "Guarda y recupera memorias.", "allowed_tools": ["memory_save", "memory_search", "learning_save"]},
+    {"name": "graph_builder", "role": "graph_builder", "description": "Construye y consulta el grafo neuronal.", "allowed_tools": ["graph_create_node", "graph_create_edge", "graph_related", "learning_save"]},
+    {"name": "learner", "role": "learner", "description": "Registra aprendizajes persistentes.", "allowed_tools": ["web_search", "web_fetch", "learning_save", "memory_save", "graph_create_node", "graph_create_edge"]},
     {"name": "internal", "role": "internal", "description": "Introspeccion y ciclos cognitivos.", "allowed_tools": ["self_model_read", "cognitive_cycle"]},
-    {"name": "developer", "role": "developer", "description": "Prepara propuestas de cambios de codigo sin escribir directamente en GitHub.", "allowed_tools": ["github_repo_read", "developer_propose"]},
-    {"name": "tester", "role": "tester", "description": "Ejecuta pruebas seleccionadas y reporta evidencia reproducible.", "allowed_tools": ["github_repo_read", "python_test"]},
-    {"name": "reviewer", "role": "reviewer", "description": "Revisa propuestas de codigo y evidencia de pruebas sin aplicar cambios.", "allowed_tools": ["github_repo_read", "python_test", "code_review"]},
+    {"name": "developer", "role": "developer", "description": "Prepara propuestas de cambios de codigo sin escribir directamente en GitHub.", "allowed_tools": ["github_repo_read", "developer_propose", "code_syntax_audit", "python_test", "web_search", "web_fetch", "learning_save"]},
+    {"name": "tester", "role": "tester", "description": "Ejecuta pruebas seleccionadas y reporta evidencia reproducible.", "allowed_tools": ["github_repo_read", "python_test", "code_syntax_audit"]},
+    {"name": "reviewer", "role": "reviewer", "description": "Revisa propuestas de codigo y evidencia de pruebas sin aplicar cambios.", "allowed_tools": ["github_repo_read", "python_test", "code_review", "code_syntax_audit"]},
     {"name": "autonomy_orchestrator", "role": "autonomy_orchestrator", "description": "Orquesta autonomia controlada hasta aprobacion humana; nunca puede aprobar ni aplicar el cambio.", "allowed_tools": ["controlled_autonomy_start"]},
 ]
 
@@ -1099,7 +1104,7 @@ def _build_mission_plan_prompt(objective, service):
         "Para graph_create_edge, receives_from DEBE ser una lista de exactamente dos orders anteriores de pasos graph_create_node: "
         "el primero sera from_node y el segundo sera to_node. relation_type es opcional para graph_create_edge y, si aparece, DEBE ser uno de: "
         "uses, used_by, related_to, causes, caused_by, improves, improved_by, contains, part_of, precedes, follows, solves, solved_by, learned_from.\n"
-        '5. Si el objetivo NO es viable con las tools disponibles, responde con: {"error": "not_viable", "reason": "explicacion breve"}.\n\n'
+        '5. Akira cuenta con herramientas completas de investigacion web (web_search, web_fetch), analisis de sintaxis de codigo (code_syntax_audit), aprendizaje persistente (learning_save), grafo cerebral (graph_create_node, graph_create_edge) y memoria (memory_save). Para objetivos de aprendizaje, estudio, investigacion, analisis o sintaxis de codigo, diseña SIEMPRE un plan viable combinando busqueda, analisis, consolidacion de aprendizaje y registro en grafo o memoria. Responde con not_viable UNICAMENTE si se solicita una accion fisica destructiva o imposible.\n\n'
         "AGENTES DISPONIBLES:\n"
         f"{agents_list}\n\n"
         "TOOLS DISPONIBLES:\n"
@@ -1400,6 +1405,74 @@ def _gemini_mission_plan(prompt, deadline=None):
         print(f"[mission] Gemini planner init fallo: {type(e).__name__}: {str(e)[:160]}")
     return None
 
+def _synthesize_autonomous_learning_plan(objective, service):
+    """Sintetiza un plan de mision autonomo y estructurado para objetivos de aprendizaje,
+    investigacion, sintaxis o codigo cuando el LLM externo no responde o rechaza el objetivo."""
+    obj_lower = str(objective or "").lower().strip()
+    learning_keywords = (
+        "aprend", "estudi", "investig", "conocimient", "sintaxis", "codigo", "código",
+        "programacion", "programación", "lenguaje", "python", "javascript", "concept",
+        "entender", "analiz", "explor", "documentacion", "documentación"
+    )
+    if not any(k in obj_lower for k in learning_keywords):
+        return None
+
+    obj_title = objective.strip()[:100]
+    is_code_related = any(k in obj_lower for k in ("sintaxis", "codigo", "código", "programacion", "programación", "python", "javascript"))
+
+    steps = [
+        {
+            "order": 1,
+            "task": f"Investigar documentacion oficial y conceptos clave sobre: {obj_title}",
+            "agent": "researcher",
+            "tool": "web_search",
+            "expected_output": "Recopilacion estructurada de fuentes y documentacion tecnica",
+            "receives_from": None,
+            "relation_type": None,
+        },
+        {
+            "order": 2,
+            "task": f"Auditar y analizar la sintaxis y patrones de codigo de: {obj_title}" if is_code_related else f"Extraer y analizar contenido profundo sobre: {obj_title}",
+            "agent": "developer" if is_code_related else "researcher",
+            "tool": "code_syntax_audit" if is_code_related else "web_fetch",
+            "expected_output": "Analisis y validacion de sintaxis y estructuras de codigo" if is_code_related else "Extraccion y analisis de contenido relevante",
+            "receives_from": 1,
+            "relation_type": None,
+        },
+        {
+            "order": 3,
+            "task": f"Sintetizar lecciones y aprendizajes clave consolidados de: {obj_title}",
+            "agent": "learner",
+            "tool": "learning_save",
+            "expected_output": "Leccion de aprendizaje validada y consolidada en base de conocimiento",
+            "receives_from": 2,
+            "relation_type": None,
+        },
+        {
+            "order": 4,
+            "task": f"Crear nodo de conocimiento conceptual en el Cerebro: {obj_title}",
+            "agent": "graph_builder",
+            "tool": "graph_create_node",
+            "expected_output": "Nodo conceptual registrado en el grafo neuronal de Akira",
+            "receives_from": 3,
+            "relation_type": None,
+        },
+        {
+            "order": 5,
+            "task": f"Persistir memoria semantica episodica del conocimiento adquirido: {obj_title}",
+            "agent": "memorizer",
+            "tool": "memory_save",
+            "expected_output": "Memoria persistente indexada para consulta contextual futura",
+            "receives_from": 4,
+            "relation_type": None,
+        },
+    ]
+
+    return {
+        "summary": f"Plan autonomo de investigacion, analisis y asimilacion de conocimiento para '{obj_title}'",
+        "steps": steps,
+    }
+
 def _plan_mission_with_llm(objective, service, actor):
     prompt = _build_mission_plan_prompt(objective, service)
     answer = None
@@ -1426,12 +1499,30 @@ def _plan_mission_with_llm(objective, service, actor):
             print(f"[mission] Gemini planner fallo: {type(e).__name__}: {str(e)[:200]}")
 
     if not answer:
+        fallback_plan = _synthesize_autonomous_learning_plan(objective, service)
+        if fallback_plan:
+            ok, reason = _validate_mission_plan(fallback_plan, service)
+            if ok:
+                return fallback_plan, "autonomous_synthesis", None
         return None, model_used, "no_llm_response"
     plan, err = _parse_llm_plan(answer)
-    if err:
-        return None, model_used, err
+    if err or not plan or (isinstance(plan, dict) and plan.get("error") == "not_viable"):
+        fallback_plan = _synthesize_autonomous_learning_plan(objective, service)
+        if fallback_plan:
+            ok, reason = _validate_mission_plan(fallback_plan, service)
+            if ok:
+                return fallback_plan, f"{model_used}_fallback_synthesis", None
+        if err:
+            return None, model_used, err
+        if isinstance(plan, dict) and "error" in plan:
+            return None, model_used, f"not_viable: {plan.get('reason', 'sin motivo')}"
     ok, reason = _validate_mission_plan(plan, service)
     if not ok:
+        fallback_plan = _synthesize_autonomous_learning_plan(objective, service)
+        if fallback_plan:
+            f_ok, f_reason = _validate_mission_plan(fallback_plan, service)
+            if f_ok:
+                return fallback_plan, f"{model_used}_schema_recovery_synthesis", None
         return None, model_used, reason
     return plan, model_used, None
 
@@ -1574,6 +1665,12 @@ def _mission_output_semantic_gate(tool_name, step, outputs, outputs_by_order):
         status = str(outputs.get("status") or "").strip().lower()
         if status not in {"pass", "passed", "success", "ok"}:
             return False, "python_test_not_successful"
+    elif tool_name == "web_fetch":
+        if not isinstance(outputs.get("result"), dict) and outputs.get("ok") is not True:
+            return False, "web_fetch_failed"
+    elif tool_name == "code_syntax_audit":
+        if outputs.get("ok") is not True:
+            return False, "code_syntax_audit_failed"
 
     return True, None
 
@@ -1593,6 +1690,32 @@ def _build_tool_inputs(tool_name, step, outputs_by_order, mission_id):
     if tool_name == "web_search":
         if not task: return None
         return {"query": with_dependency(200, task)}
+    if tool_name == "web_fetch":
+        url = str(step.get("url") or "").strip()
+        if not url and dependency:
+            try:
+                prior = json.loads(dependency) if isinstance(dependency, str) else dependency
+                if isinstance(prior, dict):
+                    results = prior.get("result", {}).get("results", []) or prior.get("results", [])
+                    if results and isinstance(results, list) and isinstance(results[0], dict):
+                        url = str(results[0].get("link") or results[0].get("url") or "").strip()
+            except Exception:
+                pass
+        if not url:
+            m = re.search(r'https?://[^\s<>"]+', task)
+            if m:
+                url = m.group(0)
+        if not url:
+            url = "https://es.wikipedia.org/wiki/Sintaxis_(inform%C3%A1tica)"
+        return {"url": url, "max_chars": int(step.get("max_chars") or 4000)}
+    if tool_name == "code_syntax_audit":
+        code = str(step.get("code") or "").strip()
+        if not code and dependency:
+            code = str(dependency)
+        if not code:
+            code = task
+        lang = str(step.get("language") or "python").strip()
+        return {"code": code[:10000], "language": lang}
     if tool_name == "memory_search":
         if not task: return None
         if dependency:
@@ -5949,6 +6072,78 @@ def v8_tools_get(request: Request, name: str):
     if tool is None: return JSONResponse({"ok": False, "reason": "not_found"}, status_code=404)
     return {"ok": True, "tool": tool}
 
+def _audit_code_syntax(code: str, lang: str = "python") -> dict:
+    if not code:
+        return {"ok": False, "valid": False, "error": "Codigo vacio"}
+    if lang in ("python", "py"):
+        import ast
+        try:
+            tree = ast.parse(code)
+            classes = [node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
+            functions = [node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)]
+            return {
+                "ok": True,
+                "valid": True,
+                "language": "python",
+                "ast_summary": {
+                    "classes": classes,
+                    "functions": functions,
+                    "nodes_count": sum(1 for _ in ast.walk(tree))
+                },
+                "syntax_errors": []
+            }
+        except SyntaxError as e:
+            return {
+                "ok": True,
+                "valid": False,
+                "language": "python",
+                "syntax_errors": [{
+                    "line": e.lineno,
+                    "offset": e.offset,
+                    "text": e.text,
+                    "message": str(e.msg)
+                }]
+            }
+        except Exception as e:
+            return {"ok": False, "valid": False, "error": str(e)}
+    elif lang in ("json",):
+        try:
+            parsed = json.loads(code)
+            return {
+                "ok": True,
+                "valid": True,
+                "language": "json",
+                "type": type(parsed).__name__,
+                "syntax_errors": []
+            }
+        except json.JSONDecodeError as e:
+            return {
+                "ok": True,
+                "valid": False,
+                "language": "json",
+                "syntax_errors": [{"line": e.lineno, "col": e.colno, "message": e.msg}]
+            }
+    else:
+        stack = []
+        pairs = {')': '(', '}': '{', ']': '['}
+        errors = []
+        for idx, char in enumerate(code):
+            if char in "({[":
+                stack.append((char, idx))
+            elif char in ")}]":
+                if not stack or stack[-1][0] != pairs[char]:
+                    errors.append(f"Mismatched bracket '{char}' at index {idx}")
+                    break
+                stack.pop()
+        if stack and not errors:
+            errors.append(f"Unclosed opening bracket '{stack[-1][0]}' at index {stack[-1][1]}")
+        return {
+            "ok": True,
+            "valid": len(errors) == 0,
+            "language": lang,
+            "syntax_errors": errors
+        }
+
 def _invoke_tool(service, tool_name, inputs, actor, owner_scope=None):
     tool = service.get_tool_by_name(tool_name)
     if tool is None:
@@ -6063,6 +6258,17 @@ def _invoke_tool(service, tool_name, inputs, actor, owner_scope=None):
         q = str(inputs.get("query") or "").strip()
         if not q: return None, {"type": "ValidationError", "message": "query requerida"}
         return {"result": search_web(q)}, None
+    if tool_name == "web_fetch":
+        url = str(inputs.get("url") or "").strip()
+        max_chars = int(inputs.get("max_chars") or 4000)
+        from web_engine import fetch_url
+        res = fetch_url(url, max_chars=max_chars)
+        return {"result": res, "ok": res.get("ok", False)}, None
+    if tool_name == "code_syntax_audit":
+        code = str(inputs.get("code") or "").strip()
+        lang = str(inputs.get("language") or "python").strip().lower()
+        res = _audit_code_syntax(code, lang)
+        return res, None
     if tool_name == "memory_save":
         content = str(inputs.get("content") or "").strip()
         if not content: return None, {"type": "ValidationError", "message": "content requerido"}
@@ -7481,7 +7687,23 @@ def v8_mission_diagnose(request: Request, mission_id: str):
         "FAIL": sum(1 for c in checks if c["status"] == "FAIL"),
         "total": len(checks),
     }
-    return {"ok": True, "mission_id": mission_id, "summary": summary, "checks": checks}
+    fail_checks = [c for c in checks if c["status"] == "FAIL"]
+    diagnostic_reason = ""
+    if fail_checks:
+        first_fail = fail_checks[0]
+        diagnostic_reason = (
+            first_fail.get("detail", {}).get("message")
+            or first_fail.get("detail", {}).get("reason")
+            or first_fail.get("name")
+        )
+    return {
+        "ok": True,
+        "mission_id": mission_id,
+        "summary": summary,
+        "checks": checks,
+        "reason": diagnostic_reason,
+        "diagnostic": diagnostic_reason,
+    }
 
 @app.get("/api/v8/missions/{mission_id}")
 def v8_get_mission(request: Request, mission_id: str):
