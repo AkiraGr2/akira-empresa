@@ -204,6 +204,7 @@ def set_telegram_commands(bot_token: str) -> dict:
     url = f"https://api.telegram.org/bot{clean_token}/setMyCommands"
     commands = [
         {"command": "jarvis", "description": "⚡ Protocolo Jarvis: Informe y telemetría global"},
+        {"command": "proactive", "description": "⚡ Evaluación proactiva Nivel 4 y acción recomendada"},
         {"command": "estado", "description": "🛡️ Estado del sistema y presupuesto $0"},
         {"command": "briefing", "description": "📰 Resumen matutino y noticias en vivo"},
         {"command": "cotizar", "description": "📊 Cotización formal en PDF con ROI"},
@@ -898,14 +899,15 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
         jarvis_report = (
             "⚡ *PROTOCOLO J.A.R.V.I.S. // TELEMETRÍA EJECUTIVA EN LÍNEA*\n\n"
             "Buenos días, Director Jhon. Sistemas nominales y en sincronía:\n\n"
-            "🧠 *Núcleo Cognitivo & Cerebro:*\n"
-            "• Red Neuronal: 49/49 capacidades activas y verificadas.\n"
-            "• Misiones Autónomas: Autopilot e investigación web profunda listos.\n"
+            "🧠 *Nivel Cognitivo & Cerebro:*\n"
+            "• Nivel de Operación: Nivel 4 — Proactividad Pura (Directiva J.A.R.V.I.S.).\n"
+            "• Red Neuronal: 50 Capacidades Verificadas + Suite Estratégica.\n"
+            "• Misiones Autónomas: Autopilot, investigación web y auditoría listas.\n"
             "• Aprendizaje Persistente: Consolidación automática de código y sintaxis.\n\n"
             "🛡️ *Infraestructura & Operaciones:*\n"
             "• Canal Satelital Móvil: Telegram TLS 1.3 bidireccional permanente.\n"
             "• Presupuesto Operativo: $0.00 COP / USD (100% perpetuo y sin costo).\n"
-            "• Centinela Upwork: Monitor de oportunidades freelance en guardia.\n\n"
+            "• Centinela Proactivo: Radar de tecnología y Upwork con deduplicación.\n\n"
             "🎙️ *Interfaces de Voz:*\n"
             "• Transcripción: Groq Whisper + Gemini Flash Multimodal.\n"
             "• Síntesis Vocal: Edge-TTS ejecutiva (es-CO-SalomeNeural).\n\n"
@@ -915,6 +917,18 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
         if get_user_voice_pref(chat_id) or "voz" in text.lower():
             send_telegram_voice_reply(clean_token, chat_id, "Protocolo Jarvis iniciado. Todos los sistemas nominales y a su disposición, Director Jhon. ¿En qué trabajaremos hoy?")
         return {"ok": True, "chat_id": chat_id, "action": "jarvis"}
+
+    # /proactive (Evaluación Proactiva Nivel 4 y Acción Recomendada)
+    if text.startswith("/proactive") or text.startswith("/proactivo") or text.startswith("/radar"):
+        try:
+            from proactive_engine import evaluate_proactive_cycle
+            eval_res = evaluate_proactive_cycle(send_telegram=False)
+            proactive_msg = eval_res.get("proactive_message", "⚡ Evaluación Proactiva Nivel 4 completada.")
+            send_telegram_interactive_message(clean_token, chat_id, proactive_msg)
+            return {"ok": True, "chat_id": chat_id, "action": "proactive"}
+        except Exception as exc:
+            send_telegram_interactive_message(clean_token, chat_id, f"⚡ Evaluación proactiva activa: {exc}")
+            return {"ok": False, "error": str(exc)}
 
     # /colmena
     if text == "/colmena":

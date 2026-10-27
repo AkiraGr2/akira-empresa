@@ -10194,6 +10194,42 @@ async def api_sentinel_sweep(request: Request):
     from sentinel_cron import run_sentinel_sweep
     return run_sentinel_sweep(topics=topics, feed_urls=feed_urls, send_telegram=send_telegram)
 
+@app.get("/api/v8/proactive/status")
+async def api_proactive_status(request: Request):
+    """Estado y descriptor del motor de Nivel 4 Proactividad Pura ($0.00 COP)."""
+    from proactive_engine import LEVEL_COGNITIVE_DESCRIPTOR
+    return {
+        "ok": True,
+        "level": 4,
+        "code": "LEVEL_4_PURE_PROACTIVITY",
+        "descriptor": LEVEL_COGNITIVE_DESCRIPTOR,
+        "cost": "$0.00 COP",
+        "directive": "Directiva J.A.R.V.I.S. (Copiloto Proactivo de Vida, Ingeniería & Negocios)"
+    }
+
+@app.post("/api/v8/proactive/evaluate")
+async def api_proactive_evaluate(request: Request):
+    """Ejecuta un ciclo cognitivo proactivo evaluando radares y siguiente paso lógico ($0.00 COP)."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    send_telegram = bool(body.get("send_telegram", False))
+    chat_id = body.get("chat_id")
+    from proactive_engine import evaluate_proactive_cycle
+    return evaluate_proactive_cycle(send_telegram=send_telegram, chat_id=chat_id)
+
+@app.post("/api/v8/proactive/execute-action")
+async def api_proactive_execute_action(request: Request):
+    """Ejecuta de manera autónoma una acción recomendada por el motor proactivo ($0.00 COP)."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    action_id = str(body.get("action_id") or "radar_sweep").strip()
+    from proactive_engine import execute_proactive_action
+    return execute_proactive_action(action_id=action_id, params=body)
+
 _TELEGRAM_HISTORIES = defaultdict(list)
 
 def generate_telegram_reply(query: str, chat_id: str = None) -> str:

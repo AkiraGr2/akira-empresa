@@ -52,9 +52,15 @@ class TestNexusSuiteContract(unittest.TestCase):
             '/api/v8/code/audit-dependencies',
             '/api/v8/dossiers/generate',
             '/api/v8/sentinel/sweep',
+            '/api/v8/proactive/status',
+            '/api/v8/proactive/evaluate',
+            '/api/v8/proactive/execute-action',
         ]
         for ep in expected_endpoints:
-            self.assertIn(f'@app.post("{ep}")', self.nexus_source, f"Endpoint {ep} no registrado en nexus.py")
+            self.assertTrue(
+                f'@app.post("{ep}")' in self.nexus_source or f'@app.get("{ep}")' in self.nexus_source,
+                f"Endpoint {ep} no registrado en nexus.py"
+            )
 
 if __name__ == "__main__":
     unittest.main()
