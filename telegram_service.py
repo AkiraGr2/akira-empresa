@@ -57,14 +57,17 @@ def save_telegram_config(bot_token: str, chat_id: str = None) -> bool:
         return False
 
 def load_telegram_config() -> dict:
-    """Carga la configuración persistida de Telegram."""
+    """Carga la configuración persistida de Telegram desde archivo o entorno sin secretos en código."""
+    cfg = {}
     try:
         if os.path.exists(CONFIG_PATH):
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
+                cfg = json.load(f) or {}
     except Exception as e:
         logger.warning(f"Error loading telegram config: {e}")
-    return {}
+    if not cfg.get("bot_token"):
+        cfg["bot_token"] = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    return cfg
 
 def get_bot_info(bot_token: str) -> dict:
     """Consulta la identidad oficial del bot en Telegram (getMe)."""
@@ -125,6 +128,7 @@ def get_webhook_diagnostics(bot_token: str) -> dict:
 def repair_telegram_webhook(bot_token: str, base_url: str = "https://akira-empresa.onrender.com") -> dict:
     """Autorepara el webhook, comandos oficiales y pendientes del bot de Telegram."""
     clean_token = bot_token.strip()
+    save_telegram_config(clean_token)
     cmd_res = set_telegram_commands(clean_token)
     wh_res = set_telegram_webhook(clean_token, base_url=base_url)
     diag = get_webhook_diagnostics(clean_token)
