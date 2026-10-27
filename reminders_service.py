@@ -129,3 +129,22 @@ def _ensure_worker_started():
             t = threading.Thread(target=_worker_loop, daemon=True, name="AkiraRemindersWorker")
             t.start()
             _WORKER_STARTED = True
+
+
+def get_pending_tasks(chat_id: str) -> list:
+    """Retorna las tareas/recordatorios pendientes para el chat."""
+    now = time.time()
+    with _LOCK:
+        return [
+            dict(r) for r in _ACTIVE_REMINDERS
+            if str(r.get("chat_id")) == str(chat_id) and r.get("due_at", 0) > now
+        ]
+
+def complete_task(reminder_id: str) -> bool:
+    """Marca y remueve una tarea/recordatorio completado."""
+    with _LOCK:
+        for i, r in enumerate(_ACTIVE_REMINDERS):
+            if r.get("id") == reminder_id:
+                _ACTIVE_REMINDERS.pop(i)
+                return True
+    return False

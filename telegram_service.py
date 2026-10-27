@@ -37,10 +37,55 @@ import logging
 import uuid
 import re
 import os
+from collections import defaultdict
 
 logger = logging.getLogger("akira.telegram")
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "data", "telegram_config.json")
+
+_USER_SETTINGS = defaultdict(dict)
+_RECENT_BOT_MESSAGES = defaultdict(list)
+
+def get_user_voice_pref(chat_id: str) -> bool:
+    """Consulta si Jhon tiene activada la respuesta con nota de voz automática."""
+    return bool(_USER_SETTINGS[str(chat_id)].get("voice_replies", False))
+
+def set_user_voice_pref(chat_id: str, enabled: bool) -> bool:
+    """Activa o desactiva las respuestas por nota de voz automática."""
+    _USER_SETTINGS[str(chat_id)]["voice_replies"] = bool(enabled)
+    return bool(enabled)
+
+def delete_telegram_message(bot_token: str, chat_id: str, message_id: int) -> dict:
+    """Elimina un mensaje del chat usando la API oficial de Telegram."""
+    clean_token = bot_token.strip()
+    clean_chat_id = str(chat_id).strip()
+    url = f"https://api.telegram.org/bot{clean_token}/deleteMessage"
+    payload = {"chat_id": clean_chat_id, "message_id": int(message_id)}
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", "User-Agent": "AkiraAssistant/4.2"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return {"ok": bool(data.get("ok"))}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+def clear_recent_bot_messages(bot_token: str, chat_id: str, count: int = 5) -> int:
+    """Elimina los últimos N mensajes emitidos por el bot para privacidad efímera."""
+    clean_chat_id = str(chat_id).strip()
+    msg_ids = list(_RECENT_BOT_MESSAGES.get(clean_chat_id, []))
+    deleted = 0
+    to_delete = msg_ids[-count:]
+    for mid in reversed(to_delete):
+        res = delete_telegram_message(bot_token, clean_chat_id, mid)
+        if res.get("ok"):
+            deleted += 1
+            if mid in _RECENT_BOT_MESSAGES[clean_chat_id]:
+                _RECENT_BOT_MESSAGES[clean_chat_id].remove(mid)
+    return deleted
 
 def save_telegram_config(bot_token: str, chat_id: str = None) -> bool:
     """Persiste el token y chat_id en el almacenamiento local del backend."""
@@ -161,15 +206,18 @@ def set_telegram_commands(bot_token: str) -> dict:
         {"command": "estado", "description": "🛡️ Estado del sistema y presupuesto $0"},
         {"command": "briefing", "description": "📰 Resumen matutino y noticias en vivo"},
         {"command": "cotizar", "description": "📊 Cotización formal en PDF con ROI"},
+        {"command": "factura", "description": "🧾 Cuenta de cobro proforma en PDF"},
+        {"command": "reunion", "description": "📑 Acta y minuta formal en PDF"},
+        {"command": "boveda", "description": "🏛️ Despacho de documentos clave (CV, NDA)"},
+        {"command": "tarea", "description": "📋 Agendar tarea o recordatorio proactivo"},
         {"command": "upwork", "description": "🎯 Radar de oportunidades y propuesta"},
         {"command": "deck", "description": "📑 Presentación ejecutiva en PDF (5 slides)"},
         {"command": "grafico", "description": "📈 Generar infografía o gráfico PNG"},
         {"command": "redactar", "description": "✍️ Ghostwriter ejecutivo (3 opciones)"},
         {"command": "tarifa", "description": "💰 Calculadora de tarifas y rentabilidad"},
-        {"command": "buscar", "description": "🌐 Búsqueda web en tiempo real"},
-        {"command": "recordar", "description": "⏰ Programar recordatorio autónomo"},
-        {"command": "resumen_semanal", "description": "📈 Balance dominical de logros"},
-        {"command": "colmena", "description": "🌐 267 especialistas tácticos"},
+        {"command": "voz", "description": "🎙️ Activar/desactivar respuestas con voz"},
+        {"command": "pulso", "description": "🚀 Monitor de despliegues y salud cloud"},
+        {"command": "limpiar", "description": "🧹 Modo privacidad efímera (borrar mensajes)"},
         {"command": "ayuda", "description": "💡 Guía completa de capacidades"}
     ]
     payload = json.dumps({"commands": commands}).encode("utf-8")
@@ -259,7 +307,12 @@ def send_telegram_message(bot_token: str, chat_id: str, text: str, parse_mode: s
         with urllib.request.urlopen(req, timeout=12) as resp:
             result = json.loads(resp.read().decode("utf-8"))
             if result.get("ok"):
-                return {"ok": True, "chat_id": clean_chat_id, "message_id": result["result"].get("message_id")}
+                mid = result["result"].get("message_id")
+                if mid:
+                    _RECENT_BOT_MESSAGES[str(clean_chat_id)].append(mid)
+                    if len(_RECENT_BOT_MESSAGES[str(clean_chat_id)]) > 40:
+                        _RECENT_BOT_MESSAGES[str(clean_chat_id)] = _RECENT_BOT_MESSAGES[str(clean_chat_id)][-25:]
+                return {"ok": True, "chat_id": clean_chat_id, "message_id": mid}
             return {"ok": False, "error": result.get("description", "Error desconocido en Telegram")}
     except urllib.error.HTTPError as e:
         if parse_mode:
@@ -608,6 +661,24 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
 
         answer_callback_query(clean_token, cb_id, text=f"Ejecutando {data_text}...")
 
+        if data_text.startswith("vault_"):
+            doc_key = data_text.replace("vault_", "")
+            import executive_service
+            v_res = executive_service.get_vault_document(clean_token, chat_id, doc_type=doc_key)
+            return {"ok": True, "chat_id": chat_id, "action": "vault_dispatched", "result": v_res}
+
+        if data_text.startswith("task_done_"):
+            task_id = data_text.replace("task_done_", "")
+            import reminders_service
+            reminders_service.complete_task(task_id)
+            send_telegram_message(clean_token, chat_id, "✅ *¡Excelente trabajo, Jhon!* Tarea marcada como completada y archivada con éxito en el sistema.")
+            return {"ok": True, "chat_id": chat_id, "action": "task_completed", "id": task_id}
+
+        if data_text == "clear_5":
+            del_c = clear_recent_bot_messages(clean_token, chat_id, count=5)
+            send_telegram_message(clean_token, chat_id, f"🧹 Pantalla despejada ({del_c} mensajes suprimidos).")
+            return {"ok": True, "chat_id": chat_id, "action": "cleared_callback"}
+
         fake_msg_update = {
             "message": {
                 "chat": {"id": chat_id},
@@ -615,7 +686,7 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
                 "from": cb.get("from", {})
             }
         }
-        return handle_telegram_update(clean_token, fake_msg_update, reply_generator=reply_generator, groq_keys=groq_keys, gemini_api_key=gemini_api_key)
+        return handle_telegram_update(clean_token, fake_msg_update, reply_generator=reply_generator, groq_keys=groq_keys, gemini_api_key=gemini_api_key, gemini_keys=gemini_keys)
 
     msg = update.get("message") or update.get("channel_post") or update.get("edited_message")
     if not msg:
@@ -645,14 +716,22 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
             send_telegram_message(clean_token, chat_id, "⚠️ No pude descargar la fotografía para auditarla.")
             return {"ok": False, "error": "photo_download_failed"}
 
-    # 3. AUDITORÍA DE DOCUMENTOS Y SCRIPTS DE CÓDIGO (message.document)
+    # 3. AUDITORÍA DE DOCUMENTOS Y HOJAS DE DATOS (message.document)
     if msg.get("document"):
         doc = msg["document"]
         file_id = doc.get("file_id")
         filename = doc.get("file_name", "archivo.txt")
-        send_telegram_message(clean_token, chat_id, f"📂 _Inspeccionando archivo '{filename}'..._")
         file_bytes, _ = get_telegram_file_bytes(clean_token, file_id)
         if file_bytes:
+            fn_lower = filename.lower()
+            if fn_lower.endswith((".csv", ".tsv", ".json", ".xlsx")):
+                send_telegram_message(clean_token, chat_id, f"📊 _Auditor de Hojas de Datos: Analizando registros de '{filename}'..._")
+                import executive_service
+                sheet_res = executive_service.audit_spreadsheet_data(filename, file_bytes)
+                send_telegram_interactive_message(clean_token, chat_id, sheet_res.get("report", ""))
+                return {"ok": True, "chat_id": chat_id, "action": "spreadsheet_audited", "filename": filename}
+
+            send_telegram_message(clean_token, chat_id, f"📂 _Inspeccionando archivo '{filename}'..._")
             import sandbox_service
             try:
                 code_text = file_bytes.decode("utf-8", errors="replace")
@@ -721,6 +800,12 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
             else:
                 text = clean_transcribed
                 send_telegram_message(clean_token, chat_id, f"📝 *Te escuché:* «_{clean_transcribed}_»")
+                # Si el audio dura 60 segundos o más, emitir cápsula TL;DR ejecutiva
+                audio_dur = int(voice_obj.get("duration", 0) or 0)
+                if audio_dur >= 60:
+                    import executive_service
+                    tldr_capsule = executive_service.generate_tldr_capsule(clean_transcribed)
+                    send_telegram_interactive_message(clean_token, chat_id, tldr_capsule)
         else:
             logger.warning(f"[telegram_voice] Audio de {len(audio_bytes)} bytes no pudo ser transcrito por Groq ni Gemini.")
             send_telegram_message(clean_token, chat_id, "⚠️ No alcancé a distinguir claramente el audio. ¿Podrías repetirlo hablando un poco más cerca del micrófono o escribírmelo en texto?")
@@ -1005,20 +1090,30 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
 
     # /voz
     if text.startswith("/voz"):
-        speech_text = text.replace("/voz", "").strip() or "Hola Jhon, todas las capacidades de Akira están operativas."
-        send_telegram_message(clean_token, chat_id, "🎙️ _Sintetizando nota de voz con es-CO-SalomeNeural..._")
-        try:
-            import voice_service
-            v_bytes = voice_service.generate_voice_bytes(speech_text)
-            if v_bytes:
-                send_telegram_voice(clean_token, chat_id, v_bytes, caption=f"🗣️ Akira: \"{speech_text[:80]}\"")
-                return {"ok": True, "chat_id": chat_id, "action": "voice_reply"}
-            else:
-                send_telegram_message(clean_token, chat_id, "⚠️ No fue posible generar el audio en este momento.")
-                return {"ok": False, "error": "voice_synthesis_failed"}
-        except Exception as e:
-            send_telegram_message(clean_token, chat_id, f"⚠️ Error generando voz: {e}")
-            return {"ok": False, "error": str(e)}
+        sub = text.replace("/voz", "").strip().lower()
+        if sub == "on":
+            set_user_voice_pref(chat_id, True)
+            send_telegram_message(clean_token, chat_id, "🎙️ *Modo Voz Automático Activado.*\nA partir de ahora Akira te responderá en texto y también te enviará una nota de voz para que puedas escucharla con auriculares.")
+            return {"ok": True, "chat_id": chat_id, "action": "voice_pref_on"}
+        elif sub == "off":
+            set_user_voice_pref(chat_id, False)
+            send_telegram_message(clean_token, chat_id, "🔇 *Modo Voz Automático Desactivado.*\nAkira responderá exclusivamente en texto.")
+            return {"ok": True, "chat_id": chat_id, "action": "voice_pref_off"}
+        else:
+            speech_text = text.replace("/voz", "").strip() or "Hola Jhon, todas las capacidades de Akira están operativas."
+            send_telegram_message(clean_token, chat_id, "🎙️ _Sintetizando nota de voz con es-CO-SalomeNeural..._")
+            try:
+                import voice_service
+                v_bytes = voice_service.generate_voice_bytes(speech_text)
+                if v_bytes:
+                    send_telegram_voice(clean_token, chat_id, v_bytes, caption=f"🗣️ Akira: \"{speech_text[:80]}\"")
+                    return {"ok": True, "chat_id": chat_id, "action": "voice_reply"}
+                else:
+                    send_telegram_message(clean_token, chat_id, "⚠️ No fue posible generar el audio en este momento.")
+                    return {"ok": False, "error": "voice_synthesis_failed"}
+            except Exception as e:
+                send_telegram_message(clean_token, chat_id, f"⚠️ Error generando voz: {e}")
+                return {"ok": False, "error": str(e)}
 
     # /resumen_semanal o /reporte
     if text.startswith("/resumen_semanal") or text.startswith("/reporte"):
@@ -1084,6 +1179,182 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
         send_telegram_interactive_message(clean_token, chat_id, help_text)
         return {"ok": True, "chat_id": chat_id, "action": "help"}
 
+    # /factura o /cobro
+    if text.startswith("/factura") or text.startswith("/cobro"):
+        params = text.replace("/factura", "").replace("/cobro", "").strip().split(maxsplit=2)
+        client = params[0] if len(params) > 0 else "Cliente Corporativo"
+        amount = params[1] if len(params) > 1 else "500"
+        concept = params[2] if len(params) > 2 else "Servicios Profesionales de Desarrollo y Automatización de Software"
+        send_telegram_message(clean_token, chat_id, f"🧾 _Generando Cuenta de Cobro / Factura Proforma en PDF para {client}..._")
+        try:
+            import executive_service
+            inv_res = executive_service.generate_proforma_invoice(clean_token, chat_id, client=client, amount=amount, concept=concept)
+            return {"ok": True, "chat_id": chat_id, "action": "invoice", "sent": inv_res.get("telegram_sent")}
+        except Exception as e:
+            send_telegram_message(clean_token, chat_id, f"⚠️ Error generando factura: {e}")
+            return {"ok": False, "error": str(e)}
+
+    # /reunion o /minuta
+    if text.startswith("/reunion") or text.startswith("/minuta"):
+        topic_notes = text.replace("/reunion", "").replace("/minuta", "").strip() or "Alineación de Objetivos y Cronograma Técnico"
+        send_telegram_message(clean_token, chat_id, f"📑 _Estructurando Acta Ejecutiva / Minuta de Reunión en PDF para '{topic_notes[:40]}'..._")
+        try:
+            import executive_service
+            min_res = executive_service.generate_meeting_minutes(clean_token, chat_id, topic=topic_notes, raw_notes=topic_notes)
+            return {"ok": True, "chat_id": chat_id, "action": "meeting_minutes", "sent": min_res.get("telegram_sent")}
+        except Exception as e:
+            send_telegram_message(clean_token, chat_id, f"⚠️ Error generando minuta: {e}")
+            return {"ok": False, "error": str(e)}
+
+    # /boveda o /docs
+    if text.startswith("/boveda") or text.startswith("/docs"):
+        doc_arg = text.replace("/boveda", "").replace("/docs", "").strip().lower()
+        if doc_arg:
+            send_telegram_message(clean_token, chat_id, f"📄 _Despachando documento '{doc_arg}' desde la bóveda de Jhon Grimm..._")
+            try:
+                import executive_service
+                v_res = executive_service.get_vault_document(clean_token, chat_id, doc_type=doc_arg)
+                return {"ok": True, "chat_id": chat_id, "action": "vault_doc", "sent": v_res.get("telegram_sent")}
+            except Exception as e:
+                send_telegram_message(clean_token, chat_id, f"⚠️ Error despachando documento: {e}")
+                return {"ok": False, "error": str(e)}
+        else:
+            vault_kb = [
+                [{"text": "📄 Mi Perfil / CV", "callback_data": "vault_cv"}, {"text": "📑 Plantilla NDA", "callback_data": "vault_nda"}],
+                [{"text": "📊 Brochure Soluciones", "callback_data": "vault_brochure"}, {"text": "💼 Términos de Servicio", "callback_data": "vault_terminos"}]
+            ]
+            menu_text = (
+                "🏛️ *BÓVEDA CORPORATIVA DE JHON GRIMM*\n\n"
+                "Selecciona el documento formal que deseas despachar en PDF de inmediato:\n"
+                "• `1` **Perfil Ejecutivo & CV:** Trayectoria Full-Stack & AI.\n"
+                "• `2` **Plantilla NDA:** Acuerdo bilateral de confidencialidad e IP.\n"
+                "• `3` **Brochure:** Portafolio de automatización y servicios.\n"
+                "• `4` **Términos de Servicio:** Metodología y garantías técnicas."
+            )
+            send_telegram_interactive_message(clean_token, chat_id, menu_text, buttons=vault_kb)
+            return {"ok": True, "chat_id": chat_id, "action": "vault_menu"}
+
+    # /tarea
+    if text.startswith("/tarea") and not text.startswith("/tareas"):
+        parts = text.replace("/tarea", "").strip().split(maxsplit=1)
+        if len(parts) < 2:
+            send_telegram_message(clean_token, chat_id, "⚠️ Uso: `/tarea (tiempo/plazo) (descripción)`. Ejemplo: `/tarea 2h Revisar contrato de servidores`")
+            return {"ok": True, "chat_id": chat_id, "action": "task_usage"}
+        dur_str, task_text = parts[0], parts[1]
+        try:
+            import reminders_service
+            add_res = reminders_service.add_reminder(clean_token, chat_id, dur_str, task_text)
+            if add_res.get("ok"):
+                task_id = add_res.get("reminder_id", "t_1")
+                done_kb = [[{"text": "✅ Marcar como Completada", "callback_data": f"task_done_{task_id}"}]]
+                send_telegram_interactive_message(
+                    clean_token, chat_id,
+                    f"📋 *Tarea Agendada en el Brain:*\n• *Plazo:* En {dur_str}\n• *Acción:* '_{task_text}_'\n\nTe notificaré oportunamente para certificar su cumplimiento.",
+                    buttons=done_kb
+                )
+                return {"ok": True, "chat_id": chat_id, "action": "task_scheduled", "id": task_id}
+            else:
+                send_telegram_message(clean_token, chat_id, f"⚠️ {add_res.get('error')}")
+                return {"ok": False, "error": add_res.get('error')}
+        except Exception as e:
+            send_telegram_message(clean_token, chat_id, f"⚠️ Error agendando tarea: {e}")
+            return {"ok": False, "error": str(e)}
+
+    # /tareas
+    if text == "/tareas":
+        try:
+            import reminders_service
+            pending = reminders_service.get_pending_tasks(chat_id)
+            if pending:
+                lines = ["📋 *TAREAS ACTIVAS EN EL MOTOR DE SUPERVISIÓN:*\n"]
+                for i, t in enumerate(pending, 1):
+                    rem_sec = max(0, int(t.get("due_at", 0) - time.time()))
+                    mins = rem_sec // 60
+                    lines.append(f"*{i}.* _{t.get('text')}_ (Vence en ~{mins} min)")
+                lines.append("\n👑 _Usa `/tarea (tiempo) (texto)` para programar una nueva acción._")
+                send_telegram_interactive_message(clean_token, chat_id, "\n".join(lines))
+            else:
+                send_telegram_interactive_message(clean_token, chat_id, "📋 *TAREAS ACTIVAS:* No tienes compromisos pendientes en este momento. Ecosistema al día y en orden.")
+            return {"ok": True, "chat_id": chat_id, "action": "tasks_listed", "count": len(pending)}
+        except Exception as e:
+            send_telegram_message(clean_token, chat_id, f"⚠️ Error consultando tareas: {e}")
+            return {"ok": False, "error": str(e)}
+
+    # /analizar
+    if text.startswith("/analizar"):
+        url_target = text.replace("/analizar", "").strip()
+        if not url_target:
+            send_telegram_message(clean_token, chat_id, "⚠️ Por favor especifica la URL a analizar. Ejemplo: `/analizar https://upwork.com`")
+            return {"ok": True, "chat_id": chat_id, "action": "analyze_empty"}
+        send_telegram_message(clean_token, chat_id, f"🌐 _Analizando sitio web en vivo: {url_target[:35]}..._")
+        try:
+            import sandbox_service
+            audit_res = sandbox_service.audit_url_link(url_target)
+            send_telegram_interactive_message(clean_token, chat_id, audit_res)
+            return {"ok": True, "chat_id": chat_id, "action": "url_analyzed"}
+        except Exception as e:
+            send_telegram_message(clean_token, chat_id, f"⚠️ Error analizando URL: {e}")
+            return {"ok": False, "error": str(e)}
+
+    # /pulso o /salud
+    if text == "/pulso" or text == "/salud":
+        try:
+            import executive_service
+            telemetry_card = executive_service.get_git_deploy_telemetry()
+            send_telegram_interactive_message(clean_token, chat_id, telemetry_card)
+            return {"ok": True, "chat_id": chat_id, "action": "pulse"}
+        except Exception as e:
+            send_telegram_message(clean_token, chat_id, f"⚠️ Error en pulso de salud: {e}")
+            return {"ok": False, "error": str(e)}
+
+    # /deploy o /git
+    if text == "/deploy" or text == "/git":
+        try:
+            import executive_service
+            deploy_card = executive_service.get_git_deploy_telemetry()
+            send_telegram_interactive_message(clean_token, chat_id, deploy_card)
+            return {"ok": True, "chat_id": chat_id, "action": "deploy_info"}
+        except Exception as e:
+            send_telegram_message(clean_token, chat_id, f"⚠️ Error en monitor de despliegue: {e}")
+            return {"ok": False, "error": str(e)}
+
+    # /sincronizar o /sync
+    if text == "/sincronizar" or text == "/sync":
+        sync_msg = (
+            "🔄 *SINCRONIZACIÓN WEB ⟷ TELEGRAM ACTIVA*\n\n"
+            "• *Puente de Memoria:* Activo vía buffer rodante continuo\n"
+            "• *Chat Web Central:* Conectado al mismo motor de inferencia\n"
+            "• *Estado de Sesión:* Sincronizada con Jhon Grimm (Director)\n"
+            "• *Persistencia:* Local backend segura a costo $0.00 COP\n\n"
+            "✨ _Cualquier análisis o instrucción aquí se mantiene en el contexto unificado de Akira._"
+        )
+        send_telegram_interactive_message(clean_token, chat_id, sync_msg)
+        return {"ok": True, "chat_id": chat_id, "action": "sync"}
+
+    # /limpiar
+    if text.startswith("/limpiar"):
+        cnt_str = text.replace("/limpiar", "").strip() or "5"
+        try:
+            cnt = int(cnt_str)
+        except ValueError:
+            cnt = 5
+        del_count = clear_recent_bot_messages(clean_token, chat_id, count=cnt)
+        send_telegram_message(clean_token, chat_id, f"🧹 *Modo Privacidad:* Se eliminaron los últimos {del_count} mensajes emitidos por el bot.")
+        return {"ok": True, "chat_id": chat_id, "action": "cleared", "count": del_count}
+
+    # /privacidad
+    if text == "/privacidad":
+        priv_kb = [[{"text": "🧹 Limpiar últimos 5 mensajes", "callback_data": "clear_5"}]]
+        priv_msg = (
+            "🛡️ *MODO PRIVACIDAD EFÍMERA*\n\n"
+            "Akira respeta tu privacidad y la seguridad de tu información sensible:\n"
+            "• No almacena datos confidenciales sin tu autorización.\n"
+            "• Permite borrar mensajes generados por el bot bajo demanda.\n"
+            "• Puedes escribir `/limpiar [n]` para suprimir los últimos mensajes de la pantalla."
+        )
+        send_telegram_interactive_message(clean_token, chat_id, priv_msg, buttons=priv_kb)
+        return {"ok": True, "chat_id": chat_id, "action": "privacy"}
+
     # 8. CONVERSACIÓN EJECUTIVA NATURAL CON MEMORIA SINCRONIZADA
     reply_text = None
     if reply_generator:
@@ -1103,6 +1374,19 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
 
     # Conversación fluida y limpia: sin saturar la pantalla con botonera en cada mensaje
     send_res = send_telegram_message(clean_token, chat_id, reply_text)
+    
+    # Si el usuario tiene activo el modo voz automático, sintetizar y enviar también nota de voz
+    if get_user_voice_pref(chat_id):
+        try:
+            import voice_service
+            clean_speech = re.sub(r'[*_#`>•-]', '', reply_text)[:350].strip()
+            if clean_speech:
+                v_bytes = voice_service.generate_voice_bytes(clean_speech)
+                if v_bytes:
+                    send_telegram_voice(clean_token, chat_id, v_bytes)
+        except Exception as e:
+            logger.warning(f"Error generando nota de voz automatica: {e}")
+
     return {"ok": True, "chat_id": chat_id, "action": "chat_reply", "send_result": send_res}
 
 def process_pending_telegram_updates(bot_token: str, reply_generator=None, groq_keys: list = None, gemini_api_key: str = None, gemini_keys: list = None) -> dict:

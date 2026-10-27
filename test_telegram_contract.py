@@ -289,5 +289,144 @@ class TestTelegramContract(unittest.TestCase):
         mock_groq.assert_called_once()
         mock_gemini.assert_called_once()
 
+    def test_voice_preference_toggle(self):
+        telegram_service.set_user_voice_pref("test_chat_1", True)
+        self.assertTrue(telegram_service.get_user_voice_pref("test_chat_1"))
+        telegram_service.set_user_voice_pref("test_chat_1", False)
+        self.assertFalse(telegram_service.get_user_voice_pref("test_chat_1"))
+
+    @patch("executive_service.generate_proforma_invoice")
+    def test_handle_invoice_command(self, mock_inv):
+        mock_inv.return_value = {"ok": True, "invoice_number": "AK-2026-0001", "telegram_sent": True}
+        update = {
+            "update_id": 130,
+            "message": {"chat": {"id": 999}, "text": "/factura ACME_Corp 1200 Desarrollo de Chatbot"}
+        }
+        res = telegram_service.handle_telegram_update("dummy_token", update)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["action"], "invoice")
+        mock_inv.assert_called_once()
+
+    @patch("executive_service.generate_meeting_minutes")
+    def test_handle_meeting_minutes_command(self, mock_min):
+        mock_min.return_value = {"ok": True, "topic": "Sprint Review", "telegram_sent": True}
+        update = {
+            "update_id": 131,
+            "message": {"chat": {"id": 999}, "text": "/reunion Sprint Review con Cliente"}
+        }
+        res = telegram_service.handle_telegram_update("dummy_token", update)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["action"], "meeting_minutes")
+        mock_min.assert_called_once()
+
+    @patch("executive_service.get_vault_document")
+    def test_handle_vault_command_and_callback(self, mock_vault):
+        mock_vault.return_value = {"ok": True, "doc_type": "cv", "telegram_sent": True}
+        # Direct command
+        update_cmd = {
+            "update_id": 132,
+            "message": {"chat": {"id": 999}, "text": "/boveda cv"}
+        }
+        res_cmd = telegram_service.handle_telegram_update("dummy_token", update_cmd)
+        self.assertTrue(res_cmd["ok"])
+        self.assertEqual(res_cmd["action"], "vault_doc")
+        
+        # Callback query
+        update_cb = {
+            "update_id": 133,
+            "callback_query": {
+                "id": "cb_vault_1",
+                "message": {"chat": {"id": 999}},
+                "data": "vault_cv"
+            }
+        }
+        with patch("telegram_service.answer_callback_query"):
+            res_cb = telegram_service.handle_telegram_update("dummy_token", update_cb)
+            self.assertTrue(res_cb["ok"])
+            self.assertEqual(res_cb["action"], "vault_dispatched")
+
+    @patch("telegram_service.get_telegram_file_bytes")
+    @patch("executive_service.audit_spreadsheet_data")
+    @patch("telegram_service.send_telegram_interactive_message")
+    def test_spreadsheet_audit_document(self, mock_send, mock_sheet, mock_file):
+        mock_file.return_value = (b"id,cliente,monto\n1,ACME,1500\n2,Beta,2200", "datos.csv")
+        mock_sheet.return_value = {"ok": True, "report": "Reporte de datos", "rows": 3, "columns": 3}
+        mock_send.return_value = {"ok": True, "message_id": 70}
+        
+        update = {
+            "update_id": 134,
+            "message": {
+                "chat": {"id": 999},
+                "document": {"file_id": "doc_csv_1", "file_name": "datos.csv"}
+            }
+        }
+        res = telegram_service.handle_telegram_update("dummy_token", update)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["action"], "spreadsheet_audited")
+        mock_sheet.assert_called_once()
+
+    @patch("reminders_service.add_reminder")
+    def test_task_scheduling_and_completion(self, mock_add):
+        mock_add.return_value = {"ok": True, "reminder_id": "t_99"}
+        update_task = {
+            "update_id": 135,
+            "message": {"chat": {"id": 999}, "text": "/tarea 30m Revisar logs de produccion"}
+        }
+        with patch("telegram_service.send_telegram_interactive_message"):
+            res = telegram_service.handle_telegram_update("dummy_token", update_task)
+            self.assertTrue(res["ok"])
+            self.assertEqual(res["action"], "task_scheduled")
+
+        # Callback completion
+        update_cb = {
+            "update_id": 136,
+            "callback_query": {
+                "id": "cb_task_1",
+                "message": {"chat": {"id": 999}},
+                "data": "task_done_t_99"
+            }
+        }
+        with patch("telegram_service.answer_callback_query"), patch("telegram_service.send_telegram_message"), patch("reminders_service.complete_task"):
+            res_cb = telegram_service.handle_telegram_update("dummy_token", update_cb)
+            self.assertTrue(res_cb["ok"])
+            self.assertEqual(res_cb["action"], "task_completed")
+
+    @patch("telegram_service.delete_telegram_message")
+    def test_privacy_clean_command(self, mock_del):
+        mock_del.return_value = {"ok": True}
+        telegram_service._RECENT_BOT_MESSAGES["999"] = [101, 102, 103]
+        
+        update = {
+            "update_id": 137,
+            "message": {"chat": {"id": 999}, "text": "/limpiar 2"}
+        }
+        with patch("telegram_service.send_telegram_message"):
+            res = telegram_service.handle_telegram_update("dummy_token", update)
+            self.assertTrue(res["ok"])
+            self.assertEqual(res["action"], "cleared")
+            self.assertEqual(res["count"], 2)
+
+    def test_deploy_and_pulse_commands(self):
+        update_deploy = {
+            "update_id": 138,
+            "message": {"chat": {"id": 999}, "text": "/deploy"}
+        }
+        with patch("telegram_service.send_telegram_interactive_message") as mock_send:
+            mock_send.return_value = {"ok": True, "message_id": 80}
+            res = telegram_service.handle_telegram_update("dummy_token", update_deploy)
+            self.assertTrue(res["ok"])
+            self.assertEqual(res["action"], "deploy_info")
+
+    def test_sync_command(self):
+        update_sync = {
+            "update_id": 139,
+            "message": {"chat": {"id": 999}, "text": "/sincronizar"}
+        }
+        with patch("telegram_service.send_telegram_interactive_message") as mock_send:
+            mock_send.return_value = {"ok": True, "message_id": 81}
+            res = telegram_service.handle_telegram_update("dummy_token", update_sync)
+            self.assertTrue(res["ok"])
+            self.assertEqual(res["action"], "sync")
+
 if __name__ == "__main__":
     unittest.main()

@@ -9905,6 +9905,77 @@ async def api_telegram_repair(request: Request):
     import telegram_service
     return telegram_service.repair_telegram_webhook(token)
 
+@app.get("/api/v8/telegram/bridge-history")
+@app.post("/api/v8/telegram/bridge-history")
+async def api_telegram_bridge_history(request: Request):
+    """Sincroniza y expone el historial de conversación unificado entre la web y Telegram."""
+    chat_id = ""
+    try:
+        if request.method == "POST":
+            body = await request.json()
+            chat_id = str(body.get("chat_id", ""))
+            incoming_context = body.get("seed_message")
+            if incoming_context and chat_id:
+                _TELEGRAM_HISTORIES[chat_id].append({"role": "WebChat", "content": str(incoming_context)})
+        else:
+            chat_id = str(request.query_params.get("chat_id", ""))
+    except Exception:
+        pass
+    if not chat_id:
+        import telegram_service
+        cfg = telegram_service.load_telegram_config()
+        chat_id = cfg.get("chat_id", "")
+    history = _TELEGRAM_HISTORIES.get(chat_id, [])
+    return {
+        "ok": True,
+        "chat_id": chat_id,
+        "turns_count": len(history),
+        "history": history[-12:]
+    }
+
+@app.post("/api/v8/executive/proforma-invoice")
+async def api_executive_invoice(request: Request):
+    """Genera factura proforma / cuenta de cobro formal en PDF y la envía por Telegram."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    token = body.get("telegram_token") or os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id = body.get("chat_id") or os.getenv("TELEGRAM_CHAT_ID", "")
+    client = body.get("client") or "Cliente Corporativo"
+    amount = str(body.get("amount") or "500")
+    concept = body.get("concept") or "Servicios Profesionales de Desarrollo y Automatización de Software"
+    currency = body.get("currency") or "USD"
+    import executive_service
+    return executive_service.generate_proforma_invoice(token, chat_id, client=client, amount=amount, concept=concept, currency=currency)
+
+@app.post("/api/v8/executive/meeting-minutes")
+async def api_executive_minutes(request: Request):
+    """Genera acta ejecutiva / minuta de reunión en PDF y la envía por Telegram."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    token = body.get("telegram_token") or os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id = body.get("chat_id") or os.getenv("TELEGRAM_CHAT_ID", "")
+    topic = body.get("topic") or "Alineación de Objetivos y Cronograma Técnico"
+    notes = body.get("notes") or ""
+    import executive_service
+    return executive_service.generate_meeting_minutes(token, chat_id, topic=topic, raw_notes=notes)
+
+@app.post("/api/v8/executive/vault")
+async def api_executive_vault(request: Request):
+    """Despacha documento formal desde la bóveda de Jhon Grimm."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    token = body.get("telegram_token") or os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id = body.get("chat_id") or os.getenv("TELEGRAM_CHAT_ID", "")
+    doc_type = body.get("doc_type") or "cv"
+    import executive_service
+    return executive_service.get_vault_document(token, chat_id, doc_type=doc_type)
+
 @app.post("/api/v8/telegram/poll")
 async def api_telegram_poll(request: Request):
     """Consulta y responde inmediatamente a cualquier mensaje o nota de voz pendiente en Telegram."""
