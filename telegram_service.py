@@ -398,90 +398,152 @@ def get_telegram_file_bytes(bot_token: str, file_id: str) -> tuple[bytes | None,
     except Exception as e:
         return None, str(e)
 
-def transcribe_audio_with_gemini(audio_bytes: bytes, gemini_keys: list = None) -> str | None:
+def transcribe_audio_with_gemini(audio_bytes: bytes, gemini_keys: list = None, mime_type: str = "audio/ogg") -> str | None:
     """Transcribe audio usando la capacidad multimodal nativa de Gemini Flash a costo $0.00 COP."""
     if not audio_bytes or not gemini_keys:
         return None
     import base64
     b64_audio = base64.b64encode(audio_bytes).decode("utf-8")
+    
+    # Modelos oficiales de Gemini probados con audio multimodal en v1beta
+    candidate_models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-pro"]
+    clean_mime = mime_type if mime_type in ["audio/ogg", "audio/mp3", "audio/wav", "audio/aac", "audio/flac", "audio/x-m4a"] else "audio/ogg"
+    
     for key in gemini_keys:
         clean_key = str(key).strip()
         if not clean_key:
             continue
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={clean_key}"
-        payload = {
-            "contents": [{
-                "parts": [
-                    {"text": "Transcribe con maxima precision el contenido de este audio en espanol. Devuelve EXCLUSIVAMENTE el texto hablado tal cual, sin anadir comentarios, sin comillas ni explicaciones."},
-                    {"inline_data": {"mime_type": "audio/ogg", "data": b64_audio}}
-                ]
-            }],
-            "generationConfig": {"temperature": 0.0, "maxOutputTokens": 1000}
-        }
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json", "User-Agent": "AkiraAssistant/4.2"}
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                candidates = data.get("candidates", [])
-                if candidates:
-                    parts = candidates[0].get("content", {}).get("parts", [])
-                    if parts and "text" in parts[0]:
-                        text = parts[0]["text"].strip()
-                        if text:
-                            return text
-        except Exception as e:
-            logger.warning(f"Error en Gemini Flash Audio Transcription: {e}")
-            continue
+        for model in candidate_models:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={clean_key}"
+            payload = {
+                "contents": [{
+                    "role": "user",
+                    "parts": [
+                        {
+                            "inline_data": {
+                                "mime_type": clean_mime,
+                                "data": b64_audio
+                            }
+                        },
+                        {
+                            "text": (
+                                "Transcribe con la máxima precisión posible todo lo hablado en este audio en español. "
+                                "Devuelve ÚNICAMENTE el texto transcrito palabra por palabra. "
+                                "No añadas introducciones, comentarios, aclaraciones ni comillas."
+                            )
+                        }
+                    ]
+                }],
+                "generationConfig": {
+                    "temperature": 0.0,
+                    "maxOutputTokens": 1200
+                }
+            }
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json", "User-Agent": "AkiraAssistant/4.2"}
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=25) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        if parts and "text" in parts[0]:
+                            text = parts[0]["text"].strip()
+                            if text:
+                                if (text.startswith('"') and text.endswith('"')) or (text.startswith('«') and text.endswith('»')):
+                                    text = text[1:-1].strip()
+                                logger.info(f"[gemini_audio] Transcripción exitosa con modelo {model}: {text[:60]}")
+                                return text
+            except urllib.error.HTTPError as e:
+                err_text = ""
+                try:
+                    err_text = e.read().decode("utf-8", errors="replace")[:200]
+                except Exception:
+                    pass
+                logger.warning(f"[gemini_audio] HTTPError {e.code} con modelo {model}: {err_text}")
+                continue
+            except Exception as e:
+                logger.warning(f"[gemini_audio] Error con modelo {model}: {e}")
+                continue
     return None
 
-def transcribe_telegram_voice(audio_bytes: bytes, groq_keys: list = None, gemini_keys: list = None, filename: str = "voice.oga") -> str | None:
-    """
-    Transcribe notas de voz de Telegram con alta fidelidad a costo $0.00 COP.
-    1. Intento primario con Groq Whisper Large v3 Turbo.
-    2. Fallback de respaldo con Gemini Flash Native Audio.
-    """
-    if not audio_bytes:
+def transcribe_audio_with_groq(audio_bytes: bytes, groq_keys: list = None, filename: str = "voice.ogg") -> str | None:
+    """Transcribe audio usando Groq Whisper (large-v3-turbo / large-v3) a costo $0.00 COP."""
+    if not audio_bytes or not groq_keys:
         return None
     
-    # 1. Groq Whisper
-    if groq_keys:
-        boundary = "----WebKitFormBoundaryAkiraVoice" + uuid.uuid4().hex[:12]
-        parts = []
-        parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nwhisper-large-v3-turbo\r\n".encode("utf-8"))
-        parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"language\"\r\n\res\r\n".encode("utf-8"))
-        parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: audio/ogg\r\n\r\n".encode("utf-8"))
-        parts.append(audio_bytes)
-        parts.append(f"\r\n--{boundary}--\r\n".encode("utf-8"))
-        body = b"".join(parts)
-        
-        for key in groq_keys:
+    # Groq requiere explícitamente extensiones conocidas: flac, mp3, mp4, mpeg, mpga, m4a, ogg, wav, webm
+    safe_filename = filename if filename.lower().endswith((".ogg", ".mp3", ".wav", ".flac", ".m4a")) else "voice.ogg"
+    models = ["whisper-large-v3-turbo", "whisper-large-v3"]
+    
+    for key in groq_keys:
+        clean_key = str(key).strip()
+        if not clean_key:
+            continue
+        for model in models:
+            boundary = "----WebKitFormBoundaryAkiraVoice" + uuid.uuid4().hex[:12]
+            parts = [
+                f"--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n{model}\r\n".encode("utf-8"),
+                f"--{boundary}\r\nContent-Disposition: form-data; name=\"language\"\r\n\r\nes\r\n".encode("utf-8"),
+                f"--{boundary}\r\nContent-Disposition: form-data; name=\"response_format\"\r\n\r\njson\r\n".encode("utf-8"),
+                f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{safe_filename}\"\r\nContent-Type: audio/ogg\r\n\r\n".encode("utf-8"),
+                audio_bytes,
+                f"\r\n--{boundary}--\r\n".encode("utf-8")
+            ]
+            body = b"".join(parts)
+            
             req = urllib.request.Request(
                 "https://api.groq.com/openai/v1/audio/transcriptions",
                 data=body,
                 headers={
-                    "Authorization": f"Bearer {key}",
+                    "Authorization": f"Bearer {clean_key}",
                     "Content-Type": f"multipart/form-data; boundary={boundary}",
                     "User-Agent": "AkiraAssistant/4.2"
                 }
             )
             try:
-                with urllib.request.urlopen(req, timeout=15) as resp:
+                with urllib.request.urlopen(req, timeout=20) as resp:
                     res = json.loads(resp.read().decode("utf-8"))
                     text = res.get("text", "").strip()
                     if text:
+                        logger.info(f"[groq_whisper] Transcripción exitosa con modelo {model}: {text[:60]}")
                         return text
-            except Exception:
+            except urllib.error.HTTPError as e:
+                err_text = ""
+                try:
+                    err_text = e.read().decode("utf-8", errors="replace")[:200]
+                except Exception:
+                    pass
+                logger.warning(f"[groq_whisper] HTTPError {e.code} con modelo {model}: {err_text}")
                 continue
+            except Exception as e:
+                logger.warning(f"[groq_whisper] Error con modelo {model}: {e}")
+                continue
+    return None
 
-    # 2. Gemini Flash Multimodal Audio Fallback
+def transcribe_telegram_voice(audio_bytes: bytes, groq_keys: list = None, gemini_keys: list = None, filename: str = "voice.ogg", mime_type: str = "audio/ogg") -> str | None:
+    """
+    Transcribe notas de voz de Telegram con alta fidelidad y doble respaldo a costo $0.00 COP:
+    1. Groq Whisper (ultra veloz con large-v3-turbo).
+    2. Fallback con Gemini Flash Audio Multimodal (soporta audio directo y acentos).
+    """
+    if not audio_bytes:
+        return None
+    
+    # 1. Probar Groq Whisper primero
+    if groq_keys:
+        t_groq = transcribe_audio_with_groq(audio_bytes, groq_keys=groq_keys, filename=filename)
+        if t_groq and len(t_groq.strip()) > 1:
+            return t_groq.strip()
+            
+    # 2. Respaldo directo con Gemini Flash Multimodal
     if gemini_keys:
-        gemini_text = transcribe_audio_with_gemini(audio_bytes, gemini_keys)
-        if gemini_text:
-            return gemini_text
+        t_gemini = transcribe_audio_with_gemini(audio_bytes, gemini_keys=gemini_keys, mime_type=mime_type)
+        if t_gemini and len(t_gemini.strip()) > 1:
+            return t_gemini.strip()
 
     return None
 
@@ -605,17 +667,43 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
     if voice_obj and voice_obj.get("file_id"):
         file_id = voice_obj["file_id"]
         send_telegram_message(clean_token, chat_id, "🎙️ _Escuchando y transcribiendo tu audio en alta fidelidad..._")
-        audio_bytes, _ = get_telegram_file_bytes(clean_token, file_id)
+        audio_bytes, dl_file_path = get_telegram_file_bytes(clean_token, file_id)
+        if not audio_bytes:
+            logger.error(f"[telegram_voice] Error descargando audio de Telegram: {dl_file_path}")
+            send_telegram_message(clean_token, chat_id, "⚠️ No pude descargar la nota de voz desde Telegram. Por favor intenta reenviarla.")
+            return {"ok": False, "error": f"download_failed: {dl_file_path}"}
+        
+        # Determinar formato y extensión segura para los motores de transcripción
+        dl_str = str(dl_file_path or "").lower()
+        if dl_str.endswith(".mp3"):
+            v_filename = "voice.mp3"
+            v_mime = "audio/mp3"
+        elif dl_str.endswith(".wav"):
+            v_filename = "voice.wav"
+            v_mime = "audio/wav"
+        elif dl_str.endswith(".m4a"):
+            v_filename = "voice.m4a"
+            v_mime = "audio/x-m4a"
+        else:
+            v_filename = "voice.ogg"
+            v_mime = "audio/ogg"
+
         transcribed = None
         effective_gemini = gemini_keys or ([gemini_api_key] if gemini_api_key else None)
-        if audio_bytes:
-            transcribed = transcribe_telegram_voice(audio_bytes, groq_keys=groq_keys, gemini_keys=effective_gemini)
+        transcribed = transcribe_telegram_voice(
+            audio_bytes,
+            groq_keys=groq_keys,
+            gemini_keys=effective_gemini,
+            filename=v_filename,
+            mime_type=v_mime
+        )
         
-        if transcribed:
+        if transcribed and len(transcribed.strip()) > 1:
+            clean_transcribed = transcribed.strip()
             if is_forwarded:
                 spy_report = (
                     "🕵️ *ANÁLISIS MODO ESPÍA // AUDIO REENVIADO*\n\n"
-                    f"📝 *Transcripción Completa:*\n_{transcribed}_\n\n"
+                    f"📝 *Transcripción Completa:*\n_{clean_transcribed}_\n\n"
                     "🔍 *1. ¿QUÉ DIJO EL EMISOR?*\n"
                     "Plantea requerimientos específicos solicitando validación o respuesta pronta.\n\n"
                     "🎯 *2. ¿QUÉ INTENCIÓN O INTERÉS TIENE?*\n"
@@ -625,12 +713,13 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
                     "👑 _Análisis ejecutado a costo $0.00 COP._"
                 )
                 send_telegram_interactive_message(clean_token, chat_id, spy_report)
-                return {"ok": True, "chat_id": chat_id, "action": "spy_mode", "transcription": transcribed}
+                return {"ok": True, "chat_id": chat_id, "action": "spy_mode", "transcription": clean_transcribed}
             else:
-                text = transcribed
-                send_telegram_message(clean_token, chat_id, f"📝 *Te escuché:* _{transcribed}_")
+                text = clean_transcribed
+                send_telegram_message(clean_token, chat_id, f"📝 *Te escuché:* «_{clean_transcribed}_»")
         else:
-            send_telegram_message(clean_token, chat_id, "⚠️ No alcancé a distinguir claramente el audio. ¿Podrías repetirlo o escribírmelo?")
+            logger.warning(f"[telegram_voice] Audio de {len(audio_bytes)} bytes no pudo ser transcrito por Groq ni Gemini.")
+            send_telegram_message(clean_token, chat_id, "⚠️ No alcancé a distinguir claramente el audio. ¿Podrías repetirlo hablando un poco más cerca del micrófono o escribírmelo en texto?")
             return {"ok": True, "chat_id": chat_id, "action": "voice_unclear"}
 
     if not text:

@@ -9835,8 +9835,8 @@ async def api_telegram_test(request: Request):
 def _process_telegram_update_bg(token: str, body: dict):
     try:
         import telegram_service
-        gk = _pick_gemini_keys()
-        grk = _pick_groq_keys()
+        gk = _pick_gemini_keys() or get_gemini_keys()
+        grk = _pick_groq_keys() or get_groq_keys()
         telegram_service.handle_telegram_update(
             token, body,
             reply_generator=generate_telegram_reply,
@@ -9877,7 +9877,16 @@ async def api_telegram_diagnostics(request: Request):
     if not token:
         return {"ok": False, "error": "No hay token de Telegram configurado en el servidor."}
     import telegram_service
-    return telegram_service.get_webhook_diagnostics(token)
+    diag = telegram_service.get_webhook_diagnostics(token)
+    gk = _pick_gemini_keys() or get_gemini_keys()
+    grk = _pick_groq_keys() or get_groq_keys()
+    diag["audio_engines"] = {
+        "gemini_keys_available": len(gk),
+        "groq_keys_available": len(grk),
+        "gemini_models": ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest"],
+        "groq_models": ["whisper-large-v3-turbo", "whisper-large-v3"]
+    }
+    return diag
 
 @app.post("/api/v8/telegram/repair")
 async def api_telegram_repair(request: Request):

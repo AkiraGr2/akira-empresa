@@ -258,5 +258,36 @@ class TestTelegramContract(unittest.TestCase):
         self.assertEqual(diag["bot_link"], "https://t.me/AkiraBot")
         self.assertTrue(diag["webhook_registered"])
 
+    @patch("urllib.request.urlopen")
+    def test_transcribe_audio_with_groq_success(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b'{"text": "Hola Akira como estas"}'
+        mock_resp.__enter__.return_value = mock_resp
+        mock_urlopen.return_value = mock_resp
+
+        text = telegram_service.transcribe_audio_with_groq(b"fake_audio", groq_keys=["gsk_test"], filename="voice.ogg")
+        self.assertEqual(text, "Hola Akira como estas")
+
+    @patch("urllib.request.urlopen")
+    def test_transcribe_audio_with_gemini_success(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b'{"candidates": [{"content": {"parts": [{"text": "Propuesta de valor formal"}]}}]}'
+        mock_resp.__enter__.return_value = mock_resp
+        mock_urlopen.return_value = mock_resp
+
+        text = telegram_service.transcribe_audio_with_gemini(b"fake_audio", gemini_keys=["gem_test"], mime_type="audio/ogg")
+        self.assertEqual(text, "Propuesta de valor formal")
+
+    @patch("telegram_service.transcribe_audio_with_groq")
+    @patch("telegram_service.transcribe_audio_with_gemini")
+    def test_transcribe_telegram_voice_fallback(self, mock_gemini, mock_groq):
+        mock_groq.return_value = None
+        mock_gemini.return_value = "Audio recuperado por Gemini Flash"
+
+        text = telegram_service.transcribe_telegram_voice(b"fake_bytes", groq_keys=["gsk"], gemini_keys=["gem"])
+        self.assertEqual(text, "Audio recuperado por Gemini Flash")
+        mock_groq.assert_called_once()
+        mock_gemini.assert_called_once()
+
 if __name__ == "__main__":
     unittest.main()
