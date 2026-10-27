@@ -1,5 +1,10 @@
 __pycache__/
 *.pyc
 data/telegram_config.json
+data/web_cache/
+data/dossiers/
+data/sentinel_seen.json
+*.pdf
 .env
 .DS_Store
+

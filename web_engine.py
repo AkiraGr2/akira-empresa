@@ -1,6 +1,7 @@
 """
-AKIRA LIVE WEB ENGINE v1.0
-Zero-Cost ($0.00 COP/USD) Real-Time Web Search & Deep URL Content Extractor.
+AKIRA LIVE WEB ENGINE v2.0
+Zero-Cost ($0.00 COP/USD) Real-Time Web Search, Deep Content Extractor,
+Perimeter Prompt Injection Sanitizer & Semantic Local Cache.
 Connects Akira to live internet data without third-party paid API keys.
 """
 
@@ -11,12 +12,16 @@ import html
 import datetime
 import json
 import logging
+from typing import Dict, Any, List
+
+import web_sanitizer
+import tech_vault_cache
 
 logger = logging.getLogger("akira.web_engine")
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-def search_duckduckgo_html(query: str, max_results: int = 5) -> list[dict]:
+def search_duckduckgo_html(query: str, max_results: int = 5) -> List[Dict[str, str]]:
     """Realiza una búsqueda web en vivo usando DuckDuckGo HTML sin claves de API."""
     url = "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote_plus(query)
     headers = {
@@ -57,17 +62,20 @@ def search_duckduckgo_html(query: str, max_results: int = 5) -> list[dict]:
             snip = html.unescape(snip)
 
         if title and link:
+            # Sanitizar título y fragmento
+            title_clean = web_sanitizer.sanitize_web_content(title).get("cleaned_text", title)
+            snip_clean = web_sanitizer.sanitize_web_content(snip).get("cleaned_text", snip) if snip else ""
             results.append({
-                "title": title,
+                "title": title_clean,
                 "link": link,
-                "snippet": snip
+                "snippet": snip_clean
             })
         if len(results) >= max_results:
             break
 
     return results
 
-def search_wikipedia(query: str, max_results: int = 3) -> list[dict]:
+def search_wikipedia(query: str, max_results: int = 3) -> List[Dict[str, str]]:
     """Proveedor de respaldo en vivo vía API abierta de Wikipedia."""
     url = f"https://es.wikipedia.org/w/api.php?action=opensearch&search={urllib.parse.quote_plus(query)}&limit={max_results}&namespace=0&format=json"
     headers = {"User-Agent": "AkiraAssistant/2.0 (contact@akira.local)"}
@@ -81,17 +89,19 @@ def search_wikipedia(query: str, max_results: int = 3) -> list[dict]:
                 snippets = data[2]
                 links = data[3]
                 for i in range(len(titles)):
+                    t_clean = web_sanitizer.sanitize_web_content(titles[i]).get("cleaned_text", titles[i])
+                    s_clean = web_sanitizer.sanitize_web_content(snippets[i] or f"Artículo enciclopédico sobre {titles[i]} en Wikipedia.").get("cleaned_text", "")
                     results.append({
-                        "title": titles[i],
+                        "title": t_clean,
                         "link": links[i],
-                        "snippet": snippets[i] or f"Artículo enciclopédico sobre {titles[i]} en Wikipedia."
+                        "snippet": s_clean
                     })
             return results
     except Exception as e:
         logger.warning(f"Wikipedia search error: {e}")
         return []
 
-def search_web(query: str, max_results: int = 5) -> dict:
+def search_web(query: str, max_results: int = 5) -> Dict[str, Any]:
     """
     Punto de entrada unificado para búsqueda en tiempo real.
     Prueba primero DuckDuckGo HTML y si falla o no hay resultados, usa Wikipedia.
@@ -125,10 +135,10 @@ def search_web(query: str, max_results: int = 5) -> dict:
         "timestamp": now_iso
     }
 
-def fetch_url(url: str, max_chars: int = 4000) -> dict:
+def fetch_url(url: str, max_chars: int = 4000, bypass_cache: bool = False) -> Dict[str, Any]:
     """
-    Extrae y limpia el texto legible de cualquier página web externa en vivo.
-    Remueve scripts, estilos, navegaciones y elementos no informativos.
+    Extrae, sanitiza contra inyecciones y limpia el texto legible de cualquier página web externa.
+    Usa caché semántico local (Tech Vault) con TTL para latencia ultra baja.
     """
     clean_url = url.strip()
     if not clean_url.startswith(("http://", "https://")):
@@ -137,6 +147,12 @@ def fetch_url(url: str, max_chars: int = 4000) -> dict:
             "error": "URL inválida. Debe comenzar con http:// o https://",
             "url": clean_url
         }
+
+    # 1. Comprobar Caché Semántico Local
+    if not bypass_cache:
+        cached = tech_vault_cache.get_cached_url(clean_url)
+        if cached is not None:
+            return cached
 
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
     headers = {
@@ -157,29 +173,45 @@ def fetch_url(url: str, max_chars: int = 4000) -> dict:
             "timestamp": now_iso
         }
 
-    # Extraer título
+    # 2. Extraer título
     title_m = re.search(r'<title[^>]*>(.*?)</title>', raw_html, re.I | re.DOTALL)
     title = html.unescape(title_m.group(1)).strip() if title_m else "Sin título"
 
-    # Limpiar elementos no legibles
+    # 3. Limpiar elementos no legibles
     cleaned = re.sub(r'<(script|style|svg|nav|footer|header|noscript|aside)[^>]*>.*?</\1>', ' ', raw_html, flags=re.I | re.DOTALL)
     text = re.sub(r'<[^>]+>', ' ', cleaned)
     text = html.unescape(text)
     text = re.sub(r'[ \t]+', ' ', text)
     text = re.sub(r'\n\s*\n+', '\n\n', text).strip()
 
-    truncated = text[:max_chars]
-    if len(text) > max_chars:
+    # 4. Escudo de Seguridad Anti-Inyección de Prompts
+    security_audit = web_sanitizer.sanitize_web_content(text, source_url=clean_url)
+    safe_text = security_audit.get("cleaned_text", text)
+
+    truncated = safe_text[:max_chars]
+    if len(safe_text) > max_chars:
         truncated += "\n\n[... Contenido truncado para optimización de contexto ...]"
 
-    return {
+    res = {
         "ok": True,
         "url": clean_url,
         "title": title,
         "content": truncated,
-        "char_count": len(text),
+        "char_count": len(safe_text),
+        "security": {
+            "is_safe": security_audit.get("is_safe", True),
+            "threats": security_audit.get("threats_detected", []),
+            "safety_score": security_audit.get("safety_score", 1.0),
+            "sanitized": security_audit.get("sanitized", False)
+        },
+        "cached": False,
         "timestamp": now_iso
     }
+
+    # 5. Guardar en Caché Local
+    tech_vault_cache.save_cached_url(clean_url, res, ttl_seconds=86400)
+
+    return res
 
 def augment_prompt_with_web(query: str, max_results: int = 3) -> str:
     """Genera un bloque de contexto web enriquecido para inyectar en la conversación."""

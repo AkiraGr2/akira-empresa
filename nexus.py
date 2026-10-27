@@ -989,6 +989,12 @@ _TOOL_SEED = [
     {"name": "python_test", "description": "Ejecuta pruebas Python seleccionadas sin shell.", "category": "code", "permissions": ["owner"], "inputs_schema": {"tests": "list", "compile_paths": "list"}, "outputs_schema": {"status": "str", "tests": "list"}, "limits_json": {"max_tests": 6, "timeout_s": 45}, "risks": ["ejecucion de pruebas del repositorio"]},
     {"name": "code_review", "description": "Revisa una propuesta de codigo contra el repositorio y evidencia de pruebas; no escribe.", "category": "code", "permissions": ["owner"], "inputs_schema": {"repo": "str", "paths": "list", "proposal": "dict", "test_results": "dict"}, "outputs_schema": {"review": "dict"}, "limits_json": {"max_paths": 4, "max_proposal_chars": 24000}, "risks": ["inferencia externa", "revision de codigo"]},
     {"name": "controlled_autonomy_start", "description": "Inicia la autonomia controlada F14 hasta una compuerta de aprobacion humana; no aprueba ni aplica cambios.", "category": "code", "permissions": ["owner"], "inputs_schema": {"goal": "str", "repository": "str", "base_branch": "str", "paths": "list", "instruction": "str", "queries": "list", "tests": "list", "idempotency_key": "str"}, "outputs_schema": {"autonomy": "dict"}, "limits_json": {"max_paths": 4, "max_instruction": 4000, "max_files": 4}, "risks": ["propone y prueba cambios de codigo", "requiere aprobacion humana antes de escribir GitHub"]},
+    {"name": "deep_research", "description": "Ejecuta investigacion profunda recursiva multi-paso con sintesis estructurada.", "category": "research", "permissions": ["auth"], "inputs_schema": {"topic": "str", "max_depth": "int", "max_queries": "int"}, "outputs_schema": {"result": "dict"}, "limits_json": {"max_depth": 3, "max_queries": 5}, "risks": ["dependencia de red"]},
+    {"name": "fact_triangulate", "description": "Triangula afirmaciones tecnicas entre multiples fuentes para verificacion anti-alucinacion.", "category": "research", "permissions": ["auth"], "inputs_schema": {"claim": "str", "sources": "list"}, "outputs_schema": {"result": "dict"}, "limits_json": {"max_sources": 10}, "risks": ["dependencia de red"]},
+    {"name": "web_structured_extract", "description": "Extrae tablas HTML, esquemas JSON-LD y feeds RSS/Atom de paginas web.", "category": "web", "permissions": ["auth"], "inputs_schema": {"content": "str", "url": "str"}, "outputs_schema": {"result": "dict"}, "limits_json": {"max_content": 100000}, "risks": ["dependencia de red"]},
+    {"name": "dependency_vulnerability_audit", "description": "Audita dependencias (requirements.txt o package.json) detectando CVEs y versiones inseguras.", "category": "security", "permissions": ["auth"], "inputs_schema": {"content": "str", "file_type": "str"}, "outputs_schema": {"result": "dict"}, "limits_json": {"max_content": 50000}, "risks": []},
+    {"name": "executive_dossier_generate", "description": "Compila un dossier de investigacion formal en PDF ejecutivo con envio opcional a Telegram.", "category": "documents", "permissions": ["owner"], "inputs_schema": {"title": "str", "sections": "dict", "send_telegram": "bool", "recipient": "str"}, "outputs_schema": {"result": "dict"}, "limits_json": {"max_title": 120}, "risks": []},
+    {"name": "sentinel_sweep", "description": "Ejecuta barrido centinela proactivo de radares y RSS con deduplicacion.", "category": "research", "permissions": ["auth"], "inputs_schema": {"topics": "list", "feed_urls": "list", "send_telegram": "bool"}, "outputs_schema": {"result": "dict"}, "limits_json": {}, "risks": ["dependencia de red"]},
 ]
 
 _AGENT_SEED = [
@@ -1718,6 +1724,23 @@ def _build_tool_inputs(tool_name, step, outputs_by_order, mission_id):
             code = task
         lang = str(step.get("language") or "python").strip()
         return {"code": code[:10000], "language": lang}
+    if tool_name == "deep_research":
+        topic = task or (dependency if isinstance(dependency, str) else "")
+        return {"topic": with_dependency(200, topic), "max_depth": int(step.get("max_depth") or 2), "max_queries": int(step.get("max_queries") or 3)}
+    if tool_name == "fact_triangulate":
+        claim = task or (dependency if isinstance(dependency, str) else "")
+        return {"claim": with_dependency(300, claim)}
+    if tool_name == "web_structured_extract":
+        content = str(dependency) if dependency else task
+        return {"content": with_dependency(25000, content), "url": str(step.get("url") or "")}
+    if tool_name == "dependency_vulnerability_audit":
+        content = str(dependency) if dependency else task
+        return {"content": with_dependency(15000, content), "file_type": str(step.get("file_type") or "requirements.txt")}
+    if tool_name == "executive_dossier_generate":
+        title = task[:80] or "Dossier Ejecutivo Akira"
+        return {"title": title, "sections": {"resumen": dependency or task}, "recipient": "Director Jhon Grimm", "send_telegram": False}
+    if tool_name == "sentinel_sweep":
+        return {"topics": [task[:100]] if task else [], "send_telegram": False}
     if tool_name == "memory_search":
         if not task: return None
         if dependency:
@@ -6271,6 +6294,62 @@ def _invoke_tool(service, tool_name, inputs, actor, owner_scope=None):
         lang = str(inputs.get("language") or "python").strip().lower()
         res = _audit_code_syntax(code, lang)
         return res, None
+    if tool_name == "deep_research":
+        topic = str(inputs.get("topic") or inputs.get("query") or "").strip()
+        if not topic:
+            return None, {"type": "ValidationError", "message": "topic requerido"}
+        max_depth = int(inputs.get("max_depth") or 2)
+        max_queries = int(inputs.get("max_queries") or 3)
+        from deep_research import deep_research_topic
+        result = deep_research_topic(topic=topic, max_depth=max_depth, max_queries=max_queries)
+        return {"result": result}, None
+    if tool_name == "fact_triangulate":
+        claim = str(inputs.get("claim") or "").strip()
+        sources = inputs.get("sources")
+        from fact_checker import triangulate_claim
+        result = triangulate_claim(claim=claim, sources=sources)
+        return {"result": result}, None
+    if tool_name == "web_structured_extract":
+        content = str(inputs.get("content") or "")
+        url = str(inputs.get("url") or "")
+        if not content and url:
+            from web_engine import fetch_url
+            fetch_res = fetch_url(url)
+            content = fetch_res.get("content", "")
+        if not content:
+            return None, {"type": "ValidationError", "message": "content o url requeridos"}
+        from web_extractor import extract_structured_web
+        result = extract_structured_web(content)
+        return {"result": result}, None
+    if tool_name == "dependency_vulnerability_audit":
+        content = str(inputs.get("content") or "").strip()
+        file_type = str(inputs.get("file_type") or "requirements.txt").strip()
+        if not content:
+            return None, {"type": "ValidationError", "message": "content requerido"}
+        from code_vulnerability_auditor import audit_dependencies
+        result = audit_dependencies(content, file_type=file_type)
+        return {"result": result}, None
+    if tool_name == "executive_dossier_generate":
+        title = str(inputs.get("title") or "Dossier Ejecutivo Akira").strip()
+        sections = inputs.get("sections") or inputs.get("content") or {}
+        recipient = str(inputs.get("recipient") or "Director Jhon Grimm").strip()
+        send_telegram = bool(inputs.get("send_telegram", False))
+        from executive_dossier import generate_and_dispatch_dossier
+        result = generate_and_dispatch_dossier(
+            title=title,
+            content_or_sections=sections,
+            recipient=recipient,
+            send_telegram=send_telegram,
+            include_base64=True,
+        )
+        return {"result": result}, None
+    if tool_name == "sentinel_sweep":
+        topics = inputs.get("topics")
+        feed_urls = inputs.get("feed_urls")
+        send_telegram = bool(inputs.get("send_telegram", False))
+        from sentinel_cron import run_sentinel_sweep
+        result = run_sentinel_sweep(topics=topics, feed_urls=feed_urls, send_telegram=send_telegram)
+        return {"result": result}, None
     if tool_name == "memory_save":
         content = str(inputs.get("content") or "").strip()
         if not content: return None, {"type": "ValidationError", "message": "content requerido"}
@@ -10020,6 +10099,100 @@ async def api_web_fetch(request: Request):
     max_chars = int(body.get("max_chars", 4000))
     import web_engine
     return web_engine.fetch_url(url, max_chars=max_chars)
+
+@app.post("/api/v8/research/deep")
+async def api_deep_research(request: Request):
+    """Investigación profunda recursiva multi-paso ($0.00 COP)."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    topic = str(body.get("topic") or body.get("query") or "").strip()
+    if not topic:
+        return JSONResponse({"ok": False, "error": "topic requerido"}, status_code=400)
+    max_depth = int(body.get("max_depth", 2))
+    max_queries = int(body.get("max_queries", 3))
+    from deep_research import deep_research_topic
+    return deep_research_topic(topic=topic, max_depth=max_depth, max_queries=max_queries)
+
+@app.post("/api/v8/facts/triangulate")
+async def api_fact_triangulate(request: Request):
+    """Triangulación de hechos y verificación anti-alucinación ($0.00 COP)."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    claim = str(body.get("claim") or "").strip()
+    if not claim:
+        return JSONResponse({"ok": False, "error": "claim requerido"}, status_code=400)
+    sources = body.get("sources")
+    from fact_checker import triangulate_claim
+    return triangulate_claim(claim=claim, sources=sources)
+
+@app.post("/api/v8/web/structured-extract")
+async def api_web_structured_extract(request: Request):
+    """Extractor estructurado multiformato (tablas, JSON-LD, RSS/Atom)."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    content = str(body.get("content") or "")
+    url = str(body.get("url") or "")
+    if not content and url:
+        from web_engine import fetch_url
+        res = fetch_url(url)
+        content = res.get("content", "")
+    if not content:
+        return JSONResponse({"ok": False, "error": "content o url requeridos"}, status_code=400)
+    from web_extractor import extract_structured_web
+    return extract_structured_web(content)
+
+@app.post("/api/v8/code/audit-dependencies")
+async def api_code_audit_dependencies(request: Request):
+    """Auditor de dependencias y vulnerabilidades CVE para requirements.txt y package.json."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    content = str(body.get("content") or "").strip()
+    file_type = str(body.get("file_type") or "requirements.txt").strip()
+    if not content:
+        return JSONResponse({"ok": False, "error": "content requerido"}, status_code=400)
+    from code_vulnerability_auditor import audit_dependencies
+    return audit_dependencies(content, file_type=file_type)
+
+@app.post("/api/v8/dossiers/generate")
+async def api_dossier_generate(request: Request):
+    """Compilador de dossiers ejecutivos en PDF de 1-clic con envío opcional a Telegram."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    title = str(body.get("title") or "Dossier Estratégico Akira").strip()
+    sections = body.get("sections") or body.get("content") or {}
+    recipient = str(body.get("recipient") or "Director Jhon Grimm").strip()
+    send_telegram = bool(body.get("send_telegram", False))
+    from executive_dossier import generate_and_dispatch_dossier
+    return generate_and_dispatch_dossier(
+        title=title,
+        content_or_sections=sections,
+        recipient=recipient,
+        send_telegram=send_telegram,
+        include_base64=True,
+    )
+
+@app.post("/api/v8/sentinel/sweep")
+async def api_sentinel_sweep(request: Request):
+    """Barrido centinela proactivo y deduplicación con alerta ejecutiva."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    topics = body.get("topics")
+    feed_urls = body.get("feed_urls")
+    send_telegram = bool(body.get("send_telegram", False))
+    from sentinel_cron import run_sentinel_sweep
+    return run_sentinel_sweep(topics=topics, feed_urls=feed_urls, send_telegram=send_telegram)
 
 _TELEGRAM_HISTORIES = defaultdict(list)
 
