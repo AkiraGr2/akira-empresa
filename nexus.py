@@ -68,6 +68,7 @@ MODEL="external-inference-runtime"
 BACKEND_BUILD_MARKER="learning-graph-memory-v3-runtime-2026-10-04.1"
 _F7_ZERO_COST_COGNITIVE_CYCLE = contextvars.ContextVar("akira_f7_zero_cost_cognitive_cycle", default=False)
 OWNER_EMAILS=["bjhon9161@gmail.com"]
+AUTHORIZED_EMAILS=["jnicolaslp41@gmail.com"]
 CHAT_ACTION_INTEGRITY_RULE = """
 ACCIONES Y PERSISTENCIA: No afirmes que creaste, registraste, verificaste, consolidaste,
 actualizaste, eliminaste o guardaste datos de Learning, memoria, Brain, conversaciones
@@ -2620,21 +2621,49 @@ async def auth_google(request: Request):
         return JSONResponse({"error": "json_invalido"}, status_code=400)
     cred = data.get("credential", "") if isinstance(data, dict) else ""
     email = "usuario@akira.com"
-    is_owner = False; verified = False; session_token = None
-    expires_at = None; scope = None; reason = "auth_module_unavailable"
+    is_owner = False; is_authorized = False; verified = False; session_token = None
+    expires_at = None; scope = None; role = "guest"; reason = "auth_module_unavailable"
     if akira_auth is not None:
         info, reason = await asyncio.to_thread(
             akira_auth.verify_google_credential, cred, os.getenv("GOOGLE_CLIENT_ID", "").strip())
         if info:
             verified = True
-            email = info["email"]
-            is_owner = email.lower() in akira_auth.owner_emails(OWNER_EMAILS)
+            email = str(info["email"]).lower()
+            owners = akira_auth.owner_emails(OWNER_EMAILS)
+            auth_list = akira_auth.authorized_emails(AUTHORIZED_EMAILS)
+            is_owner = email in owners
+            is_authorized = (email in auth_list) or is_owner
+            
+            # REGLA DE ACCESO ESTRICTO: Solo el Propietario o Usuarios Autorizados pueden entrar a Akira
+            if not is_authorized and not is_owner:
+                return JSONResponse({
+                    "error": "acceso_no_autorizado",
+                    "message": f"La cuenta Google '{email}' no cuenta con invitación ni autorización en la Colmena Akira.",
+                    "authenticated": False,
+                    "verified": True,
+                    "email": email
+                }, status_code=403)
+                
+            role = "owner" if is_owner else "authorized"
             scope = "owner" if is_owner else akira_auth.owner_scope(info["sub"])
-            session_token, expires_at, reason = akira_auth.issue_session(info["sub"], email)
-    return {"user_id": hashlib.md5(email.encode()).hexdigest()[:12], "email": email,
-            "is_owner": is_owner, "identity": "Akira", "verified": verified,
-            "owner_scope": scope, "session_token": session_token,
-            "expires_at": expires_at, "reason": reason}
+            session_token, expires_at, reason = akira_auth.issue_session(info["sub"], email, role=role)
+            
+    user_id = hashlib.md5(email.encode()).hexdigest()[:12]
+    permissions = ["*"] if is_owner else ["chat", "trading", "missions", "upwork", "membrane_read", "home"]
+    return {
+        "user_id": user_id,
+        "email": email,
+        "is_owner": is_owner,
+        "is_authorized": is_authorized,
+        "role": role,
+        "permissions": permissions,
+        "identity": "Akira",
+        "verified": verified,
+        "owner_scope": scope,
+        "session_token": session_token,
+        "expires_at": expires_at,
+        "reason": reason
+    }
 
 @app.get("/api/v8/auth/status")
 async def v8_auth_status():
@@ -2649,8 +2678,22 @@ async def v8_me(request: Request):
     s = get_session(request)
     if not s:
         return JSONResponse({"authenticated": False}, status_code=401)
-    return {"authenticated": True, "email": s["email"], "is_owner": s["is_owner"],
-            "owner_scope": s["owner_scope"], "expires_at": s["exp"]}
+    email_clean = str(s["email"]).lower()
+    user_id = s.get("user_id") or hashlib.md5(email_clean.encode()).hexdigest()[:12]
+    is_authorized = bool(s.get("is_authorized", not s["is_owner"]))
+    role = s.get("role") or ("owner" if s["is_owner"] else "authorized")
+    permissions = s.get("permissions") or (["*"] if s["is_owner"] else ["chat", "trading", "missions", "upwork", "membrane_read", "home"])
+    return {
+        "authenticated": True,
+        "email": s["email"],
+        "user_id": user_id,
+        "is_owner": s["is_owner"],
+        "is_authorized": is_authorized,
+        "role": role,
+        "permissions": permissions,
+        "owner_scope": s["owner_scope"],
+        "expires_at": s["exp"]
+    }
 
 @app.get("/api/v8/knowledge")
 def v8_knowledge_list(

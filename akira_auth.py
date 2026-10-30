@@ -30,9 +30,19 @@ def _b64d(text):
     return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
 
 
+AUTHORIZED_DEFAULT_EMAILS = ("jnicolaslp41@gmail.com",)
+
+
 def owner_emails(default=()):
     """Correos de propietario: variable OWNER_EMAILS (separada por comas) o lista por defecto."""
     raw = os.getenv("OWNER_EMAILS", "").strip()
+    source = raw.split(",") if raw else list(default)
+    return {e.strip().lower() for e in source if e and e.strip()}
+
+
+def authorized_emails(default=AUTHORIZED_DEFAULT_EMAILS):
+    """Correos de usuarios autorizados invitados a la Colmena Akira."""
+    raw = os.getenv("AUTHORIZED_EMAILS", "").strip()
     source = raw.split(",") if raw else list(default)
     return {e.strip().lower() for e in source if e and e.strip()}
 
@@ -85,14 +95,14 @@ def verify_google_credential(credential, client_id):
     return {"sub": str(sub), "email": str(email).lower()}, None
 
 
-def issue_session(sub, email, now=None):
+def issue_session(sub, email, role="authorized", now=None):
     """Devuelve (token, expira_epoch, motivo). Sin secreto configurado: (None, None, motivo)."""
     secret = _secret()
     if secret is None:
         return None, None, "session_secret_missing_or_short"
     issued = int(now if now is not None else time.time())
     payload = {"v": 1, "sub": str(sub), "email": str(email).lower(),
-               "iat": issued, "exp": issued + SESSION_TTL_SECONDS}
+               "role": str(role), "iat": issued, "exp": issued + SESSION_TTL_SECONDS}
     body = _b64e(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
     sig = _b64e(hmac.new(secret, body.encode("ascii"), hashlib.sha256).digest())
     return body + "." + sig, payload["exp"], None
@@ -125,14 +135,23 @@ def verify_session(token, default_owner_emails=(), now=None):
     current = now if now is not None else time.time()
     if not isinstance(exp, int) or exp <= current or not sub or not email:
         return None
-    is_owner = str(email).lower() in owner_emails(default_owner_emails)
+    email_clean = str(email).lower()
+    is_owner = email_clean in owner_emails(default_owner_emails)
+    auth_list = authorized_emails()
+    is_authorized = (email_clean in auth_list) or is_owner
+    role = "owner" if is_owner else ("authorized" if is_authorized else payload.get("role", "guest"))
+    permissions = ["*"] if is_owner else (["chat", "trading", "missions", "upwork", "membrane_read", "home"] if is_authorized else [])
     # The single-owner Akira persistent dataset is stored under the canonical
     # owner scope. Verified non-owners keep per-sub isolation.
     effective_scope = "owner" if is_owner else owner_scope(sub)
     return {
         "sub": str(sub),
         "email": str(email),
+        "user_id": hashlib.md5(email_clean.encode()).hexdigest()[:12],
         "is_owner": is_owner,
+        "is_authorized": is_authorized,
+        "role": role,
+        "permissions": permissions,
         "owner_scope": effective_scope,
         "exp": exp,
     }
