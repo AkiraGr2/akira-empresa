@@ -1,8 +1,32 @@
 import unittest
+from unittest.mock import Mock
 from persistence.capability_inventory import capability_inventory, inventory_summary
 
 
 class InventoryTests(unittest.TestCase):
+    def test_bootstrap_cannot_self_certify_or_hide_later_entries(self):
+        from persistence.runtime import _seed_capabilities
+        from persistence.capability_catalog import BASE_CAPABILITIES
+        service = Mock()
+        service.create_capability.side_effect = [RuntimeError('historical conflict')] + [None] * (len(BASE_CAPABILITIES) - 1)
+        _seed_capabilities(service)
+        self.assertEqual(service.create_capability.call_count, len(BASE_CAPABILITIES))
+        for call in service.create_capability.call_args_list:
+            self.assertEqual(call.args[0]['verification_state'], 'unverified')
+
+    def test_all_catalog_entries_can_be_registered_without_fabricated_evidence(self):
+        from persistence.runtime import _seed_capabilities
+        from persistence.service import PersistenceService
+        from persistence.capability_catalog import BASE_CAPABILITIES
+        from test_capability_engine_contract import _CapabilityRepo
+        repo = _CapabilityRepo()
+        service = PersistenceService(repo)
+        _seed_capabilities(service)
+        self.assertEqual({r['name'] for r in repo.rows['capabilities']}, {r['name'] for r in BASE_CAPABILITIES})
+        self.assertTrue(all(r['verification_state'] == 'unverified' for r in repo.rows['capabilities']))
+        _seed_capabilities(service)
+        self.assertEqual(len(repo.rows['capabilities']), len(BASE_CAPABILITIES))
+
     def test_complete_history_unique_ids_and_new_features(self):
         result = capability_inventory([])
         ids = [item['id'] for item in result['items']]
