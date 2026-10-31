@@ -739,29 +739,32 @@ async def _akira_lifespan(_app):
     except Exception as e:
         print(f"[providers] inventory error: {type(e).__name__}")
 
-    # Wait for persistence to become ready instead of racing a fixed delay.
-    # A missed seed would leave the persisted tool registry stale after a code deploy.
-    persistence_ready = False
-    for attempt in range(15):
-        if _persistence_service() is not None:
-            persistence_ready = True
-            break
-        if attempt < 14:
-            await asyncio.sleep(1)
+    # Keep the retry task alive after HTTP startup; database bootstrap may
+    # legitimately exceed the old 15-second window.
+    registry_task = asyncio.create_task(_initialize_runtime_registries())
     try:
-        if persistence_ready:
-            _seed_tools_and_agents()
-        else:
-            print("[startup seed] persistence not ready after 15s; seed skipped", flush=True)
-    except Exception as e:
-        print(f"[startup seed] error: {e}")
-    try:
+        yield
+    finally:
+        registry_task.cancel()
+        try:
+            await registry_task
+        except asyncio.CancelledError:
+            pass
+
+
+async def _initialize_runtime_registries():
+    for attempt in range(180):
         service = _persistence_service()
         if service is not None:
-            _cleanup_orphan_missions(service)
-    except Exception as e:
-        print(f"[startup cleanup] error: {e}")
-    yield
+            try:
+                await asyncio.to_thread(_seed_tools_and_agents)
+                await asyncio.to_thread(_cleanup_orphan_missions, service)
+                print("[startup seed] registries initialized", flush=True)
+            except Exception as exc:
+                print(f"[startup seed] error: {type(exc).__name__}", flush=True)
+            return
+        await asyncio.sleep(1)
+    print("[startup seed] persistence unavailable after 180s", flush=True)
 
 app=FastAPI(title=PUBLIC_IDENTITY, lifespan=_akira_lifespan)
 

@@ -12,6 +12,7 @@ MODEL_ROUTES = (
     {"provider": "gemini", "model": "gemini-3.1-pro-preview", "role": "reasoning"},
     {"provider": "gemini", "model": "gemini-flash-latest", "role": "chat_fallback_variant"},
     {"provider": "groq", "model": "llama-3.1-8b-instant", "role": "voice_fast"},
+    {"provider": "groq", "model": "llama-3.1-8b-instant", "role": "fallback"},
     {"provider": "groq", "model": "llama-3.3-70b-versatile", "role": "fallback"},
     {"provider": "groq", "model": "openai/gpt-oss-120b", "role": "fallback"},
     {"provider": "groq", "model": "openai/gpt-oss-20b", "role": "fallback"},

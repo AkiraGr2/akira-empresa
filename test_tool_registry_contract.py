@@ -62,9 +62,9 @@ class ToolRegistryContractTests(unittest.TestCase):
 
     def test_lifespan_waits_for_persistence_before_tool_seed(self):
         source = Path("nexus.py").read_text(encoding="utf-8")
-        wait_pos = source.index("for attempt in range(15):")
-        seed_pos = source.index("_seed_tools_and_agents()", wait_pos)
-        ready_pos = source.index("if _persistence_service() is not None:", wait_pos)
+        wait_pos = source.index("for attempt in range(180):")
+        seed_pos = source.index("await asyncio.to_thread(_seed_tools_and_agents)", wait_pos)
+        ready_pos = source.index("if service is not None:", wait_pos)
         self.assertLess(wait_pos, ready_pos)
         self.assertLess(ready_pos, seed_pos)
 

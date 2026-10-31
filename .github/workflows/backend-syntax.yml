@@ -53,6 +53,7 @@ jobs:
           python -m unittest test_capability_engine_contract -v
           python -m unittest test_capability_inventory_contract -v
           python -m unittest test_agent_inventory_alignment -v
+          python -m unittest test_startup_registry_contract -v
 
       - name: Test authentication and authorization contract
         run: |
