@@ -37,9 +37,15 @@ class SpecializedAgentsContractTests(unittest.TestCase):
 
     def test_specialized_agents_have_narrow_tool_contracts(self):
         agents = {item["name"]: item for item in self.agent_seed}
-        self.assertEqual(agents["developer"]["allowed_tools"], ["github_repo_read", "developer_propose"])
-        self.assertEqual(agents["tester"]["allowed_tools"], ["github_repo_read", "python_test"])
-        self.assertEqual(agents["reviewer"]["allowed_tools"], ["github_repo_read", "python_test", "code_review"])
+        self.assertEqual(agents["developer"]["allowed_tools"], ["github_repo_read", "developer_propose", "code_syntax_audit", "python_test", "web_search", "web_fetch", "learning_save"])
+        self.assertEqual(agents["tester"]["allowed_tools"], ["github_repo_read", "python_test", "code_syntax_audit"])
+        self.assertEqual(agents["reviewer"]["allowed_tools"], ["github_repo_read", "python_test", "code_review", "code_syntax_audit"])
+        # Research/learning additions do not grant approval or direct writes.
+        for name in ("developer", "tester", "reviewer"):
+            self.assertNotIn("controlled_autonomy_start", agents[name]["allowed_tools"])
+        self.assertNotIn("code_review", agents["developer"]["allowed_tools"])
+        self.assertNotIn("developer_propose", agents["tester"]["allowed_tools"])
+        self.assertNotIn("developer_propose", agents["reviewer"]["allowed_tools"])
 
     def test_specialized_tools_never_offer_direct_github_write(self):
         source = (ROOT / "specialized_agent_tools.py").read_text(encoding="utf-8")

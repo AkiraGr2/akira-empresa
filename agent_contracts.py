@@ -22,25 +22,22 @@ PRODUCTION_AGENT_ORDER = [
 AGENT_CONTRACTS: dict[str, dict[str, Any]] = {
     "researcher": {
         "role": "researcher",
-        "allowed_tools": ["web_search", "memory_search", "github_repo_read"],
-        "forbidden_tools": ["memory_save", "graph_create_node", "graph_create_edge", "learning_save",
-                            "developer_propose", "python_test", "code_review", "controlled_autonomy_start"],
+        "allowed_tools": ["web_search", "web_fetch", "memory_search", "github_repo_read", "learning_save"],
+        "forbidden_tools": ["memory_save", "graph_create_node", "graph_create_edge", "developer_propose", "python_test", "code_review", "controlled_autonomy_start"],
     },
     "memorizer": {
         "role": "memorizer",
-        "allowed_tools": ["memory_save", "memory_search"],
-        "forbidden_tools": ["learning_save", "developer_propose", "python_test",
-                            "code_review", "controlled_autonomy_start"],
+        "allowed_tools": ["memory_save", "memory_search", "learning_save"],
+        "forbidden_tools": ["developer_propose", "python_test", "code_review", "controlled_autonomy_start"],
     },
     "graph_builder": {
         "role": "graph_builder",
-        "allowed_tools": ["graph_create_node", "graph_create_edge", "graph_related"],
-        "forbidden_tools": ["memory_save", "learning_save", "developer_propose",
-                            "python_test", "code_review", "controlled_autonomy_start"],
+        "allowed_tools": ["graph_create_node", "graph_create_edge", "graph_related", "learning_save"],
+        "forbidden_tools": ["memory_save", "developer_propose", "python_test", "code_review", "controlled_autonomy_start"],
     },
     "learner": {
         "role": "learner",
-        "allowed_tools": ["learning_save", "memory_save"],
+        "allowed_tools": ["web_search", "web_fetch", "learning_save", "memory_save", "graph_create_node", "graph_create_edge"],
         "forbidden_tools": ["developer_propose", "python_test", "code_review", "controlled_autonomy_start"],
     },
     "internal": {
@@ -50,19 +47,18 @@ AGENT_CONTRACTS: dict[str, dict[str, Any]] = {
     },
     "developer": {
         "role": "developer",
-        "allowed_tools": ["github_repo_read", "developer_propose"],
-        "forbidden_tools": ["memory_save", "learning_save", "python_test", "code_review",
-                            "controlled_autonomy_start"],
+        "allowed_tools": ["github_repo_read", "developer_propose", "code_syntax_audit", "python_test", "web_search", "web_fetch", "learning_save"],
+        "forbidden_tools": ["memory_save", "code_review", "controlled_autonomy_start"],
     },
     "tester": {
         "role": "tester",
-        "allowed_tools": ["github_repo_read", "python_test"],
+        "allowed_tools": ["github_repo_read", "python_test", "code_syntax_audit"],
         "forbidden_tools": ["memory_save", "learning_save", "developer_propose",
                             "code_review", "controlled_autonomy_start"],
     },
     "reviewer": {
         "role": "reviewer",
-        "allowed_tools": ["github_repo_read", "python_test", "code_review"],
+        "allowed_tools": ["github_repo_read", "python_test", "code_review", "code_syntax_audit"],
         "forbidden_tools": ["memory_save", "learning_save", "developer_propose",
                             "controlled_autonomy_start"],
     },
@@ -117,6 +113,26 @@ def validate_agent_result(
         return False, {"reason": "tool_error", "error": error}
     if not isinstance(outputs, dict):
         return False, {"reason": "outputs_not_object"}
+
+    if tool_name == "web_fetch":
+        result = outputs.get("result")
+        if not isinstance(result, dict):
+            return False, {"reason": "result_missing"}
+        ok = (outputs.get("ok") is True and result.get("ok") is True
+              and isinstance(result.get("url"), str)
+              and result["url"].startswith(("https://", "http://"))
+              and isinstance(result.get("content"), str)
+              and bool(result["content"].strip()))
+        return ok, {"content_present": bool(result.get("content"))}
+
+    if tool_name == "code_syntax_audit":
+        errors = outputs.get("syntax_errors")
+        valid = outputs.get("valid")
+        # Detecting invalid syntax is a successful audit, not valid source code.
+        ok = (outputs.get("ok") is True and isinstance(valid, bool)
+              and isinstance(errors, list) and bool(outputs.get("language"))
+              and ((valid and not errors) or (not valid and bool(errors))))
+        return ok, {"syntax_valid": valid, "error_count": len(errors) if isinstance(errors, list) else None}
 
     if tool_name == "github_repo_read":
         result = outputs.get("result")

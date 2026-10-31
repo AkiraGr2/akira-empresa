@@ -882,10 +882,17 @@ def handle_telegram_update(bot_token: str, update: dict, reply_generator=None, g
 
     # /estado
     if text == "/estado":
+        try:
+            from persistence.runtime import STATE
+            from persistence.capability_inventory import inventory_summary
+            service = STATE.get("service")
+            capability_text = inventory_summary(service.capabilities_for_self_model(limit=200)) if service else "Registro temporalmente no disponible."
+        except Exception:
+            capability_text = "Registro temporalmente no disponible."
         status_text = (
             "🛡️ *ESTADO EJECUTIVO DE AKIRA*\n\n"
             "• *Presupuesto Invertido:* $0.00 COP / USD (Garantizado)\n"
-            "• *Capacidades del Sistema:* 49/49 Verificadas y operativas (100%)\n"
+            f"• *Capacidades del Sistema:* {capability_text}\n"
             "• *Colmena Táctica:* 267 especialistas en 18 divisiones en guardia\n"
             "• *Motor Web:* DuckDuckGo & Wikipedia en vivo activo\n"
             "• *Canal Móvil:* Telegram TLS 1.3 bidireccional\n\n"

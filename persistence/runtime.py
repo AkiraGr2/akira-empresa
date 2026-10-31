@@ -84,13 +84,17 @@ def _start_self_knowledge_observer(service):
 
 def _seed_capabilities(service):
     """Registra las capacidades canónicas declaradas sin marcar evidencia por anticipado."""
-    try:
-        from .capability_catalog import BASE_CAPABILITIES
-        for capability in BASE_CAPABILITIES:
+    from .capability_catalog import BASE_CAPABILITIES
+    for capability in BASE_CAPABILITIES:
+        try:
             key = f"bootstrap:capability:{capability['name']}:v1"
-            service.create_capability(capability, actor="system", idempotency_key=key)
-    except Exception as exc:
-        print(f"[capability] seed fallo: {type(exc).__name__}: {str(exc)[:200]}", flush=True)
+            # Static definitions cannot supply runtime evidence. Existing rows
+            # retain their dynamic verification through create's idempotency.
+            definition = dict(capability, verification_state="unverified")
+            service.create_capability(definition, actor="system", idempotency_key=key)
+        except Exception as exc:
+            # A conflicting historical definition must not hide later additions.
+            print(f"[capability] seed fallo name={capability['name']}: {type(exc).__name__}: {str(exc)[:200]}", flush=True)
 
 
 def _default_backend():

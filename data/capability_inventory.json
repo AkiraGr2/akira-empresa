@@ -1,0 +1,952 @@
+{
+  "version": 1,
+  "historical_count": 60,
+  "items": [
+    {
+      "id": "V1",
+      "name": "Chat Cognitivo",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_conversations.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "V2",
+      "name": "Colmena Compartida",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/hybrid_sync.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "V3",
+      "name": "Búsqueda y Razonamiento",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_live_web.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "V4",
+      "name": "Streaming AUTO",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_conversations.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "V5",
+      "name": "Visión Multimodal",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_extras.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "V6",
+      "name": "Auto-Repair",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_self_healing.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "V7",
+      "name": "PDF Local & Documentos",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_extras.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "V8",
+      "name": "Akira Live: voz",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_voice_live.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "F5",
+      "name": "Autoconocimiento persistente",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_admin.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": "self_model_persistent"
+    },
+    {
+      "id": "F6",
+      "name": "Cerebro y aprendizaje",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_learning.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": "learning_persistent"
+    },
+    {
+      "id": "F7",
+      "name": "Proceso cognitivo persistente",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_cognitive_ui.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": "cognitive_cycle_persistent"
+    },
+    {
+      "id": "F8",
+      "name": "Herramientas de Akira",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_admin.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": "tool_registry"
+    },
+    {
+      "id": "F9",
+      "name": "Agentes y colmena táctica",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_hive_catalog.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "F10",
+      "name": "Mission Engine + Conversaciones",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_missions_panel.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "F11",
+      "name": "Self-knowledge / Autoconocimiento",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_admin.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [
+        "Comparte el contrato principal de autoconocimiento con F5; no es un contrato adicional."
+      ],
+      "verification": "unverified",
+      "related_contract": "self_model_persistent"
+    },
+    {
+      "id": "F12",
+      "name": "Self-Repair / Reparación",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_self_healing.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "F13",
+      "name": "Evolution / Evolución",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_autonomous_evolution.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": "evolution_engine_v1"
+    },
+    {
+      "id": "F14",
+      "name": "Controlled Autonomy / Autonomía",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_admin.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": "controlled_autonomy_v1"
+    },
+    {
+      "id": "F15",
+      "name": "Hive Collective Sync & Colmena Táctica",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira-hive-office-v1.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [
+        "No acredita sincronización completa en runtime."
+      ],
+      "verification": "unverified",
+      "related_contract": "hive_knowledge_sharing_v1"
+    },
+    {
+      "id": "F16",
+      "name": "Hive Agent Orchestration & Router",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_hive_catalog.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": "hive_agent_orchestration_v1"
+    },
+    {
+      "id": "F17",
+      "name": "Voice VAD & Push-to-Talk Callejero",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_voice_live.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": "voice_vad_neural_v1"
+    },
+    {
+      "id": "F18",
+      "name": "Upwork Bidding Autonomous Engine",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_monetization.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": "upwork_bidding_engine_v1"
+    },
+    {
+      "id": "F19",
+      "name": "Cerebro y grafo 2D",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/obsidian_membrane.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [
+        "3D desactivado; conteos derivados del servidor."
+      ],
+      "verification": "unverified",
+      "related_contract": "membrane_spatial_graph_v1"
+    },
+    {
+      "id": "F20",
+      "name": "Autonomous Active Supervisor",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_missions_modern.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": "autonomous_supervisor_v1"
+    },
+    {
+      "id": "P1",
+      "name": "Sandbox & Live Artifacts Preview",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_sandbox.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "P2",
+      "name": "Radar Tecnológico & Ingesta Continua",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_knowledge_pipeline.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "P3",
+      "name": "Swarm Multi-Agent Collaboration",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_hive_catalog.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "P4",
+      "name": "1-Click Project ZIP & GitHub Export",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_sandbox.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "M1",
+      "name": "Consola Python REPL WebAssembly",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_python_repl.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "M2",
+      "name": "Búsqueda Semántica Vectorial Local",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_search_vector.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "M3",
+      "name": "Cron & Automatizaciones Programadas",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_cron_scheduler.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "M4",
+      "name": "Pipeline CRM Freelance & Facturación",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_crm_pipeline.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "M5",
+      "name": "Dashboards & Gráficas Visuales en Vivo",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_data_viz.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "M6",
+      "name": "Escudo de Auditoría & Seguridad de Código",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_security_shield.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "M7",
+      "name": "Exportador de Memoria a Bóveda Obsidian",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_obsidian_vault.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "M8",
+      "name": "Estudio de Voz Situacional & Manos Libres",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_voice_studio.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "M9",
+      "name": "Motor de Hojas de Cálculo & Data Wrangler",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_spreadsheet.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "M10",
+      "name": "Simulador de Pruebas Web & Auditoría UX",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_ux_tester.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "M11",
+      "name": "Modo Offline Resiliente PWA & IndexedDB",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_offline_pwa.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "L4",
+      "name": "Motor Proactivo J.A.R.V.I.S. (Nivel 4)",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_admin.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "M12",
+      "name": "Vigilante de Auto-Curación Técnica",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_self_healing.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "M13",
+      "name": "Probador de APIs REST & Servidor Mock",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_api_tester.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "M14",
+      "name": "Estudio de Temas & Accesibilidad WCAG",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_theme_studio.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "M15",
+      "name": "Constructor Visual de Agentes (Colmena Studio)",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_agent_studio.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "M16",
+      "name": "Mapa de Calor de Productividad & ROI",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_roi_tracker.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "M17",
+      "name": "Motor de Conexión Web en Tiempo Real",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_live_web.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "T1",
+      "name": "Telegram: suite ejecutiva",
+      "origin": "historical_60",
+      "source": {
+        "repository": "backend",
+        "path": "telegram_service.py"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "T2",
+      "name": "Doble Motor de Transcripción Multimodal",
+      "origin": "historical_60",
+      "source": {
+        "repository": "backend",
+        "path": "telegram_service.py"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "T3",
+      "name": "Facturación Proforma & Minutas en PDF",
+      "origin": "historical_60",
+      "source": {
+        "repository": "backend",
+        "path": "telegram_service.py"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "T4",
+      "name": "Sincronización Web ⟷ Telegram",
+      "origin": "historical_60",
+      "source": {
+        "repository": "backend",
+        "path": "telegram_service.py"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "E1",
+      "name": "Arquitectura & Diagramas Mermaid en Vivo",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_software_lab.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "E2",
+      "name": "Laboratorio SQL & Base de Datos In-Browser (SQLite WASM)",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_software_lab.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "E3",
+      "name": "Generador de Blueprints Full-Stack & Boilerplates",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_software_lab.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "E4",
+      "name": "Auditor Estático Clean Code & Principios SOLID",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_software_lab.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "E5",
+      "name": "Diseñador OpenAPI 3.0 & Simulador Swagger",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_software_lab.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "E6",
+      "name": "Laboratorio Regex & Tokenizador de Código (AST)",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_software_lab.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "E7",
+      "name": "Auditor Sintético WCAG AAA & SEO de Alto Rendimiento",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_software_lab.js"
+      },
+      "implementation_evidence": "placeholder",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [
+        "La versión anterior mostraba éxitos predeterminados. El motor real está pendiente."
+      ],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "E8",
+      "name": "Transformador Políglota de Estructuras de Datos",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_software_lab.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "E9",
+      "name": "Terminal Virtual Shell & Simulador CLI (Bash/Git)",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_software_lab.js"
+      },
+      "implementation_evidence": "simulation",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [
+        "Terminal educativa simulada; no ejecuta Bash/Git reales."
+      ],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "E10",
+      "name": "Laboratorio de Pruebas Unitarias Automatizadas",
+      "origin": "historical_60",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_software_lab.js"
+      },
+      "implementation_evidence": "placeholder",
+      "description": "Módulo localizado en el código; requiere comprobación funcional específica.",
+      "limitations": [
+        "La versión anterior mostraba éxitos predeterminados. El motor real está pendiente."
+      ],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "N1",
+      "name": "Acceso con sesión y usuarios permitidos",
+      "origin": "added",
+      "source": {
+        "repository": "backend",
+        "path": "akira_auth.py"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Implementación localizada; verificación productiva individual pendiente.",
+      "limitations": [],
+      "verification": "unverified",
+      "related_contract": "session_auth"
+    },
+    {
+      "id": "N2",
+      "name": "Trading Lab: precios Deriv y reconexión",
+      "origin": "added",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_trading_lab.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Implementación localizada; verificación productiva individual pendiente.",
+      "limitations": [
+        "Práctica local; no acredita rentabilidad ni órdenes MT5."
+      ],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "N3",
+      "name": "Trading Lab: simulador local",
+      "origin": "added",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_trading_lab.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Implementación localizada; verificación productiva individual pendiente.",
+      "limitations": [
+        "Práctica local; no acredita rentabilidad ni órdenes MT5."
+      ],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "N4",
+      "name": "Escáner estructural y armónico",
+      "origin": "added",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_trading_scanner_core.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Implementación localizada; verificación productiva individual pendiente.",
+      "limitations": [
+        "Práctica local; no acredita rentabilidad ni órdenes MT5."
+      ],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "N5",
+      "name": "Scalping por tipo de mercado",
+      "origin": "added",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_scalp_research_core.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Implementación localizada; verificación productiva individual pendiente.",
+      "limitations": [
+        "Práctica local; no acredita rentabilidad ni órdenes MT5."
+      ],
+      "verification": "unverified",
+      "related_contract": null
+    },
+    {
+      "id": "N6",
+      "name": "Chulito de referencia Step/oro",
+      "origin": "added",
+      "source": {
+        "repository": "frontend",
+        "path": "js/akira_reference_scanner.js"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Implementación localizada; verificación productiva individual pendiente.",
+      "limitations": [
+        "Práctica local; no acredita rentabilidad ni órdenes MT5."
+      ],
+      "verification": "unverified",
+      "related_contract": null
+    }
+  ]
+}
