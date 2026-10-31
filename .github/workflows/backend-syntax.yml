@@ -51,6 +51,7 @@ jobs:
       - name: Test capability engine contract
         run: |
           python -m unittest test_capability_engine_contract -v
+          python -m unittest test_capability_inventory_contract -v
 
       - name: Test authentication and authorization contract
         run: |

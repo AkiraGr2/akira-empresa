@@ -3338,12 +3338,16 @@ def v8_self(request: Request):
     if service is None: return JSONResponse({"ok": False, "reason": "persistence_not_ready"}, status_code=503)
     try:
         sm = service.get_self_model()
+        from persistence.capability_inventory import capability_inventory
+        registry = service.capabilities_for_self_model(limit=200)
+        inventory = capability_inventory(registry)
     except Exception as e:
         return JSONResponse({"ok": False, "reason": "self_model_unavailable", "error_type": type(e).__name__}, status_code=503)
     return {
         "ok": True,
         "self_model": sm,
-        "capabilities_registry": service.capabilities_for_self_model(limit=200),
+        "capability_inventory": inventory,
+        "capabilities_registry": registry,
         "self_knowledge": service.self_knowledge_snapshot(owner_scope=s["owner_scope"], limit=200),
         "read_by": s["email"],
     }

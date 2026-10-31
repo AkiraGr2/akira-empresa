@@ -1185,6 +1185,8 @@ class PersistenceService:
         return [
             {
                 "name": row["name"],
+                "description": row.get("description", ""),
+                "limitations": row.get("limitations", []),
                 "effective_state": derive_effective_state(row),
                 "implementation_state": row["implementation_state"],
                 "verification_state": row["verification_state"],
