@@ -741,7 +741,7 @@ async def _akira_lifespan(_app):
 
     # Keep the retry task alive after HTTP startup; database bootstrap may
     # legitimately exceed the old 15-second window.
-    registry_task = asyncio.create_task(_initialize_runtime_registries())
+    registry_task = asyncio.create_task(_cleanup_when_persistence_ready())
     try:
         yield
     finally:
@@ -752,14 +752,13 @@ async def _akira_lifespan(_app):
             pass
 
 
-async def _initialize_runtime_registries():
+async def _cleanup_when_persistence_ready():
     for attempt in range(180):
         service = _persistence_service()
         if service is not None:
             try:
-                await asyncio.to_thread(_seed_tools_and_agents)
                 await asyncio.to_thread(_cleanup_orphan_missions, service)
-                print("[startup seed] registries initialized", flush=True)
+                print("[startup cleanup] completed", flush=True)
             except Exception as exc:
                 print(f"[startup seed] error: {type(exc).__name__}", flush=True)
             return
@@ -993,12 +992,12 @@ _TOOL_SEED = [
     {"name": "python_test", "description": "Ejecuta pruebas Python seleccionadas sin shell.", "category": "code", "permissions": ["owner"], "inputs_schema": {"tests": "list", "compile_paths": "list"}, "outputs_schema": {"status": "str", "tests": "list"}, "limits_json": {"max_tests": 6, "timeout_s": 45}, "risks": ["ejecucion de pruebas del repositorio"]},
     {"name": "code_review", "description": "Revisa una propuesta de codigo contra el repositorio y evidencia de pruebas; no escribe.", "category": "code", "permissions": ["owner"], "inputs_schema": {"repo": "str", "paths": "list", "proposal": "dict", "test_results": "dict"}, "outputs_schema": {"review": "dict"}, "limits_json": {"max_paths": 4, "max_proposal_chars": 24000}, "risks": ["inferencia externa", "revision de codigo"]},
     {"name": "controlled_autonomy_start", "description": "Inicia la autonomia controlada F14 hasta una compuerta de aprobacion humana; no aprueba ni aplica cambios.", "category": "code", "permissions": ["owner"], "inputs_schema": {"goal": "str", "repository": "str", "base_branch": "str", "paths": "list", "instruction": "str", "queries": "list", "tests": "list", "idempotency_key": "str"}, "outputs_schema": {"autonomy": "dict"}, "limits_json": {"max_paths": 4, "max_instruction": 4000, "max_files": 4}, "risks": ["propone y prueba cambios de codigo", "requiere aprobacion humana antes de escribir GitHub"]},
-    {"name": "deep_research", "description": "Ejecuta investigacion profunda recursiva multi-paso con sintesis estructurada.", "category": "research", "permissions": ["auth"], "inputs_schema": {"topic": "str", "max_depth": "int", "max_queries": "int"}, "outputs_schema": {"result": "dict"}, "limits_json": {"max_depth": 3, "max_queries": 5}, "risks": ["dependencia de red"]},
-    {"name": "fact_triangulate", "description": "Triangula afirmaciones tecnicas entre multiples fuentes para verificacion anti-alucinacion.", "category": "research", "permissions": ["auth"], "inputs_schema": {"claim": "str", "sources": "list"}, "outputs_schema": {"result": "dict"}, "limits_json": {"max_sources": 10}, "risks": ["dependencia de red"]},
+    {"name": "deep_research", "description": "Ejecuta investigacion profunda multi-paso con sintesis estructurada.", "category": "web", "permissions": ["auth"], "inputs_schema": {"topic": "str", "max_depth": "int", "max_queries": "int"}, "outputs_schema": {"result": "dict"}, "limits_json": {"max_depth": 2, "max_queries": 5}, "risks": ["dependencia de red"]},
+    {"name": "fact_triangulate", "description": "Triangula afirmaciones tecnicas entre multiples fuentes para verificacion anti-alucinacion.", "category": "web", "permissions": ["auth"], "inputs_schema": {"claim": "str", "sources": "list"}, "outputs_schema": {"result": "dict"}, "limits_json": {"max_sources": 10}, "risks": ["dependencia de red"]},
     {"name": "web_structured_extract", "description": "Extrae tablas HTML, esquemas JSON-LD y feeds RSS/Atom de paginas web.", "category": "web", "permissions": ["auth"], "inputs_schema": {"content": "str", "url": "str"}, "outputs_schema": {"result": "dict"}, "limits_json": {"max_content": 100000}, "risks": ["dependencia de red"]},
-    {"name": "dependency_vulnerability_audit", "description": "Audita dependencias (requirements.txt o package.json) detectando CVEs y versiones inseguras.", "category": "security", "permissions": ["auth"], "inputs_schema": {"content": "str", "file_type": "str"}, "outputs_schema": {"result": "dict"}, "limits_json": {"max_content": 50000}, "risks": []},
+    {"name": "dependency_vulnerability_audit", "description": "Audita dependencias (requirements.txt o package.json) detectando CVEs y versiones inseguras.", "category": "code", "permissions": ["auth"], "inputs_schema": {"content": "str", "file_type": "str"}, "outputs_schema": {"result": "dict"}, "limits_json": {"max_content": 50000}, "risks": []},
     {"name": "executive_dossier_generate", "description": "Compila un dossier de investigacion formal en PDF ejecutivo con envio opcional a Telegram.", "category": "documents", "permissions": ["owner"], "inputs_schema": {"title": "str", "sections": "dict", "send_telegram": "bool", "recipient": "str"}, "outputs_schema": {"result": "dict"}, "limits_json": {"max_title": 120}, "risks": []},
-    {"name": "sentinel_sweep", "description": "Ejecuta barrido centinela proactivo de radares y RSS con deduplicacion.", "category": "research", "permissions": ["auth"], "inputs_schema": {"topics": "list", "feed_urls": "list", "send_telegram": "bool"}, "outputs_schema": {"result": "dict"}, "limits_json": {}, "risks": ["dependencia de red"]},
+    {"name": "sentinel_sweep", "description": "Ejecuta barrido centinela proactivo de radares y RSS con deduplicacion.", "category": "web", "permissions": ["auth"], "inputs_schema": {"topics": "list", "feed_urls": "list", "send_telegram": "bool"}, "outputs_schema": {"result": "dict"}, "limits_json": {}, "risks": ["dependencia de red"]},
 ]
 
 _AGENT_SEED = [
@@ -10153,6 +10152,9 @@ async def api_web_fetch(request: Request):
 @app.post("/api/v8/research/deep")
 async def api_deep_research(request: Request):
     """Investigación profunda recursiva multi-paso ($0.00 COP)."""
+    session, error = _require_owner(request)
+    if error is not None:
+        return error
     try:
         body = await request.json()
     except Exception:
@@ -10168,6 +10170,9 @@ async def api_deep_research(request: Request):
 @app.post("/api/v8/facts/triangulate")
 async def api_fact_triangulate(request: Request):
     """Triangulación de hechos y verificación anti-alucinación ($0.00 COP)."""
+    session, error = _require_owner(request)
+    if error is not None:
+        return error
     try:
         body = await request.json()
     except Exception:
@@ -10182,6 +10187,9 @@ async def api_fact_triangulate(request: Request):
 @app.post("/api/v8/web/structured-extract")
 async def api_web_structured_extract(request: Request):
     """Extractor estructurado multiformato (tablas, JSON-LD, RSS/Atom)."""
+    session, error = _require_owner(request)
+    if error is not None:
+        return error
     try:
         body = await request.json()
     except Exception:
@@ -10200,6 +10208,9 @@ async def api_web_structured_extract(request: Request):
 @app.post("/api/v8/code/audit-dependencies")
 async def api_code_audit_dependencies(request: Request):
     """Auditor de dependencias y vulnerabilidades CVE para requirements.txt y package.json."""
+    session, error = _require_owner(request)
+    if error is not None:
+        return error
     try:
         body = await request.json()
     except Exception:
@@ -10214,6 +10225,9 @@ async def api_code_audit_dependencies(request: Request):
 @app.post("/api/v8/dossiers/generate")
 async def api_dossier_generate(request: Request):
     """Compilador de dossiers ejecutivos en PDF de 1-clic con envío opcional a Telegram."""
+    session, error = _require_owner(request)
+    if error is not None:
+        return error
     try:
         body = await request.json()
     except Exception:
@@ -10234,6 +10248,9 @@ async def api_dossier_generate(request: Request):
 @app.post("/api/v8/sentinel/sweep")
 async def api_sentinel_sweep(request: Request):
     """Barrido centinela proactivo y deduplicación con alerta ejecutiva."""
+    session, error = _require_owner(request)
+    if error is not None:
+        return error
     try:
         body = await request.json()
     except Exception:
@@ -10649,7 +10666,7 @@ try:
     from persistence.api import router as _persistence_router
     from persistence.runtime import start_background as _persistence_start
     app.include_router(_persistence_router)
-    _persistence_start()
+    _persistence_start(on_ready=_seed_tools_and_agents)
 except Exception as _persistence_err:
     print(f"[persistence] no se pudo cargar: {type(_persistence_err).__name__}")
 

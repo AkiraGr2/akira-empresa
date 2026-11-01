@@ -54,6 +54,7 @@ jobs:
           python -m unittest test_capability_inventory_contract -v
           python -m unittest test_agent_inventory_alignment -v
           python -m unittest test_startup_registry_contract -v
+          python -m unittest test_new_tool_dispatch_contract test_deep_research_contract test_fact_checker_contract test_web_extractor_contract test_code_vulnerability_auditor_contract test_executive_dossier_contract test_sentinel_cron_contract -v
 
       - name: Test authentication and authorization contract
         run: |

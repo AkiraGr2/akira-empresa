@@ -1,6 +1,6 @@
 # Inventario histórico y evidencia — 2026-10-31
 
-Se recuperan los 60 elementos de `renderLevels` del frontend histórico 74e7641 y se añaden seis superficies identificadas en el código actual. Son elementos de interfaz/producto, no 66 contratos independientes ni 66 funciones certificadas. F5 y F11 comparten contrato. El registro principal conserva su estado persistente y permisos.
+Se recuperan los 60 elementos de `renderLevels` del frontend histórico 74e7641 y se añaden doce superficies identificadas en el código actual. Son elementos de interfaz/producto, no 72 contratos independientes ni 72 funciones certificadas. F5 y F11 comparten contrato. El registro principal conserva su estado persistente y permisos.
 
 ## Hallazgos
 
@@ -85,3 +85,14 @@ Se recuperan los 60 elementos de `renderLevels` del frontend histórico 74e7641 
 ## Pendiente
 
 Pruebas funcionales individuales autenticadas y dependencias externas para cada elemento. Este cambio corrige inventario y afirmaciones, no declara cerrada esa auditoría integral. Sin cambios de esquema ni alteración del registro persistido.
+
+## Ampliacion durante la verificacion productiva
+
+El barrido del registro completo identifica 24 herramientas y seis superficies adicionales de investigacion/documentos (N7-N12); el inventario suma 72 elementos. Se corrigen categorias invalidas de cuatro herramientas, se registra el conjunto antes del selftest y se conectan los adaptadores de investigacion/triangulacion. Las seis rutas nuevas requieren sesion propietaria. El auditor individual F8 conserva 16 casos historicos: su cierre no certifica las ocho herramientas adicionales.
+
+- N7 Investigacion profunda: deep_research.py (runtime individual pendiente).
+- N8 Triangulacion de afirmaciones: fact_checker.py (runtime individual pendiente).
+- N9 Extraccion web estructurada: web_extractor.py (runtime individual pendiente).
+- N10 Auditoria de dependencias: code_vulnerability_auditor.py (runtime individual pendiente).
+- N11 Dossier ejecutivo PDF: executive_dossier.py (runtime individual pendiente).
+- N12 Barrido centinela de fuentes: sentinel_cron.py (runtime individual pendiente).

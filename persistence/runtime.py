@@ -138,7 +138,7 @@ def _close_extra_pools():
             pass
 
 
-def boot(backend_factory=None, attempts=3, wait_seconds=(5, 10), sleep=time.sleep):
+def boot(backend_factory=None, attempts=3, wait_seconds=(5, 10), sleep=time.sleep, on_ready=None):
     backend_factory = backend_factory or _default_backend
     STATE["configured"] = bool(os.getenv("DATABASE_URL", "").strip()) or backend_factory is not _default_backend
     if not STATE["configured"]:
@@ -170,6 +170,8 @@ def boot(backend_factory=None, attempts=3, wait_seconds=(5, 10), sleep=time.slee
                     flush=True,
                 )
             STATE.update(service=service, connected=True, state="ok", error_type=None)
+            if on_ready is not None:
+                on_ready()
             break
         except Exception as e:  # PostgreSQL gestionado puede tardar en aceptar conexiones: se reintenta
             last = e
@@ -210,8 +212,8 @@ def boot(backend_factory=None, attempts=3, wait_seconds=(5, 10), sleep=time.slee
     _start_self_knowledge_observer(STATE["service"])
 
 
-def start_background():
-    threading.Thread(target=boot, daemon=True, name="akira-persistence-boot").start()
+def start_background(on_ready=None):
+    threading.Thread(target=boot, kwargs={"on_ready": on_ready}, daemon=True, name="akira-persistence-boot").start()
 
 
 def get_status():

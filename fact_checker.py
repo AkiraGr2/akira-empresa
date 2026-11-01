@@ -34,7 +34,7 @@ def _extract_keywords(text: str) -> set:
     words = re.findall(r"\b[a-záéíóúñA-Z0-9_\-\.]{3,}\b", text.lower())
     return {w for w in words if w not in stopwords}
 
-def triangulate_claim(claim: str, max_sources: int = 3) -> Dict[str, Any]:
+def triangulate_claim(claim: str, max_sources: int = 3, sources=None) -> Dict[str, Any]:
     """
     Triangula una afirmación o concepto técnico cruzando evidencias de múltiples
     dominios web independientes. Retorna veredicto, puntaje de consenso y fuentes.
@@ -48,8 +48,17 @@ def triangulate_claim(claim: str, max_sources: int = 3) -> Dict[str, Any]:
         return {"ok": False, "error": "La afirmación no contiene palabras clave suficientes"}
 
     # 1. Búsqueda en vivo de evidencia
-    search_data = web_engine.search_web(clean_claim, max_results=max_sources * 2)
-    raw_results = search_data.get("results", [])
+    max_sources = max(1, min(int(max_sources), 10))
+    if sources is not None:
+        if not isinstance(sources, list) or any(not isinstance(s, (str, dict)) for s in sources):
+            return {"ok": False, "error": "sources debe ser una lista de URLs o referencias"}
+        raw_results = [{"link": s} if isinstance(s, str) else
+                       {**s, "link": s.get("link") or s.get("url") or ""} for s in sources[:10]]
+        if any(not str(s['link']).startswith(('https://', 'http://')) for s in raw_results):
+            return {"ok": False, "error": "sources requiere URLs HTTP o HTTPS"}
+    else:
+        search_data = web_engine.search_web(clean_claim, max_results=max_sources * 2)
+        raw_results = search_data.get("results", [])
 
     if not raw_results:
         return {

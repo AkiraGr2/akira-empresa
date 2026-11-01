@@ -757,15 +757,8 @@ def run_logic_tests(service, fresh_service_factory=None):
 
     def t_tool_registry_contract():
         name = "TEST_TOOL_REGISTRY_CONTRACT"
-        expected = {
-            "web_search", "github_repo_read",
-            "memory_save", "memory_search",
-            "graph_create_node", "graph_create_edge", "graph_related",
-            "learning_save", "self_model_read", "extract_pdf",
-            "image_generate", "cognitive_cycle",
-            "developer_propose", "python_test", "code_review",
-            "controlled_autonomy_start",
-        }
+        from .tool_catalog import CANONICAL_TOOL_NAMES
+        expected = set(CANONICAL_TOOL_NAMES)
         rows = service.list_tools(limit=200)
         names = [str(row.get("name") or "") for row in rows]
         duplicate_names = len(names) != len(set(names))

@@ -36,7 +36,7 @@ class InventoryTests(unittest.TestCase):
         historical = {x['id'] for x in result['items'] if x['origin'] == 'historical_60'}
         self.assertEqual(historical, expected)
         self.assertEqual(len(ids), len(set(ids)))
-        self.assertEqual(result['summary']['total'], 66)
+        self.assertEqual(result['summary']['total'], 72)
 
     def test_contract_verification_does_not_certify_features(self):
         result = capability_inventory([{'name': 'tool_registry', 'effective_state': 'verified'}])
