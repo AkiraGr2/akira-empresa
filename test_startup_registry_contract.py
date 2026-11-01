@@ -64,6 +64,30 @@ class StartupRegistryTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(('groq', model, 'fallback'), keys)
         self.assertIn(('groq', 'llama-3.1-8b-instant', 'voice_fast'), keys)
 
+    def test_runtime_agent_checks_accept_current_contract_and_reject_drift(self):
+        from agent_contracts import AGENT_CONTRACTS
+        from persistence.tool_catalog import CANONICAL_TOOL_NAMES
+        agents = {name: {'name': name, **contract} for name, contract in AGENT_CONTRACTS.items()}
+        required = ('session_auth', 'persistent_memory', 'memory_recall', 'learning_persistent',
+                    'graph_persistent', 'selftest_capability', 'evolution_engine_v1')
+        service = Mock()
+        service.get_agent_by_name.side_effect = agents.get
+        service.get_tool_by_name.return_value = {'permissions': ['owner'], 'status': 'available'}
+        service.self_knowledge_snapshot.side_effect = lambda **kwargs: {
+            'identity': {'name': 'Akira', 'root_schema_version': 'identity_root.v1'},
+            'capabilities': [{'name': n, 'effective_state': 'verified'} for n in required],
+            'agents': list(agents.values()), 'tools': [{'name': n} for n in CANONICAL_TOOL_NAMES]}
+        tree = ast.parse(Path('persistence/selftest.py').read_text(encoding='utf-8'))
+        for name in ('t_specialized_agents_persistence', 't_self_knowledge_snapshot'):
+            fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name)
+            env = {'service': service, '_res': lambda name, ok, detail: {'ok': ok, 'detail': detail}}
+            exec(compile(ast.Module(body=[fn], type_ignores=[]), '<selftest>', 'exec'), env)
+            self.assertTrue(env[name]() ['ok'])
+            original = agents['developer']
+            agents['developer'] = {**original, 'allowed_tools': ['github_repo_read']}
+            self.assertFalse(env[name]() ['ok'])
+            agents['developer'] = original
+
 
 if __name__ == '__main__':
     unittest.main()

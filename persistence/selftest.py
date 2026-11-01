@@ -1001,11 +1001,8 @@ def run_logic_tests(service, fresh_service_factory=None):
             "python_test": {"permissions": {"owner"}, "status": "available"},
             "code_review": {"permissions": {"owner"}, "status": "available"},
         }
-        expected_agents = {
-            "developer": {"role": "developer", "allowed_tools": ["github_repo_read", "developer_propose"]},
-            "tester": {"role": "tester", "allowed_tools": ["github_repo_read", "python_test"]},
-            "reviewer": {"role": "reviewer", "allowed_tools": ["github_repo_read", "python_test", "code_review"]},
-        }
+        from agent_contracts import AGENT_CONTRACTS
+        expected_agents = {name: AGENT_CONTRACTS[name] for name in ("developer", "tester", "reviewer")}
         problems = []
         for tool_name, expected in expected_tools.items():
             tool = service.get_tool_by_name(tool_name)
@@ -1401,11 +1398,9 @@ def run_logic_tests(service, fresh_service_factory=None):
         capabilities = {row.get("name"): row for row in (snapshot.get("capabilities") or [])}
         agents = {row.get("name"): row for row in (snapshot.get("agents") or [])}
         tools = {row.get("name"): row for row in (snapshot.get("tools") or [])}
-        specialized = {
-            "developer": ["github_repo_read", "developer_propose"],
-            "tester": ["github_repo_read", "python_test"],
-            "reviewer": ["github_repo_read", "python_test", "code_review"],
-        }
+        from agent_contracts import AGENT_CONTRACTS
+        specialized = {name: AGENT_CONTRACTS[name]["allowed_tools"]
+                       for name in ("developer", "tester", "reviewer")}
         problems = []
         if identity.get("name") != "Akira" or identity.get("root_schema_version") != "identity_root.v1":
             problems.append("identity_root_incorrecto")
