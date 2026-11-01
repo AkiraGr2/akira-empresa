@@ -19,6 +19,13 @@ import web_sanitizer
 
 logger = logging.getLogger("akira.deep_research")
 
+def deep_research_topic(topic: str, max_depth: int = 2, max_queries: int = 3) -> Dict[str, Any]:
+    """Bounded adapter shared by the REST route and tool dispatcher."""
+    if max_depth not in (1, 2) or not 1 <= max_queries <= 5:
+        return {"ok": False, "error": "max_depth debe ser 1 o 2; max_queries entre 1 y 5"}
+    return execute_deep_research(topic, max_subqueries=0 if max_depth == 1 else max_queries - 1)
+
+
 def execute_deep_research(topic: str, max_subqueries: int = 2, max_chars_per_doc: int = 3000) -> Dict[str, Any]:
     """
     Ejecuta una investigación profunda multi-paso en tiempo real sobre un tema técnico.

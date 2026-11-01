@@ -757,15 +757,8 @@ def run_logic_tests(service, fresh_service_factory=None):
 
     def t_tool_registry_contract():
         name = "TEST_TOOL_REGISTRY_CONTRACT"
-        expected = {
-            "web_search", "github_repo_read",
-            "memory_save", "memory_search",
-            "graph_create_node", "graph_create_edge", "graph_related",
-            "learning_save", "self_model_read", "extract_pdf",
-            "image_generate", "cognitive_cycle",
-            "developer_propose", "python_test", "code_review",
-            "controlled_autonomy_start",
-        }
+        from .tool_catalog import CANONICAL_TOOL_NAMES
+        expected = set(CANONICAL_TOOL_NAMES)
         rows = service.list_tools(limit=200)
         names = [str(row.get("name") or "") for row in rows]
         duplicate_names = len(names) != len(set(names))
@@ -1008,11 +1001,8 @@ def run_logic_tests(service, fresh_service_factory=None):
             "python_test": {"permissions": {"owner"}, "status": "available"},
             "code_review": {"permissions": {"owner"}, "status": "available"},
         }
-        expected_agents = {
-            "developer": {"role": "developer", "allowed_tools": ["github_repo_read", "developer_propose"]},
-            "tester": {"role": "tester", "allowed_tools": ["github_repo_read", "python_test"]},
-            "reviewer": {"role": "reviewer", "allowed_tools": ["github_repo_read", "python_test", "code_review"]},
-        }
+        from agent_contracts import AGENT_CONTRACTS
+        expected_agents = {name: AGENT_CONTRACTS[name] for name in ("developer", "tester", "reviewer")}
         problems = []
         for tool_name, expected in expected_tools.items():
             tool = service.get_tool_by_name(tool_name)
@@ -1408,11 +1398,9 @@ def run_logic_tests(service, fresh_service_factory=None):
         capabilities = {row.get("name"): row for row in (snapshot.get("capabilities") or [])}
         agents = {row.get("name"): row for row in (snapshot.get("agents") or [])}
         tools = {row.get("name"): row for row in (snapshot.get("tools") or [])}
-        specialized = {
-            "developer": ["github_repo_read", "developer_propose"],
-            "tester": ["github_repo_read", "python_test"],
-            "reviewer": ["github_repo_read", "python_test", "code_review"],
-        }
+        from agent_contracts import AGENT_CONTRACTS
+        specialized = {name: AGENT_CONTRACTS[name]["allowed_tools"]
+                       for name in ("developer", "tester", "reviewer")}
         problems = []
         if identity.get("name") != "Akira" or identity.get("root_schema_version") != "identity_root.v1":
             problems.append("identity_root_incorrecto")

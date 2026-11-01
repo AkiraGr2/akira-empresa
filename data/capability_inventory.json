@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "historical_count": 60,
   "items": [
     {
@@ -947,6 +947,108 @@
       ],
       "verification": "unverified",
       "related_contract": null
+    },
+    {
+      "id": "N7",
+      "name": "Investigacion profunda",
+      "origin": "added",
+      "source": {
+        "repository": "backend",
+        "path": "deep_research.py"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Herramienta incorporada al registro; requiere verificacion funcional individual.",
+      "limitations": [
+        "El registro no acredita resultados externos ni calidad de sus conclusiones."
+      ],
+      "verification": "unverified",
+      "related_contract": "tool_registry",
+      "related_tool": "deep_research"
+    },
+    {
+      "id": "N8",
+      "name": "Triangulacion de afirmaciones",
+      "origin": "added",
+      "source": {
+        "repository": "backend",
+        "path": "fact_checker.py"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Herramienta incorporada al registro; requiere verificacion funcional individual.",
+      "limitations": [
+        "El registro no acredita resultados externos ni calidad de sus conclusiones."
+      ],
+      "verification": "unverified",
+      "related_contract": "tool_registry",
+      "related_tool": "fact_triangulate"
+    },
+    {
+      "id": "N9",
+      "name": "Extraccion web estructurada",
+      "origin": "added",
+      "source": {
+        "repository": "backend",
+        "path": "web_extractor.py"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Herramienta incorporada al registro; requiere verificacion funcional individual.",
+      "limitations": [
+        "El registro no acredita resultados externos ni calidad de sus conclusiones."
+      ],
+      "verification": "unverified",
+      "related_contract": "tool_registry",
+      "related_tool": "web_structured_extract"
+    },
+    {
+      "id": "N10",
+      "name": "Auditoria de dependencias",
+      "origin": "added",
+      "source": {
+        "repository": "backend",
+        "path": "code_vulnerability_auditor.py"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Herramienta incorporada al registro; requiere verificacion funcional individual.",
+      "limitations": [
+        "El registro no acredita resultados externos ni calidad de sus conclusiones."
+      ],
+      "verification": "unverified",
+      "related_contract": "tool_registry",
+      "related_tool": "dependency_vulnerability_audit"
+    },
+    {
+      "id": "N11",
+      "name": "Dossier ejecutivo PDF",
+      "origin": "added",
+      "source": {
+        "repository": "backend",
+        "path": "executive_dossier.py"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Herramienta incorporada al registro; requiere verificacion funcional individual.",
+      "limitations": [
+        "El registro no acredita resultados externos ni calidad de sus conclusiones."
+      ],
+      "verification": "unverified",
+      "related_contract": "tool_registry",
+      "related_tool": "executive_dossier_generate"
+    },
+    {
+      "id": "N12",
+      "name": "Barrido centinela de fuentes",
+      "origin": "added",
+      "source": {
+        "repository": "backend",
+        "path": "sentinel_cron.py"
+      },
+      "implementation_evidence": "source_located",
+      "description": "Herramienta incorporada al registro; requiere verificacion funcional individual.",
+      "limitations": [
+        "El registro no acredita resultados externos ni calidad de sus conclusiones."
+      ],
+      "verification": "unverified",
+      "related_contract": "tool_registry",
+      "related_tool": "sentinel_sweep"
     }
   ]
 }
