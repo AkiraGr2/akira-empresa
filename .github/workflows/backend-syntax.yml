@@ -114,7 +114,7 @@ jobs:
 
       - name: Test conversation ownership contract
         run: |
-          python -m unittest test_conversation_ownership -v
+          python -m unittest test_conversation_ownership test_chat_recent_context -v
 
       - name: Test graph persistent capability contract
         run: |
