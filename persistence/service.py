@@ -4443,6 +4443,17 @@ class PersistenceService:
             raise NotFoundError(conversation_id)
         return self.repo.count("conversation_messages", {"conversation_id": conversation_id})
 
+    def list_recent_messages(self, conversation_id, limit=21, owner=None):
+        """Latest messages, returned chronologically, with the same ownership guard."""
+        if owner is not None and self.get_conversation(conversation_id, owner=owner) is None:
+            raise NotFoundError(conversation_id)
+        rows = self.repo.search(
+            "conversation_messages", {"conversation_id": conversation_id},
+            limit=max(1, min(int(limit), 500)), offset=0,
+            order_by="created_at", descending=True,
+        )
+        return list(reversed(rows))
+
     # ---------- F15 Hive Collective Sync v1 ----------
 
     HIVE_COLLECTIVE_SCHEMA = "hive_collective.v1"

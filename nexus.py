@@ -8108,7 +8108,7 @@ def v8_get_conversation(request: Request, conversation_id: str, include_messages
     response = {"ok": True, "conversation": conv}
     if include_messages:
         try:
-            messages = service.list_messages(conversation_id, limit=500, owner=s["email"])
+            messages = service.list_recent_messages(conversation_id, limit=500, owner=s["email"])
         except Exception as e:
             return JSONResponse({"ok": False, "reason": "storage", "error_type": type(e).__name__}, status_code=503)
         response["messages"] = messages
@@ -8938,7 +8938,7 @@ def _format_conversation_context(service, conversation_id, current_msg, owner=No
     if service is None or not conversation_id:
         return ""
     try:
-        rows = service.list_messages(conversation_id, limit=500, offset=0, owner=owner)
+        rows = service.list_recent_messages(conversation_id, limit=limit + 1, owner=owner)
     except Exception:
         return ""
     if not isinstance(rows, list):
@@ -8950,7 +8950,9 @@ def _format_conversation_context(service, conversation_id, current_msg, owner=No
     rows = rows[-limit:]
     parts = []
     used = 0
-    for r in rows:
+    # Budget from newest to oldest, then restore chronological order. Long older
+    # answers must not crowd out the user's latest instructions.
+    for r in reversed(rows):
         role = str(r.get("role") or "").strip().lower()
         content = str(r.get("content") or "").strip()
         if role not in ("user", "assistant") or not content:
@@ -8959,13 +8961,13 @@ def _format_conversation_context(service, conversation_id, current_msg, owner=No
         from persistence.chat_context import sanitize_historical_assistant_message
         content = sanitize_historical_assistant_message(role, r.get("model"), content)
         block = f"{'Usuario' if role == 'user' else 'Akira'}: {content}"
-        if used + len(block) > max_chars:
+        if used + len(block) + 1 > max_chars:
             break
         parts.append(block)
-        used += len(block)
+        used += len(block) + 1
     if not parts:
         return ""
-    return "[HISTORIAL REAL DE ESTA CONVERSACION]\n" + "\n".join(parts) + "\n[FIN HISTORIAL]\n"
+    return "[HISTORIAL REAL DE ESTA CONVERSACION]\n" + "\n".join(reversed(parts)) + "\n[FIN HISTORIAL]\n"
 
 
 def _gemini_error_code(error):
@@ -9565,25 +9567,7 @@ async def chat(request: Request):
 
         duration_ms = int((time.time() - t0) * 1000)
 
-        if persist and final_response and is_fast_voice:
-            # Async background persistence: return HTTP to mobile phone in 0ms delay
-            try:
-                asyncio.create_task(
-                    asyncio.to_thread(
-                        service.add_message,
-                        conversation_id, "assistant", final_response,
-                        model=model_used,
-                        memories_used=[],
-                        duration_ms=duration_ms,
-                        error=error_meta,
-                        actor=session["email"],
-                        owner=session["email"],
-                        idempotency_key=assistant_message_key,
-                    )
-                )
-            except Exception as bg_err:
-                print(f"[fast_voice] async persistence task error: {type(bg_err).__name__}")
-        elif persist and final_response:
+        if persist and final_response:
             try:
                 stored_assistant = service.add_message(
                     conversation_id, "assistant", final_response,
