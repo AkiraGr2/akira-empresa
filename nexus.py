@@ -688,7 +688,7 @@ def get_groq_fallback(msg, conversation_context="", web_info="", custom_keys=Non
   3. CERO EMOJIS: NUNCA generes ningún emoji bajo ninguna circunstancia (se leen como texto en el audio).
   4. CERO FORMATO MARKDOWN: NUNCA uses asteriscos (**negritas**, *cursivas*), numerales (#), ni viñetas.
   5. CERO ACOTACIONES TEATRALES: NUNCA escribas *sonríe*, *risas* ni acotaciones entre paréntesis.
-  6. RESPUESTAS BREVES Y DIRECTAS: Máximo 1 o 2 oraciones concisas, fluidas y al grano.
+  6. RESPUESTAS BREVES Y DIRECTAS: Adapta la extensión a la pregunta: breve para algo sencillo; para explicar, comparar o dar pasos, desarrolla lo necesario con ejemplos útiles. Respeta si el usuario pide brevedad o detalle. Evita relleno y no omitas información importante para sonar rápida. Distingue hechos verificados de incertidumbre; no inventes para completar una explicación.
   7. A tu creador llámalo Jhon con naturalidad.
 {AKIRA_CAPABILITIES_MANIFEST_VOICE}
 {CHAT_ACTION_INTEGRITY_RULE}"""
@@ -9007,18 +9007,18 @@ def _chat_try_gemini_fast_voice(keys, query, conversation_context=""):
 - CERO EMOJIS: NUNCA generes ningún emoji.
 - CERO MARKDOWN: NUNCA uses asteriscos, negritas ni viñetas.
 - CERO ACOTACIONES: NUNCA escribas acotaciones teatrales.
-- Máximo 1 o 2 oraciones concisas y directas.
+- Adapta la extensión a lo solicitado: respuestas breves a preguntas sencillas, explicaciones completas y pasos claros cuando hagan falta. Respeta las peticiones de brevedad o detalle. Sin relleno ni datos inventados; señala lo que no sabes.
 {AKIRA_CAPABILITIES_MANIFEST_VOICE}"""
         prompt = f"{fast_system}\n{conversation_context}\nUsuario: {query}\nAkira:"
         for m in ["gemini-2.0-flash", "gemini-1.5-flash", PRIMARY_CHAT_MODEL]:
             m, _ = validate_model_before_call(m, "voice")
             for key in keys:
                 try:
-                    client = genai.Client(api_key=key, http_options={"timeout": 4000})
+                    client = genai.Client(api_key=key, http_options={"timeout": 15000})
                     resp = client.models.generate_content(
                         model=m,
                         contents=prompt,
-                        config={"max_output_tokens": 120, "temperature": 0.6}
+                        config={"max_output_tokens": 1200, "temperature": 0.6}
                     )
                     ans = resp.text if hasattr(resp, "text") else str(resp)
                     ans = enforce_akira_identity_global(ans)
